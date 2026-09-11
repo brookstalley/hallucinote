@@ -34,66 +34,47 @@ def _make_snap() -> dict:
     }
 
 
-def test_restamp_refreshes_captured_at_without_content_change(tmp_path: Path) -> None:
-    """BAK-7D2V Chunk 3: `restamp` moves captured_at forward (events.ts shape)
-    and leaves every other field byte-identical — the empty-diff guard disarm."""
+def test_docstring_subcommand_list_matches_the_registered_parser() -> None:
+    """The module docstring IS the argparse `description`, i.e. the `--help`
+    text. It drifted once (it enumerated `execute`/`--plan`/`diff`/`migrate`
+    while the parser also registered `merge`), so an operator reading `--help`
+    could not discover the subcommand `/song-snapshot` drives on both of its
+    write paths. Pin the two together: every registered subcommand is bulleted,
+    and every bulleted name is registered.
+    """
     import re
 
-    snap = _make_snap()
-    snap["captured_at"] = "2020-01-01T00:00:00.000Z"
-    path = tmp_path / "captured_session.json"
-    _write_snapshot(path, snap)
+    from hallucinote.tools import capture_cli
 
-    proc = _run("restamp", str(path))
-    assert proc.returncode == 0
-    after = json.loads(path.read_text())
-    assert re.fullmatch(
-        r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z", after["captured_at"]
+    block = capture_cli.__doc__.split("CLI subcommands:", 1)[1]
+    # Each entry opens a bullet as ``  * ``<name> ...`` — take the first token
+    # inside the leading double-backtick run, so `execute --song <slug>` and
+    # `diff <old.json> <new.json>` both reduce to their subcommand name.
+    documented = set(re.findall(r"^\s*\*\s+``([a-z_]+)", block, re.MULTILINE))
+
+    parser = capture_cli._build_parser()
+    registered = set()
+    for action in parser._subparsers._group_actions:  # noqa: SLF001 — argparse exposes no public accessor
+        registered.update(action.choices)
+
+    assert documented == registered, (
+        "capture_cli's docstring subcommand list has drifted from the parser: "
+        f"documented-but-unregistered={documented - registered}, "
+        f"registered-but-undocumented={registered - documented}. The docstring "
+        "is the --help text, so an undocumented subcommand is an undiscoverable one."
     )
-    assert after["captured_at"] > "2020-01-01T00:00:00.000Z"
-    before = {k: v for k, v in snap.items() if k != "captured_at"}
-    after_content = {k: v for k, v in after.items() if k != "captured_at"}
-    assert after_content == before
 
 
-@pytest.mark.parametrize(
-    "stamp",
-    [None, "", "not-a-timestamp", "2020-01-01T00:00:00Z", "2020-01-01 00:00:00.000Z"],
-    ids=["absent", "empty", "garbage", "no-millis", "space-separator"],
-)
-def test_restamp_refuses_an_unstamped_or_malformed_snapshot(
-    tmp_path: Path, stamp,
-) -> None:
-    """Back-stamping a snapshot the guard cannot order is strictly worse than
-    doing nothing. Replay treats an unusable `captured_at` as "no ordering
-    evidence" and takes its warn-and-proceed branch, so the user at least SEES
-    that pulled edits are being overwritten; stamping it moves replay to the
-    silent-pass branch and destroys that last signal. Refuse instead, and leave
-    the file untouched."""
-    snap = _make_snap()
-    if stamp is not None:
-        snap["captured_at"] = stamp
-    path = tmp_path / "captured_session.json"
-    _write_snapshot(path, snap)
-    original = path.read_text()
-
-    proc = _run("restamp", str(path))
-    assert proc.returncode == 2, (
-        f"restamp must refuse a {stamp!r} stamp — back-stamping it silences the "
-        "replay guard with no evidence the content is current"
-    )
-    assert path.read_text() == original, "refused restamp must not write"
-    assert "captured_at" in proc.stderr
-
-
-def test_restamp_missing_file_returns_two(tmp_path: Path) -> None:
-    proc = _run("restamp", str(tmp_path / "absent.json"))
-    assert proc.returncode == 2
-
-
-def test_restamp_no_target_returns_two() -> None:
+def test_restamp_subcommand_is_gone() -> None:
+    """`capture restamp` moved `captured_at` forward with no re-capture, which
+    durably disarmed the replay staleness guard on evidence nothing had checked.
+    The two sanctioned exits already cover the ground: a fresh capture (durable)
+    and `--force-replay` (conscious revert, re-warns every build). Deleted so
+    the guard cannot be silently switched off; this pins that it stays deleted.
+    """
     proc = _run("restamp")
-    assert proc.returncode == 2
+    assert proc.returncode != 0
+    assert "invalid choice" in proc.stderr
 
 
 def test_diff_exits_zero_on_identical(tmp_path: Path) -> None:
@@ -288,17 +269,24 @@ def test_cmd_execute_writes_refresh_json_and_forwards_old(
 
     captured = {}
 
-    def fake_assemble(probe, *, old_snapshot=None):
+    def fake_assemble(probe, *, old_snapshot=None, song_dir=None):
         captured["old"] = old_snapshot
+        captured["song_dir"] = song_dir
         return {"snapshot_version": 1, "tracks": []}
 
-    monkeypatch.setattr(cc, "_resolve_send_fn", lambda: (lambda req: _Resp(True, {})))
+    # The bridge must answer the transport read the capture makes before it
+    # walks anything; an empty result is refused, not assumed to mean "at 0".
+    monkeypatch.setattr(
+        cc, "_resolve_send_fn",
+        lambda: (lambda req: _Resp(True, {"is_playing": False,
+                                          "current_song_time": 0.0})))
     monkeypatch.setattr(
         "hallucinote.capture.assemble_snapshot_via_probes", fake_assemble
     )
 
     rc = cc._cmd_execute(
-        argparse.Namespace(output=str(out), old=str(old), song=None)
+        argparse.Namespace(output=str(out), old=str(old), song=None,
+                           no_seek=False)
     )
     assert rc == 0
     # Writes the side-by-side refresh file, NOT the canonical name — the canonical
@@ -310,9 +298,175 @@ def test_cmd_execute_writes_refresh_json_and_forwards_old(
     }
     # The old snapshot is loaded + forwarded so browser_path is preserved.
     assert captured["old"] == {"snapshot_version": 1, "browser_path": {"a": "b"}}
+    # The song dir is the output's directory, so a captured sampler's sample
+    # path lands song-relative when the file lives under the song.
+    assert captured["song_dir"] == out.parent
 
 
 def test_cmd_execute_needs_song_or_output(capsys) -> None:
-    rc = cc._cmd_execute(argparse.Namespace(output=None, old=None, song=None))
+    rc = cc._cmd_execute(
+        argparse.Namespace(output=None, old=None, song=None, no_seek=False))
     assert rc == 2
     assert "needs --song" in capsys.readouterr().err
+
+
+# --------------------------------------------------------------------------
+# The playhead preflight: a capture away from beat 0 bakes automated values
+# in as baselines, and replay_capture re-asserts them on every rebuild.
+# --------------------------------------------------------------------------
+
+
+class _FakeLive:
+    """A fake bridge that records the probe call order and answers the two
+    transport probes the preflight makes."""
+
+    def __init__(self, *, playing=False, at=0.0, settles_to=0.0):
+        self.playing, self.at, self.settles_to = playing, at, settles_to
+        self.calls: list[tuple] = []
+
+    def send(self, req):
+        self.calls.append((req.tool, req.action))
+        if (req.tool, req.action) == ("ableton_session", "info"):
+            return _Resp(True, {"is_playing": self.playing,
+                                "current_song_time": self.at})
+        if (req.tool, req.action) == ("ableton_session", "seek"):
+            self.at = self.settles_to
+            return _Resp(True, {"settled_beats": self.settles_to})
+        return _Resp(True, {})
+
+
+def _execute_against(live, tmp_path, monkeypatch, *, no_seek=False):
+    """Run `_cmd_execute` against a fake bridge, stubbing the snapshot walk so
+    the test is about the preflight and its ordering, not the walk."""
+    out = tmp_path / "captured_session.refresh.json"
+    probes_seen: list = []
+
+    def fake_assemble(probe, *, old_snapshot=None, song_dir=None):
+        probe("ableton_track", "info", index=1)   # stand-in for the walk
+        probes_seen.append("walk")
+        return {"snapshot_version": 1, "tracks": []}
+
+    monkeypatch.setattr(cc, "_resolve_send_fn", lambda: live.send)
+    monkeypatch.setattr(
+        "hallucinote.capture.assemble_snapshot_via_probes", fake_assemble)
+    rc = cc._cmd_execute(argparse.Namespace(
+        output=str(out), old=None, song=None, no_seek=no_seek))
+    return rc, out, probes_seen
+
+
+def test_a_rolling_transport_refuses_rather_than_capturing(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    """No seek can make a capture deterministic while the playhead moves: each
+    parameter would be read at whatever beat its own probe happened to land on."""
+    live = _FakeLive(playing=True, at=17.0)
+    rc, out, walked = _execute_against(live, tmp_path, monkeypatch)
+    assert rc == 2
+    assert not out.exists()
+    assert walked == []
+    err = capsys.readouterr().err
+    assert "transport is rolling" in err
+    assert "--no-seek" in err
+
+
+def test_a_non_zero_playhead_is_parked_before_the_first_capture_probe(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    """The ordering is the whole fix: a seek AFTER the walk would read every
+    automated parameter at the old position and record it as the baseline."""
+    live = _FakeLive(at=512.0)
+    rc, out, walked = _execute_against(live, tmp_path, monkeypatch)
+    assert rc == 0
+    assert walked == ["walk"]
+    assert ("ableton_session", "seek") in live.calls
+    seek_at = live.calls.index(("ableton_session", "seek"))
+    walk_at = live.calls.index(("ableton_track", "info"))
+    assert seek_at < walk_at, f"seek must precede the walk; got {live.calls}"
+    assert json.loads(out.read_text()) == {"snapshot_version": 1, "tracks": []}
+    assert "parked it at 0" in capsys.readouterr().err
+
+
+def test_a_seek_that_settles_elsewhere_refuses(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    """A seek that did not take is exactly the silent case this guard ends —
+    the settle poll is the evidence, not a read-back of current_song_time."""
+    live = _FakeLive(at=512.0, settles_to=311.0)
+    rc, out, walked = _execute_against(live, tmp_path, monkeypatch)
+    assert rc == 2
+    assert not out.exists()
+    assert walked == []
+    assert "settled at 311.0" in capsys.readouterr().err
+
+
+def test_a_seek_reporting_no_settled_position_refuses(
+    tmp_path, monkeypatch
+) -> None:
+    """An absent `settled_beats` is not evidence the write landed."""
+    live = _FakeLive(at=512.0)
+    live.send = lambda req: (
+        _Resp(True, {"is_playing": False, "current_song_time": 512.0})
+        if req.action == "info" else _Resp(True, {})
+    )
+    rc, out, walked = _execute_against(live, tmp_path, monkeypatch)
+    assert rc == 2
+    assert not out.exists()
+
+
+def test_a_playhead_already_at_zero_writes_nothing_to_live(
+    tmp_path, monkeypatch
+) -> None:
+    """The preflight reads; it only writes when it has to."""
+    live = _FakeLive(at=0.0)
+    rc, out, walked = _execute_against(live, tmp_path, monkeypatch)
+    assert rc == 0
+    assert ("ableton_session", "seek") not in live.calls
+    assert out.exists()
+
+
+def test_no_seek_skips_the_preflight_and_warns(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    live = _FakeLive(at=512.0)
+    rc, out, walked = _execute_against(live, tmp_path, monkeypatch, no_seek=True)
+    assert rc == 0
+    assert ("ableton_session", "info") not in live.calls
+    assert ("ableton_session", "seek") not in live.calls
+    assert out.exists()
+    assert "--no-seek" in capsys.readouterr().err
+
+
+def test_a_transport_read_missing_the_playhead_refuses(tmp_path, monkeypatch,
+                                                       capsys) -> None:
+    """Assuming "stopped at 0" from an incomplete read is the same silence the
+    guard exists to end."""
+    live = _FakeLive()
+    live.send = lambda req: _Resp(True, {"is_playing": False})
+    rc, out, walked = _execute_against(live, tmp_path, monkeypatch)
+    assert rc == 2
+    assert not out.exists()
+    assert walked == []
+    assert "did not report current_song_time" in capsys.readouterr().err
+
+
+def test_a_null_playhead_refuses_rather_than_reading_as_beat_zero(
+        tmp_path, monkeypatch, capsys) -> None:
+    """The other half of the same door. A present-but-null `current_song_time`
+    passes the key-presence check, and defaulting it to 0.0 then routes the capture
+    down the "already parked" path — no seek, no refusal, every automated parameter
+    read at whatever beat Live is really at and booked as the baseline. Presence is
+    not readability."""
+    live = _FakeLive()
+    live.send = lambda req: _Resp(
+        True, {"is_playing": False, "current_song_time": None})
+    rc, out, walked = _execute_against(live, tmp_path, monkeypatch)
+    assert rc == 2
+    assert not out.exists()
+    assert walked == []
+    err = capsys.readouterr().err
+    assert "not a beat position" in err
+    # The refusal names the value it could not read.
+    assert "current_song_time=None" in err
+    # And it refused BEFORE trying to seek — an unreadable playhead is not a
+    # playhead somewhere else.
+    assert ("ableton_session", "seek") not in live.calls

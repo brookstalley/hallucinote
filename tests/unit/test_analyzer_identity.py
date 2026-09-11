@@ -116,3 +116,32 @@ def test_engine_constant_matches_mcp_constant():
     )
 
     assert ANALYZER_DEVICE_NAME == MCP_ANALYZER_DEVICE_NAME
+
+
+def test_the_sidechain_enable_hints_match_the_mcp_handler_that_owns_them():
+    """#536 R-2/R-7: `capture.SIDECHAIN_ENABLE_PARAM_HINTS` is a mirror of the
+    match `ableton_device(action='set_sidechain')` performs, and the two decide
+    the same question — "is this device's sidechain armed?" — on opposite sides of
+    a package boundary the engine cannot import across.
+
+    The same shape as `ANALYZER_DEVICE_NAME` above, and for the same reason: the
+    dependency direction is MCP→engine, so the engine mirrors and a guard keeps
+    the mirror honest. Without this, a hint added on one side silently changes
+    which devices warn and which are treated as armed, and nothing fails.
+
+    Both sides are IMPORTED. An earlier form of this guard read the hints out of
+    the handler's source text between two literal anchors, because the MCP side
+    spelled them inline in an `or` chain; that guard broke on reformatting —
+    a reflow or an anchor rename failed it without anything having diverged.
+    """
+    from hallucinote_mcp.handlers.device import (
+        SIDECHAIN_ENABLE_PARAM_HINTS as in_mcp,
+    )
+
+    from hallucinote.capture import SIDECHAIN_ENABLE_PARAM_HINTS as in_engine
+
+    assert set(in_mcp) == set(in_engine), (
+        "the engine's sidechain-enable hints and the MCP handler's have "
+        f"diverged: engine-only={set(in_engine) - set(in_mcp)}, "
+        f"MCP-only={set(in_mcp) - set(in_engine)}"
+    )

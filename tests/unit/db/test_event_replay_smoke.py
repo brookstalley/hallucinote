@@ -71,6 +71,9 @@ NOT_YET_FOLDED: dict[str, str] = {
                              "rebuilt from disk, never from events",
     E.AUTOMATION_PERFORMED: "sync-state fingerprint (performed_automation is "
                             "disposable, rebuilt by the next push)",
+    E.AUDIO_CAPTURED: "audit-only: records that a capture pass ran and where "
+                      "its WAVs landed; the captures dir is a regenerable "
+                      "build artifact, so there is no song state to fold",
     # --- outside this smoke slice (payloads look fold-sufficient) ---
     E.RETURN_UPDATED: "outside slice",
     E.RETURN_DELETED: "outside slice",
@@ -146,10 +149,14 @@ def _fold_event(conn, kind: str, payload: dict, song_id, clip_id) -> None:
              p["instrument_uri"], p["kind"]),
         )
     elif kind == E.TRACK_UPDATED:
+        # track_index is folded because a reindex emits this event with a
+        # NEW index and nothing else — replay that dropped it would rebuild
+        # every renumbered track at its old position.
         conn.execute(
-            "UPDATE tracks SET name = ?, instrument_uri = ?, kind = ? "
-            "WHERE id = ?",
-            (p["name"], p["instrument_uri"], p["kind"], p["track_id"]),
+            "UPDATE tracks SET name = ?, instrument_uri = ?, kind = ?, "
+            "track_index = ? WHERE id = ?",
+            (p["name"], p["instrument_uri"], p["kind"], p["track_index"],
+             p["track_id"]),
         )
     elif kind == E.TRACK_DELETED:
         conn.execute("DELETE FROM tracks WHERE id = ?", (p["track_id"],))
@@ -196,9 +203,11 @@ def _fold_event(conn, kind: str, payload: dict, song_id, clip_id) -> None:
     elif kind == E.SECTION_CREATED:
         conn.execute(
             "INSERT INTO sections (id, song_id, name, start_bar, end_bar, "
-            "color, notes_md, energy) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "color, notes_md, energy, bar_ruler) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (p["section_id"], song_id, p["name"], p["start_bar"],
-             p["end_bar"], p["color"], p["notes_md"], p["energy"]),
+             p["end_bar"], p["color"], p["notes_md"], p["energy"],
+             p["bar_ruler"]),
         )
     elif kind == E.SECTION_UPDATED:
         sets = ", ".join(f"{k} = ?" for k in p["changes"])
@@ -240,11 +249,12 @@ def _fold_event(conn, kind: str, payload: dict, song_id, clip_id) -> None:
     elif kind == E.ARRANGEMENT_CLIP_ADDED:
         conn.execute(
             "INSERT INTO arrangement_clips "
-            "(id, song_id, track_id, clip_id, start_bar, end_bar) "
-            "VALUES (?, ?, ?, ?, ?, ?) "
-            "ON CONFLICT(id) DO UPDATE SET end_bar = excluded.end_bar",
+            "(id, song_id, track_id, clip_id, start_bar, end_bar, bar_ruler) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(id) DO UPDATE SET end_bar = excluded.end_bar, "
+            "bar_ruler = excluded.bar_ruler",
             (p["arrangement_clip_id"], song_id, p["track_id"], p["clip_id"],
-             p["start_bar"], p["end_bar"]),
+             p["start_bar"], p["end_bar"], p["bar_ruler"]),
         )
     elif kind == E.ARRANGEMENT_CLIP_REMOVED:
         conn.execute(

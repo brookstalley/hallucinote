@@ -104,7 +104,11 @@ CREATE INDEX IF NOT EXISTS idx_tracks_song ON tracks(song_id);
 CREATE TABLE IF NOT EXISTS clips (
     id                      TEXT PRIMARY KEY,
     track_id                TEXT NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
-    slot                    INTEGER NOT NULL,
+    -- Live's clip slots are 1-based (clip_index minimum 1); a 0 halts the
+    -- clips push phase mid-way. The mutator teaches the floor; the CHECK holds
+    -- it on a fresh DB (SQLite cannot ALTER a CHECK in, so a migrated DB relies
+    -- on the mutator alone — see connection.py beside _ADDED_COLUMNS).
+    slot                    INTEGER NOT NULL CHECK (slot >= 1),
     length_beats            REAL NOT NULL,
     name                    TEXT,
     section_role            TEXT,
@@ -134,11 +138,19 @@ CREATE TABLE IF NOT EXISTS clips (
     -- Consumers must read `warping` before interpreting the markers.
     start_marker            REAL,
     end_marker              REAL,
-    -- AUD-7R3M / SMP-7K2D: reverse is the playback-param sibling the audio
-    -- family above is missing — ONE immutable audio_file, played reversed when
-    -- set (NULL/0 = forward, 1 = reversed). Materialized at push as Live's clip
-    -- reverse (a playback parameter, NOT a derived/committed file). See
-    -- .prawduct/artifacts/plans/SMP-7K2D/design.md.
+    -- AUD-7R3M: ONE immutable audio_file, played reversed when set
+    -- (NULL/0 = forward, 1 = reversed).
+    -- NOT MATERIALIZED AT PUSH. A Live
+    -- Clip exposes no settable reverse at all — absent from the 12.4.1
+    -- LomTypes gate table AND from a live `describe` of a real audio clip on
+    -- 12.4.5 (docs/research/audio-first-class/lom-probe-results.md row 14) —
+    -- so the wire carries no `reverse` and the clips phase refuses a row that
+    -- sets it rather than silently pushing a clip that plays forward. The
+    -- column stays because the INTENT is real; it materializes only as a
+    -- reversed DERIVED ASSET — a clip pointed at the reversed file, or a
+    -- sampler whose sample is the reversed file. Simpler has no Reverse
+    -- parameter either: its reverse() is a destructive method that writes a
+    -- derived file (row 19), so the derived asset is the whole story (#237).
     reverse                 INTEGER,
     UNIQUE(track_id, slot)
 );
@@ -166,6 +178,18 @@ CREATE TABLE IF NOT EXISTS arrangement_clips (
     clip_id                     TEXT NOT NULL REFERENCES clips(id) ON DELETE CASCADE,
     start_bar                   REAL NOT NULL CHECK (start_bar >= 1.0),
     end_bar                     REAL NOT NULL,
+    -- Which BAR RULER this row's position was authored against (#496). Two
+    -- rulers exist: `uniform` — bars accumulated against ONE beats_per_bar by
+    -- `hallucinote.arrangement`, which never reads `time_signature_map`; and
+    -- `map` — a position authored directly against the meter map, which is how
+    -- push resolves every bar position. They agree until a meter change. NULL
+    -- means the provenance was never recorded (a row written before this
+    -- column); the push planner reports that as unrecorded rather than
+    -- guessing. `map` is the mutator default, so a writer that knows nothing
+    -- about this column is correct by construction; only `Arrangement.materialize`
+    -- opts into `uniform`. Keep this CHECK byte-identical to connection.py's
+    -- _ADDED_COLUMNS entry — the schema canary compares column presence only.
+    bar_ruler                   TEXT CHECK (bar_ruler IS NULL OR bar_ruler IN ('uniform','map')),
     CHECK (end_bar > start_bar)
 );
 
@@ -205,6 +229,8 @@ CREATE TABLE IF NOT EXISTS sections (
     -- rows to rank declared intent against measured per-section intensity;
     -- NULL rows are excluded from the correlation, never coerced to a value.
     energy          REAL CHECK (energy IS NULL OR (energy >= 0.0 AND energy <= 1.0)),
+    -- Bar-ruler provenance (#496) — see arrangement_clips.bar_ruler.
+    bar_ruler       TEXT CHECK (bar_ruler IS NULL OR bar_ruler IN ('uniform','map')),
     CHECK (end_bar > start_bar)
 );
 
@@ -239,7 +265,9 @@ CREATE TABLE IF NOT EXISTS cue_points (
     song_id         TEXT NOT NULL REFERENCES songs(id) ON DELETE CASCADE,
     position_bar    REAL NOT NULL CHECK (position_bar >= 1.0),
     name            TEXT,
-    color           INTEGER
+    color           INTEGER,
+    -- Bar-ruler provenance (#496) — see arrangement_clips.bar_ruler.
+    bar_ruler       TEXT CHECK (bar_ruler IS NULL OR bar_ruler IN ('uniform','map'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_cue_points_song ON cue_points(song_id, position_bar);
@@ -409,7 +437,7 @@ CREATE TABLE IF NOT EXISTS devices (
     -- (mirrors how clips.audio_file is NULL for MIDI clips). Window / reverse /
     -- pitch / gain are NOT columns here — they are device_parameters (static)
     -- or device_parameter envelopes (automated). See
-    -- .prawduct/artifacts/plans/SMP-7K2D/design.md.
+    -- .prawduct/artifacts/plans/SMP-7K2D/archive/design.md.
     audio_file      TEXT,
     -- SDC-7K3M: device sidechain SOURCE routing, symmetric with track-level
     -- input routing (tracks.input_routing_*). A SEMANTIC reference (FK to the

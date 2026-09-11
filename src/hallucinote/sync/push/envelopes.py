@@ -57,11 +57,12 @@ def plan_push_envelopes(
         (push-findings #12). Warn cites the MIDI control-change-note
         workaround for clip_cc; pitch_bend has no auto-encode path.
       - ``mixer_volume`` / ``mixer_pan`` / ``send_level`` /
-        ``device_parameter`` on midi hosts: routed through a session clip
-        on the target track (Live 12.4 LOM accepts these only on session
-        clips). When no arrangement_clip placement on the target track
-        covers the envelope's beat range, the envelope can't be hosted;
-        warn + skip.
+        ``device_parameter`` on midi or audio hosts: routed through a
+        session clip on the target track (Live 12.4 LOM accepts these
+        only on session clips — an ARRANGEMENT clip raises "Not a session
+        clip"). When no arrangement_clip placement on the target track
+        covers the envelope's beat range, the ride is clip-independent
+        and routes to perform instead (see below).
 
     Perform-routed (ENV-7G4K — `classify_envelope_route`): master/group
     hosts, return-side devices, and ``return_mixer_volume`` /
@@ -69,8 +70,10 @@ def plan_push_envelopes(
     push phase gesture-records them into arrangement automation. This
     phase notes the routing and moves on. ENV-9P4T extends this: a plain
     midi or audio track whose envelope no single session clip covers also
-    routes to perform (a continuous, clip-independent ride); an audio
-    per-clip ride that IS covered by a clip is refused pending CLP-AUD2.
+    routes to perform (a continuous, clip-independent ride). A covered
+    ride rides its session clip whether that clip is midi or AUDIO —
+    ``Clip.create_automation_envelope`` works on an audio session clip
+    (probe row 3: written and read back on a real one).
 
     Other skip-with-warn paths (legacy):
       - target/clip/device not linked in the session
@@ -84,83 +87,144 @@ def plan_push_envelopes(
         return plan
 
     for env in envelopes:
-        breakpoints = Q.get_breakpoints(conn, env["id"])
-        if not breakpoints:
-            plan.warn(
-                f"envelope {env['id']} ({env['target_kind']}) has no "
-                "breakpoints; skipping"
-            )
-            continue
-        target_kind = env["target_kind"]
-        bps_mcp = _breakpoints_for_mcp(breakpoints)
+        _plan_one_envelope(
+            plan, conn, song_id=song_id, session_id=session_id, envelope=env,
+        )
+    return plan
 
-        if target_kind == "clip_cc":
-            # W4-B: Live 12.4's LOM doesn't expose
-            # ``Clip.create_automation_envelope`` for MIDI CC targets —
-            # the call raises ``ArgumentError`` (push-findings #12). The
-            # canonical workaround is to encode the CC ride as MIDI
-            # control-change notes via ``ableton_clip(action='replace_notes')``.
-            plan.warn(
-                f"envelope {env['id']} (clip_cc CC{env['parameter_path']}): "
-                "Live 12.4 LOM doesn't expose Clip.create_automation_envelope "
-                "for MIDI CC targets; encode as control-change notes via "
-                "ableton_clip(action='replace_notes') instead. Skipping."
-            )
-            continue
-        if target_kind == "clip_pitch_bend":
-            # W4-B: same LOM gap as clip_cc (push-findings #12). No
-            # auto-encode path exists for pitch bend — author manually
-            # in Live.
-            plan.warn(
-                f"envelope {env['id']} (clip_pitch_bend): Live 12.4 LOM "
-                "doesn't expose Clip.create_automation_envelope for "
-                "pitch-bend targets; author manually in Live. Skipping."
-            )
-            continue
-        if target_kind == "note_expression":
-            _emit_note_expression_envelope(
-                plan, conn,
-                session_id=session_id,
+
+def plan_push_envelopes_for_clip(
+    conn: sqlite3.Connection,
+    *,
+    song_id: str,
+    session_id: str,
+    clip_id: str,
+) -> PushPlan:
+    """Plan the push of every envelope one session clip HOSTS — the same calls
+    :func:`plan_push_envelopes` would emit for them, and nothing else.
+
+    This is the clips phase's re-emit after a destructive recreate. A Live
+    ``Clip.file_path`` is read-only, so re-pointing an audio clip at a
+    different file is ``delete_clip`` + ``create_audio_clip`` — and a recreate
+    drops every envelope the clip hosted (probe-confirmed: ``automation_envelope``
+    reads ``None`` afterwards). The ride the author wrote has to be written
+    again onto the new clip, and it has to be THIS planner that writes it, so
+    the two phases can never disagree about an envelope's route, its clip-local
+    translation, or its warnings. A copy of the emitter here would be a second
+    route table waiting to drift.
+
+    Emits through the same ``envelope:{id}`` key, because the call IS an
+    envelope write and its result carries the ``envelope_index`` the link
+    layer records. The envelopes phase runs later in a full push and writes
+    the same envelope again — ``write_envelope`` clears before it inserts, so
+    the second write is redundant, not doubled — while a scoped
+    ``--only clips`` push has only this re-emit standing between the recreate
+    and a silently dropped ride.
+    """
+    plan = PushPlan()
+    hosted = envelope_hosts_by_clip(conn, song_id).get(clip_id, set())
+    if not hosted:
+        return plan
+    for env in Q.get_envelopes_for_song(conn, song_id):
+        if env["id"] in hosted:
+            _plan_one_envelope(
+                plan, conn, song_id=song_id, session_id=session_id,
                 envelope=env,
-                breakpoints_mcp=bps_mcp,
-            )
-        elif target_kind == "device_parameter":
-            _emit_device_parameter_envelope(
-                plan, conn, song_id=song_id,
-                session_id=session_id,
-                envelope=env,
-                breakpoints_mcp=bps_mcp,
-            )
-        elif target_kind in ("mixer_volume", "mixer_pan"):
-            _emit_mixer_envelope(
-                plan, conn, song_id=song_id,
-                session_id=session_id,
-                envelope=env,
-                breakpoints_mcp=bps_mcp,
-            )
-        elif target_kind == "send_level":
-            _emit_send_envelope(
-                plan, conn, song_id=song_id,
-                session_id=session_id,
-                envelope=env,
-                breakpoints_mcp=bps_mcp,
-            )
-        elif target_kind in ("return_mixer_volume", "return_mixer_pan"):
-            # A return track's own mixer (ENV-7G4K): always perform-routed —
-            # returns host no clips, and the gesture-recording mechanism is
-            # probe-verified on return tracks (probe 4b).
-            _warn_non_session_route(
-                plan, envelope=env, route="perform", host_kind="return",
-            )
-        else:
-            # Schema CHECK already enforces target_kind ∈ allowlist; this is a
-            # belt-and-suspenders guard for future kinds added to the schema
-            # without a matching planner branch.
-            raise ValueError(
-                f"plan_push_envelopes: target_kind {target_kind!r} has no "
-                "emitter branch — add one alongside the schema entry"
             )
     return plan
+
+
+def _plan_one_envelope(
+    plan: PushPlan,
+    conn: sqlite3.Connection,
+    *,
+    song_id: str,
+    session_id: str,
+    envelope: sqlite3.Row,
+) -> None:
+    """Route one envelope row to its emitter, or warn why it is not emitted.
+
+    The single body behind :func:`plan_push_envelopes` (every envelope in the
+    song) and :func:`plan_push_envelopes_for_clip` (the ones one clip hosts),
+    so the route partition has exactly one home.
+    """
+    env = envelope
+    breakpoints = Q.get_breakpoints(conn, env["id"])
+    if not breakpoints:
+        plan.warn(
+            f"envelope {env['id']} ({env['target_kind']}) has no "
+            "breakpoints; skipping"
+        )
+        return
+    target_kind = env["target_kind"]
+    bps_mcp = _breakpoints_for_mcp(breakpoints)
+
+    if target_kind == "clip_cc":
+        # W4-B: Live 12.4's LOM doesn't expose
+        # ``Clip.create_automation_envelope`` for MIDI CC targets —
+        # the call raises ``ArgumentError`` (push-findings #12). The
+        # canonical workaround is to encode the CC ride as MIDI
+        # control-change notes via ``ableton_clip(action='replace_notes')``.
+        plan.warn(
+            f"envelope {env['id']} (clip_cc CC{env['parameter_path']}): "
+            "Live 12.4 LOM doesn't expose Clip.create_automation_envelope "
+            "for MIDI CC targets; encode as control-change notes via "
+            "ableton_clip(action='replace_notes') instead. Skipping."
+        )
+        return
+    if target_kind == "clip_pitch_bend":
+        # W4-B: same LOM gap as clip_cc (push-findings #12). No
+        # auto-encode path exists for pitch bend — author manually
+        # in Live.
+        plan.warn(
+            f"envelope {env['id']} (clip_pitch_bend): Live 12.4 LOM "
+            "doesn't expose Clip.create_automation_envelope for "
+            "pitch-bend targets; author manually in Live. Skipping."
+        )
+        return
+    if target_kind == "note_expression":
+        _emit_note_expression_envelope(
+            plan, conn,
+            session_id=session_id,
+            envelope=env,
+            breakpoints_mcp=bps_mcp,
+        )
+    elif target_kind == "device_parameter":
+        _emit_device_parameter_envelope(
+            plan, conn, song_id=song_id,
+            session_id=session_id,
+            envelope=env,
+            breakpoints_mcp=bps_mcp,
+        )
+    elif target_kind in ("mixer_volume", "mixer_pan"):
+        _emit_mixer_envelope(
+            plan, conn, song_id=song_id,
+            session_id=session_id,
+            envelope=env,
+            breakpoints_mcp=bps_mcp,
+        )
+    elif target_kind == "send_level":
+        _emit_send_envelope(
+            plan, conn, song_id=song_id,
+            session_id=session_id,
+            envelope=env,
+            breakpoints_mcp=bps_mcp,
+        )
+    elif target_kind in ("return_mixer_volume", "return_mixer_pan"):
+        # A return track's own mixer (ENV-7G4K): always perform-routed —
+        # returns host no clips, and the gesture-recording mechanism is
+        # probe-verified on return tracks (probe 4b).
+        _warn_non_session_route(
+            plan, envelope=env, route="perform", host_kind="return",
+        )
+    else:
+        # Schema CHECK already enforces target_kind ∈ allowlist; this is a
+        # belt-and-suspenders guard for future kinds added to the schema
+        # without a matching planner branch.
+        raise ValueError(
+            f"plan_push_envelopes: target_kind {target_kind!r} has no "
+            "emitter branch — add one alongside the schema entry"
+        )
 
 
 def _track_kind_for_envelope(
@@ -168,11 +232,11 @@ def _track_kind_for_envelope(
 ) -> str | None:
     """Look up a track's `kind` column, or None when track_id is None / unknown.
 
-    W10-F planner-side safety net for D2/D3. The DB mutator now refuses to
-    create envelopes for session-clip-routed kinds (mixer / pan / send /
-    device_parameter) on non-MIDI tracks (master / audio / group). This
-    helper backs the parallel planner refusal, which catches legacy rows
-    that pre-date the mutator check or pulled state that bypassed it.
+    The host kind is what the route depends on (:func:`_route_for_host_kind`),
+    so the planner reads it for every track-hosted envelope. A kind outside
+    the canonical vocabulary — a legacy row, or pulled state that bypassed
+    the create-time gate — falls through to 'unroutable' and is warned about
+    rather than emitted as a guaranteed-fail wire call.
     """
     if track_id is None:
         return None
@@ -184,19 +248,21 @@ def _route_for_host_kind(host_kind: str | None) -> str:
     """Map a host track's kind to its PER-CLIP / no-inference push route.
 
     This is the covered-case map (ENV-7G4K eligibility): master/group are
-    always performed (they own no session clips to ride); a midi host's
-    per-clip ride routes through a covering session clip; an audio host's
-    per-clip ride is session-audio-clip scope (CLP-AUD2), refused here.
+    always performed (they own no session clips to ride); a midi OR audio
+    host's per-clip ride routes through a covering session clip, because
+    ``Clip.create_automation_envelope`` accepts an audio session clip just
+    as it does a midi one (probe row 3 wrote a track-volume envelope onto a
+    real audio session clip and read the value back). What Live refuses is
+    an ARRANGEMENT clip ("Not a session clip", probe row 2) — and no route
+    here ever addresses one: every emitter writes ``location='session'``.
     ENV-9P4T's ``_route_track_hosted`` wraps this with infer-from-span so a
     clip-INDEPENDENT (e.g. song-spanning) ride on a midi/audio host routes
     to ``perform`` instead.
     """
-    if host_kind == "midi":
+    if host_kind in ("midi", "audio"):
         return "session_clip"
     if host_kind in ("master", "group"):
         return "perform"
-    if host_kind == "audio":
-        return "refused_audio"
     return "unroutable"
 
 
@@ -228,12 +294,11 @@ def _route_track_hosted(
     session clip on the host track covers the envelope's beat span — a
     continuous, clip-independent arrangement ride (the 10+-track use case
     and the song-spanning send across tacet gaps). Otherwise the per-clip
-    route: ``session_clip`` for a midi host, ``refused_audio`` (CLP-AUD2)
-    for an audio host. A degenerate no-breakpoint envelope falls back to the
-    coarse host-kind route.
+    route, ``session_clip``, for a midi or an audio host alike. A degenerate
+    no-breakpoint envelope falls back to the coarse host-kind route.
     """
     base = _route_for_host_kind(host_kind)
-    if base not in ("session_clip", "refused_audio"):
+    if base != "session_clip":
         # master/group → perform; unknown/unresolved kind → unroutable. No
         # session-clip notion applies, so infer-from-span is a no-op.
         return base
@@ -258,19 +323,17 @@ def classify_envelope_route(
       'clip_scoped'    clip_cc / clip_pitch_bend / note_expression — hosted
                        by the authored clip itself; existing emitters own
                        their LOM-gap teaching.
-      'session_clip'   midi-track host whose envelope is COVERED by a single
-                       session clip — a per-clip ride routed through
-                       Clip.create_automation_envelope.
+      'session_clip'   midi- OR audio-track host whose envelope is COVERED
+                       by a single session clip — a per-clip ride routed
+                       through Clip.create_automation_envelope. The clip
+                       addressed is always a SESSION clip; Live refuses the
+                       call on an arrangement clip (probe row 2).
       'perform'        master/group host, return-side mixer or device, OR a
                        plain midi/audio track host whose envelope is NOT
                        covered by a single session clip (a continuous,
                        clip-independent arrangement ride — ENV-9P4T).
                        Gesture-recorded into arrangement automation by the
                        performed-automation push phase (write-only surface).
-      'refused_audio'  audio-track host whose envelope IS covered by a
-                       single (audio) session clip — a per-clip ride whose
-                       session-audio-clip push surface is CLP-AUD2; warn +
-                       skip with teaching. (An UNCOVERED audio ride performs.)
       'unroutable'     unresolvable host (missing device/chain), nested-rack
                        device (no addressable surface on either route), or
                        an unknown kind — caller warns with specifics.
@@ -337,18 +400,10 @@ def _session_clip_host_track(
     return None
 
 
-def envelope_hosting_clip_ids(
+def envelope_hosts_by_clip(
     conn: sqlite3.Connection, song_id: str,
-) -> set[str]:
-    """ARR-PROJ §5/§9: the set of session-clip ids that HOST a clip-bound
-    envelope — i.e. clips whose envelopes ``duplicate_to_arrangement``
-    snapshot-copies into the arrangement (W4-A).
-
-    An arrangement placement of such a clip MUST materialize via the duplicate
-    path, NOT create+fill: create+fill writes notes only and would silently
-    drop the clip envelope (the §9 routing risk). The arrangement planner routes
-    every placement whose ``clip_id`` is in this set to duplicate-onto-cleared,
-    and every other (note-only) placement to create+fill.
+) -> dict[str, set[str]]:
+    """Session-clip id → the ids of the envelopes that clip HOSTS.
 
     A clip hosts an envelope when the envelope routes ``session_clip``
     (:func:`classify_envelope_route`) and a covering placement resolves to it,
@@ -358,8 +413,14 @@ def envelope_hosting_clip_ids(
     the envelope isn't on the session clip there is nothing for duplicate to
     carry and nothing for create+fill to lose). Reuses the authoritative
     classifier so routing never drifts from the envelopes phase.
+
+    Two consumers read it: the arrangement planner needs the KEYS (which clips
+    must travel by duplicate so their envelopes travel with them —
+    :func:`envelope_hosting_clip_ids`), and the clips phase needs the VALUES
+    for one clip (which envelopes a destructive recreate has to re-emit —
+    :func:`plan_push_envelopes_for_clip`).
     """
-    hosts: set[str] = set()
+    hosts: dict[str, set[str]] = {}
     for env in Q.get_envelopes_for_song(conn, song_id):
         route = classify_envelope_route(conn, env, song_id=song_id)
         if route == "session_clip":
@@ -371,15 +432,35 @@ def envelope_hosting_clip_ids(
                     env_min=span[0], env_max=span[1],
                 )
                 if cov is not None:
-                    hosts.add(cov.clip_id)
+                    hosts.setdefault(cov.clip_id, set()).add(env["id"])
         elif route == "clip_scoped":
             if env["target_clip_id"]:
-                hosts.add(env["target_clip_id"])
+                hosts.setdefault(env["target_clip_id"], set()).add(env["id"])
             elif env["target_note_id"]:
                 note = Q.get_note(conn, env["target_note_id"])
                 if note is not None:
-                    hosts.add(note["clip_id"])
+                    hosts.setdefault(note["clip_id"], set()).add(env["id"])
     return hosts
+
+
+def envelope_hosting_clip_ids(
+    conn: sqlite3.Connection, song_id: str,
+) -> set[str]:
+    """ARR-PROJ §5/§9: the set of session-clip ids that HOST a clip-bound
+    envelope — i.e. clips whose envelopes ``duplicate_to_arrangement``
+    snapshot-copies into the arrangement (W4-A).
+
+    An arrangement placement of such a clip MUST materialize via the duplicate
+    path, NOT a fresh create: a fresh arrangement clip carries no envelope,
+    whether it is filled from notes (MIDI) or loaded from a file (audio), so
+    either would silently drop the clip envelope (the §9 routing risk). The
+    arrangement planner routes every placement whose ``clip_id`` is in this set
+    to duplicate-onto-cleared — MIDI and audio alike; the duplicate carries a
+    ride off an audio session clip exactly as off a MIDI one, probe-confirmed
+    with an envelope-free control — and every other placement to a fresh
+    create. The keys of :func:`envelope_hosts_by_clip`.
+    """
+    return set(envelope_hosts_by_clip(conn, song_id))
 
 
 def _warn_non_session_route(
@@ -400,15 +481,6 @@ def _warn_non_session_route(
             f"host kind={host_kind!r} routes to the performed-automation "
             "phase (gesture-recorded arrangement automation), not the "
             "session-clip envelope phase."
-        )
-    elif route == "refused_audio":
-        plan.warn(
-            f"envelope {envelope['id']} ({target_kind}): host track "
-            f"{host_track_id} is an audio track and this envelope is COVERED "
-            "by a single audio session clip — a per-clip ride whose "
-            "session-audio-clip push surface is CLP-AUD2 (not yet built). A "
-            "clip-INDEPENDENT (e.g. song-spanning) ride records continuously "
-            "via perform; author it to span beyond any single clip. Skipping."
         )
     else:
         plan.warn(
@@ -460,47 +532,27 @@ def _emit_note_expression_envelope(
     envelope: sqlite3.Row,
     breakpoints_mcp: list[dict[str, Any]],
 ) -> None:
-    """note_expression emission — MPE per-note envelopes addressed by
-    (clip, pitch, start_beats). Note links aren't tracked, so the canonical
-    args identify the note in-band."""
-    note_row = Q.get_note(conn, envelope["target_note_id"])
-    if note_row is None:
-        plan.warn(
-            f"envelope {envelope['id']} (note_expression): note "
-            f"{envelope['target_note_id']} not found; skipping"
-        )
-        return
-    track_at, clip_at = _clip_and_track_indices(
-        conn, session_id=session_id, clip_id=note_row["clip_id"]
+    """Refuse a note_expression row at plan time — the route does not exist.
+
+    Live's Python API exposes no per-note expression surface under any name,
+    so there is nothing for this envelope to be written through: not a method
+    waiting on the right spelling, and not a gap a Live update is expected to
+    close. Nothing in the codebase authors such a row any more, so reaching
+    here means a DB predating that.
+
+    This refuses rather than dispatching because the call it used to build is
+    now refused at the MCP boundary, and a refusal that arrives mid-push has
+    already begun a phase it cannot finish. `blocked` is the right channel:
+    the song asked for something the push cannot carry, which leaves the run
+    INCOMPLETE and non-zero without halting the phases behind it.
+    """
+    plan.blocked(
+        f"envelope {envelope['id']} (note_expression): Live's Python API has "
+        "no per-note expression surface under any name, so a polyphonic "
+        "per-note bend cannot be pushed by any route. Author a monophonic "
+        "glide as a `device_parameter` ride on the instrument's pitch "
+        "parameter instead, and drop this row from build.py."
     )
-    if track_at is None or clip_at is None:
-        plan.warn(
-            f"envelope {envelope['id']} (note_expression): clip not linked "
-            f"(track={track_at}, clip={clip_at}); skipping"
-        )
-        return
-    plan.add(ToolCall(
-        tool="ableton_automation",
-        args={
-            "action": "write_envelope",
-            "target_kind": "note_expression",
-            "track_index": track_at,
-            "location": "session",
-            "clip_index": clip_at,
-            "note_pitch": note_row["pitch"],
-            "note_start_beats": float(note_row["start_beats"]),
-            "note_duration": float(note_row["duration_beats"]),
-            "axis": envelope["parameter_path"],
-            "breakpoints": breakpoints_mcp,
-        },
-        key=f"envelope:{envelope['id']}",
-        purpose=(
-            f"note_expression {envelope['parameter_path']} on note "
-            f"pitch={note_row['pitch']} @ beat {note_row['start_beats']:g}: "
-            f"{len(breakpoints_mcp)} breakpoint(s)"
-        ),
-    ))
-    _warn_lossy_curve_hints(plan, envelope=envelope, breakpoints_mcp=breakpoints_mcp)
 
 
 _LOSSY_CURVE_HINTS = frozenset({"linear", "fast", "slow"})
@@ -719,10 +771,10 @@ def _emit_device_parameter_envelope(
     breakpoints_mcp: list[dict[str, Any]],
 ) -> None:
     """device_parameter emission for the session-clip route — reached only
-    when classify_envelope_route returns 'session_clip' (a covered midi-host
-    device parameter; W4-A / W4-B). Master/group/return-side devices and
-    uncovered rides route to the performed-automation phase (ENV-7G4K /
-    ENV-9P4T); an audio host covered by a clip is refused pending CLP-AUD2."""
+    when classify_envelope_route returns 'session_clip' (a covered midi- or
+    audio-host device parameter; W4-A / W4-B). Master/group/return-side
+    devices and uncovered rides route to the performed-automation phase
+    (ENV-7G4K / ENV-9P4T)."""
     device_id = envelope["target_device_id"]
     chain_row = Q.get_device_parent_chain(conn, device_id)
     if chain_row is None:
@@ -734,9 +786,9 @@ def _emit_device_parameter_envelope(
     route = classify_envelope_route(conn, envelope, song_id=song_id)
     if route != "session_clip":
         # DEEP-RACK-ADDR: nested-rack params route to 'perform' (the perform
-        # phase rides them via device_path); master/return and uncovered/
-        # covered-audio rides also land here. The session-clip phase owns none
-        # of them, so note the real route and return.
+        # phase rides them via device_path); master/return hosts and
+        # clip-independent (uncovered) rides also land here. The session-clip
+        # phase owns none of them, so note the real route and return.
         if chain_row["parent_rack_device_id"] is not None:
             host_track_id = None
             host_kind = "nested-rack device"

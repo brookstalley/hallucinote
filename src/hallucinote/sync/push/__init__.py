@@ -67,6 +67,7 @@ from .scenes import (
 )
 from .arrangement import (
     plan_push_arrangement,
+    plan_push_arrangement_audio_regions,
     plan_push_arrangement_clip_notes,
     plan_push_cue_points,
     plan_push_sections,
@@ -87,9 +88,11 @@ from .routing import (
 from .envelopes import (
     _LOSSY_CURVE_HINTS,
     plan_push_envelopes,
+    plan_push_envelopes_for_clip,
     _track_kind_for_envelope,
     classify_envelope_route,
     envelope_hosting_clip_ids,
+    envelope_hosts_by_clip,
     _clip_and_track_indices,
     _CoveringPlacement,
     _resolve_envelope_session_clip,
@@ -135,6 +138,7 @@ from .plan import (
     LiveArrangementProbe,
     resolve_live_arrangement_probe,
     LiveDeviceProbe,
+    LiveSessionClipProbe,
     resolve_live_device_probe,
     _PHASE_NAMES,
     _PHASE_DEPS,
@@ -175,6 +179,7 @@ __all__ = [
     "plan_push_scenes",
     # Arrangement / cues / sections
     "plan_push_arrangement",
+    "plan_push_arrangement_audio_regions",
     "plan_push_arrangement_clip_notes",
     "plan_push_cue_points",
     "plan_push_sections",
@@ -191,12 +196,14 @@ __all__ = [
     # Envelopes
     "_LOSSY_CURVE_HINTS",
     "plan_push_envelopes",
+    "plan_push_envelopes_for_clip",
     "plan_push_performed_automation",
     "envelope_fingerprint",
     "record_perform_result",
     "_track_kind_for_envelope",
     "classify_envelope_route",
     "envelope_hosting_clip_ids",
+    "envelope_hosts_by_clip",
     "_clip_and_track_indices",
     "_CoveringPlacement",
     "_resolve_envelope_session_clip",
@@ -235,6 +242,7 @@ __all__ = [
     "LiveArrangementProbe",
     "resolve_live_arrangement_probe",
     "LiveDeviceProbe",
+    "LiveSessionClipProbe",
     "resolve_live_device_probe",
     "_PHASE_NAMES",
     "_PHASE_DEPS",

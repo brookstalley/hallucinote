@@ -20,6 +20,7 @@ from ..geometry import (
     _meter_at_bar as _meter_at_bar,
     _split_bar as _split_bar,
     _position_bar_to_beats as _position_bar_to_beats,
+    uniform_bar_math_divergences as uniform_bar_math_divergences,
 )
 
 
@@ -102,12 +103,36 @@ class PushPlan:
         Strictly stronger than :meth:`alert` (which it also records): a blocked
         reason makes the push report INCOMPLETE with a non-zero exit, because
         the song did not get something it asked for. Use :meth:`warn` for a
-        deliberate, known-scope no-op (e.g. audio tracks, CLP-AUD2) and
+        deliberate no-op the phase is entitled to make (e.g. an audio track
+        the DB holds no placements for) and
         :meth:`error` for authoring Live can NEVER materialize (that halts the
         phase before dispatch).
         """
         self.blocked_reasons.append(msg)
         self.alerts.append(msg)
+
+    def absorb(self, sub: "PushPlan", *, note_prefix: str | None = None) -> None:
+        """Merge a sub-plan into this one, channel by channel, without
+        double-counting.
+
+        Blocked reasons are re-recorded through :meth:`blocked` so each lands
+        on BOTH channels the way the sub-plan wrote it, and ``alerts`` then
+        carries only the sub-plan's own alerts — a blocked reason copied twice
+        would read as two. Notes take an optional prefix so a merged plan stays
+        diagnosable per source; alerts, errors and blocked reasons ride up
+        unprefixed, since they already name what they are about and a reason
+        that did not reach the parent would be a push reporting OK over work
+        it did not do.
+        """
+        self.calls.extend(sub.calls)
+        if note_prefix is None:
+            self.notes.extend(sub.notes)
+        else:
+            self.notes.extend(f"{note_prefix} {n}" for n in sub.notes)
+        self.errors.extend(sub.errors)
+        for reason in sub.blocked_reasons:
+            self.blocked(reason)
+        self.alerts.extend(a for a in sub.alerts if a not in sub.blocked_reasons)
 
     def to_dict(self) -> dict[str, Any]:
         return {

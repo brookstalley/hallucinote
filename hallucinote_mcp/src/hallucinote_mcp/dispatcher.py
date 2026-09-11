@@ -30,7 +30,7 @@ from typing import Any, Callable, Protocol
 
 from . import schema
 from .provenance import auto_request
-from .wire import Request, Response, error, ok
+from .wire import WORK_ESCALATED_CODE, Request, Response, error, ok
 
 
 logger = logging.getLogger("hallucinote_mcp.dispatcher")
@@ -44,7 +44,7 @@ logger = logging.getLogger("hallucinote_mcp.dispatcher")
 class LiveContext(Protocol):
     """The dispatcher sees the Live API through this Protocol.
 
-    Four members:
+    Its members:
 
       - ``song``: the Live Song object (``Live.Song.Song`` in real Live).
         Accessed from inside ``run_on_main`` callbacks so it's always
@@ -62,6 +62,17 @@ class LiveContext(Protocol):
         thread, block the calling worker thread until it returns, return
         the result (or re-raise the exception). Tests substitute a synchronous
         identity function; real Live uses ``schedule_message``.
+
+      - ``main_thread_bout()`` / ``abandon_main_thread_bout(job_id)``: read
+        and force-release the main-thread occupancy record. A ``run_on_main``
+        that outruns its ceiling does NOT release the bout — the work is
+        uncancellable and still running — so the occupancy must be readable
+        (there is no timed auto-clear that would quietly forgive a runner
+        that never signals) and, as a last resort, releasable by an operator
+        who accepts that Live may still be working. Both are served by
+        ``ableton_session`` actions declared ``runs_on_worker=True``: an
+        action that needed the main-thread bout in order to ask about the
+        main-thread bout would deadlock by construction.
 
       - ``live_state_lock``: a context-manager-shaped lock that serializes
         operations whose correctness depends on shared Live transport
@@ -93,6 +104,12 @@ class LiveContext(Protocol):
         label: str | None = None,
     ) -> Any: ...  # pragma: no cover
 
+    def main_thread_bout(self) -> Any: ...  # pragma: no cover - structural only
+
+    def abandon_main_thread_bout(
+        self, job_id: str
+    ) -> Any: ...  # pragma: no cover - structural only
+
 
 # ---------------------------------------------------------------------------
 # Param validation
@@ -110,6 +127,44 @@ class LiveBusyError(RuntimeError):
     failure: nothing is broken, the work was never attempted, and retrying
     immediately makes things worse — it deepens the queue behind an operation
     that cannot be cancelled."""
+
+
+class LiveWorkEscalatedError(RuntimeError):
+    """A ``run_on_main`` bout outran its ceiling and IS STILL RUNNING in Live.
+
+    Defined here, beside ``LiveBusyError`` and the ``LiveContext`` Protocol
+    that raises it, so the dispatcher can translate it without importing the
+    Live-only module.
+
+    Not a failure and not a success: Python cannot interrupt a Live API call,
+    so the only honest report is a handle to the work plus the instruction to
+    poll it. ``job_id`` names a ``main_thread`` job in the Remote Script
+    process's registry; the runner on Live's main thread settles that job when
+    it finally returns.
+    """
+
+    def __init__(
+        self,
+        *,
+        job_id: str,
+        label: str,
+        elapsed_s: float,
+        waited_s: float,
+    ) -> None:
+        self.job_id = job_id
+        self.label = label
+        self.elapsed_s = elapsed_s
+        self.waited_s = waited_s
+        super().__init__(
+            f"Live API call ({label}) did not complete within {waited_s}s. "
+            f"IT IS STILL RUNNING on Live's main thread — Python cannot "
+            f"interrupt a Live API call, so this is a report that we stopped "
+            f"waiting, NOT that the work stopped. It has been running "
+            f"{elapsed_s:.1f}s and is now observable as job {job_id}. Do not "
+            f"retry immediately: another call now queues behind the one still "
+            f"executing, and Live's main thread stays occupied until this one "
+            f"returns."
+        )
 
 
 class ParamValidationError(Exception):
@@ -447,7 +502,7 @@ def dispatch(request: Request, context: LiveContext | None = None) -> Response:
                 f"unknown param {exc.args[0]!r}; this is a schema bug",
                 hint="Report this — the action schema and handler are out of sync.",
             )
-        except Exception as exc:  # prawduct:ok-broad-except — dispatcher boundary; structured response > raw traceback
+        except Exception as exc:  # prawduct:allow prawduct/broad-except -- dispatcher boundary; structured response > raw traceback.
             logger.exception(
                 "server-side handler failed: %s(%r) with params=%r",
                 action.tool, action.name, validated,
@@ -519,6 +574,47 @@ def dispatch(request: Request, context: LiveContext | None = None) -> Response:
             f"unknown param {exc.args[0]!r}; this is a schema bug",
             hint="Report this — the action schema and executor are out of sync.",
         )
+    except LiveWorkEscalatedError as exc:
+        # NOT an error. The bout outran its ceiling and Live is still running
+        # it, so the truthful reply is a handle plus the poll instruction —
+        # ``ok=True`` with ``code=work_escalated`` as the discriminator, the
+        # same start+poll shape the async render/analyze surfaces already use.
+        # Kept ahead of the broad catch so it never reads as "the action is
+        # broken", and not logged at exception level: an overrunning Live
+        # operation is a condition, not a defect.
+        #
+        # A worker-thread handler mid-mutation when an inner bout escalates
+        # (``locate_start_position`` can be holding a borrowed cue) still
+        # surfaces its own cleanup reporting through the exception it raises —
+        # this arm only catches the escalation itself, never swallows it.
+        logger.warning(
+            "main-thread work escalated: %s(%r) still running after %.1fs "
+            "(job %s)", action.tool, action.name, exc.elapsed_s, exc.job_id,
+        )
+        return Response(
+            ok=True,
+            code=WORK_ESCALATED_CODE,
+            result={
+                "escalated": True,
+                "job_id": exc.job_id,
+                "label": exc.label,
+                "elapsed_s": round(exc.elapsed_s, 3),
+                "waited_s": exc.waited_s,
+                "poll": (
+                    f"This call has NOT failed and has NOT finished — it is "
+                    f"still running on Live's main thread and cannot be "
+                    f"cancelled. Poll it with ableton_session("
+                    f"action='bout_status', job_id='{exc.job_id}') until "
+                    f"state is 'done' or 'failed'. Do NOT retry the original "
+                    f"call: another call now queues behind the one still "
+                    f"executing, which is how a slow operation becomes an "
+                    f"unresponsive Live. ableton_session("
+                    f"action='abandon_bout', job_id='{exc.job_id}') releases "
+                    f"the admission gate if you accept that the work may "
+                    f"still be running."
+                ),
+            },
+        )
     except LiveBusyError as exc:
         # Not a failure of THIS request — it was never attempted. Kept ahead of
         # the broad catch so it never reads as "the action is broken", and
@@ -533,7 +629,7 @@ def dispatch(request: Request, context: LiveContext | None = None) -> Response:
                 "unresponsive Live."
             ),
         )
-    except Exception as exc:  # prawduct:ok-broad-except — dispatcher is a system boundary; we MUST translate any executor exception into a structured wire response or the agent gets a raw traceback
+    except Exception as exc:  # prawduct:allow prawduct/broad-except -- dispatcher is a system boundary; we MUST translate any executor exception into a structured wire response or the agent gets a raw traceback.
         logger.exception(
             "executor failed: %s(%r) with params=%r",
             action.tool, action.name, validated,
@@ -551,6 +647,8 @@ def dispatch(request: Request, context: LiveContext | None = None) -> Response:
 
 __all__ = [
     "LiveContext",
+    "LiveBusyError",
+    "LiveWorkEscalatedError",
     "ParamValidationError",
     "validate_params",
     "help_for_tool",

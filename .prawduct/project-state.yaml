@@ -270,9 +270,9 @@ technical_decisions:
       alternatives_considered: "Logging-style events outside the transaction (rejected — opens drift between state and audit log)."
       date: "2026-05-15"
     - decision: "Audio clips share the `clips` table via a `kind` discriminator (CLP-AUD1 wave 1)"
-      rationale: "Audio material is a clip row with kind='audio' + locked wave-1 audio columns; invariants live in mutators (not schema CHECKs); path resolution is caller-owned via stdlib-only `hallucinote.paths.resolve_audio_path`. Full column semantics + sync exemptions in .prawduct/artifacts/plans/CLP-AUD1/design.md."
+      rationale: "Audio material is a clip row with kind='audio' + locked wave-1 audio columns; invariants live in mutators (not schema CHECKs); path resolution is caller-owned via stdlib-only `hallucinote.paths.resolve_audio_path`. Full column semantics + sync exemptions in .prawduct/artifacts/plans/CLP-AUD1/archive/design.md."
       alternatives_considered: "Separate audio_clips table (duplicates every clip constraint); warp_mode as TEXT enum (drifts from LOM int domain); absolute-only paths (breaks portability)."
-      date: "2026-06-10 (CLP-AUD1 chunks 1-2; design at .prawduct/artifacts/plans/CLP-AUD1/design.md)"
+      date: "2026-06-10 (CLP-AUD1 chunks 1-2; design at .prawduct/artifacts/plans/CLP-AUD1/archive/design.md)"
     - decision: "ableton_sessions + ableton_links projection separation"
       rationale: "Bindings to Ableton don't live on core rows. Multiple sessions per song are intentional — one song can be bound to several Live sets without aliasing. `link_db_to_ableton(session_id, db_kind, db_id, ableton_index)` is the generic mutator that replaced three per-domain link_*_to_ableton functions."
       alternatives_considered: "Per-domain ableton_index columns on every entity row (rejected — coupled core schema to the rendering layer)."
@@ -333,6 +333,19 @@ design_decisions:
         expensive-to-reverse forks earn a proposal.
       artifact: .prawduct/artifacts/intent-collaboration-model.md
     - name: "One consolidated turn, bounded"
+      status: >-
+        RETIRED 2026-09-01 (owner-decided) — superseded by "Build to the
+        hearable unit, then offer a hearing" and "The status offer". The norm
+        was right that elicitation needs a bound and wrong about which one: the
+        turn cap solved correctness (no gap travels downstream dressed as a
+        decision) but said nothing about ownership, and it told the agent that
+        after one turn the stage closes and it may not ask again. What followed
+        was a 186-tool-call build the user never authorized (CTM-10), and an
+        agent declaring identity resolved while the user's answers were still
+        arriving (CTM-09). The two failure modes it bounded are now bounded by
+        the hearable unit (what a turn may raise) and the status offer (when to
+        stop asking). Elicitation is a conversation that ends at the user's
+        hand-off.
       summary: >-
         Elicitation gets exactly one turn, with every proposal, disclosure and
         piece of arithmetic in a single message. Sequential Q&A burns patience
@@ -342,6 +355,53 @@ design_decisions:
         failure modes that both look like diligence: the stage that never
         converges, and the turn that fragments.
       artifact: .prawduct/artifacts/elicitation-and-stage-exit-criteria.md
+    - name: "Read the turn before acting"
+      summary: >-
+        Every user turn is one of six kinds — directing, reacting, exploring,
+        asking, delegating, handing-off — and only directing and handing-off
+        authorize building. Musing is not a request: when the user thinks out
+        loud, think with them and touch nothing. Nearly every failure in the
+        evidence corpus is a misread here.
+      artifact: .prawduct/artifacts/collaboration-turn-model.md
+    - name: "Build to the hearable unit, then offer a hearing"
+      summary: >-
+        The hearable unit is the smallest thing that, once heard, tells the user
+        whether the idea works. Never author past one unit without having
+        OFFERED to play it — and never require the user to listen in order to
+        continue: "keep going" is a complete answer, and a decline carrying a
+        scope ("build it all, I'll listen at the end") is recorded and not
+        re-asked. The bound is on the offer, never on the listening; insisting
+        on a listen is the inquisition in another costume. Reading "done" better
+        without this bound just moves the cliff — the two are one design.
+      artifact: .prawduct/artifacts/collaboration-turn-model.md
+    - name: "The status offer"
+      summary: >-
+        When you have nothing to follow and something to play: name what is
+        settled so it can be corrected in a word, offer hearing as an option
+        rather than a default, and name what has not come up WITHOUT asking
+        about it. Naming is an invitation; asking is a demand. Fires when the
+        material has reached a hearable unit AND the user's last turn closed
+        rather than opened something, and no scoped decline is in force.
+      artifact: .prawduct/artifacts/collaboration-turn-model.md
+    - name: "A loaded prompt opens its domain"
+      summary: >-
+        A few words carrying many implications — a genre, a form, an era, an
+        artist — are unpacked, not run with. State which implications you take
+        as read so they are correctable in a word, then ask about the two or
+        three whose answer would change the song most. Never the whole list,
+        never a form. The reference artist is one rare instance of the general
+        case, not a special case to over-index on; reading a reference as a
+        shortcut that "collapses five other answers" is what produces the
+        run-off-and-build failure.
+      artifact: .prawduct/artifacts/collaboration-turn-model.md
+    - name: "Identity closes at hand-off, never by inference"
+      summary: >-
+        An answer that adds a new dimension means the user has more; silence on
+        something you asked is still-thinking, not agreement. The brief carries
+        an owner column (yours / offer me options / mine) learned from the
+        conversation rather than asked for, and is updated every turn rather
+        than written once and obeyed.
+      artifact: .prawduct/artifacts/collaboration-turn-model.md
     - name: "Three states, and a forbidden fourth"
       summary: >-
         Every dimension a stage touches ends DECIDED (value AND mechanism
@@ -361,7 +421,7 @@ design_decisions:
         judgements never fail a build.
       artifact: .prawduct/artifacts/gate-verdict-policy.md
   accessibility_approach: null
-  error_handling_approach: "Plain exceptions (ValueError, KeyError); no custom hierarchy. Broad catches require `# prawduct:ok-broad-except` annotation with rationale; every catch logs context. Narrow carve-out (ONBOARD-M4L): two leaf classes callers catch by identity — `PresetQueryNoMatchError` (device.py) and `AnalyzerNotInstalledError` (analyzer/setup.py); new code still defaults to plain exceptions."
+  error_handling_approach: "Plain exceptions (ValueError, KeyError); no custom hierarchy. Broad catches require a `# prawduct:allow prawduct/broad-except -- <reason>` waiver stating what is absorbed and why; every catch logs context. Narrow carve-out (ONBOARD-M4L): two leaf classes callers catch by identity — `PresetQueryNoMatchError` (device.py) and `AnalyzerNotInstalledError` (analyzer/setup.py); new code still defaults to plain exceptions."
   observability_approach: "The event log IS the audit trail. Every mutator emits an event with actor (in events.ACTORS), reason, request_id, and monotonic seq. No logging frameworks beyond stdlib `logging`. The `requests` table groups events under higher-level intent for cross-mutator correlation."
   infrastructure_dependencies: "SQLite (embedded, WAL mode) for state. Ableton Live + hallucinote-mcp Remote Script for the rendering engine. GitHub Issues on brookstalley/hallucinote is the backlog of record since the 2026-08-10 cutover — a real external service dependency, reached via the `gh` CLI (needs `repo` scope + network). It is NOT on the product's runtime path: no shipped code calls it, so a song builds, pushes and renders with GitHub unreachable; what degrades is development workflow (backlog read/write), and `prawduct-hook backlog cache-query` serves the last synced state offline. Live-Ableton tests are manual; CI runs against mocked dispatcher tests in hallucinote_mcp/tests/."
   visual_direction: null
@@ -455,7 +515,7 @@ artifact_manifest:
       version: 3
       depends_on: [project-preferences]
     - name: build-plan
-      file_path: .prawduct/artifacts/build-plan-highroi-sweep.md
+      file_path: .prawduct/artifacts/archive/build-plan-highroi-sweep.md
       version: 2
       depends_on: [project-preferences, boundary-patterns]
     - name: arrangement-model
@@ -524,16 +584,34 @@ build_state:
   source_root: "src/hallucinote/"
 
 # Active build plan pointer (.prawduct/-relative).
-# In-flight plans with pending Live-gated work (see each plan's Status section):
-#   SMP-7K2D — chunks 1-2 + no-Live 5 done; probe chunk 0 + push chunks 3-4 pending.
-#   ARR-PROJ — all 5 headless chunks built on plan/arr-proj-arrangement-materialization;
-#     cumulative-Critic PR gate + live e2e + ARR-9X4T/ARR-7H2N backlog close remain.
-#   TOUR — ALL CHUNKS COMPLETE and MERGED to develop (2026-08-11, PR #452,
-#     merge 258200f): punk-fate in examples/, C1 evidence + docs/tour.md +
-#     freshness tests, cumulative Critic 0 blocking, PR review 0 blocking.
-#     Gitflow: the plan stays LIVE until the develop→main release — the
-#     release checklist's plan-backfill archives it (change-log entry
-#     scope=tour is untagged, i.e. release-pending).
+# In-flight plans with pending Live-gated work: NONE as of 2026-09-08.
+# The JANITOR-2026-09 sweep archived every plan under artifacts/plans/ (46
+# directories plus the EXECUTION-ORDER wave doc), and six finished
+# build-plan-*.md at the artifacts root; 8 of the 53 were superseded, each
+# naming what absorbed it. The three this list
+# used to name are all resolved:
+#   SMP-7K2D — archived superseded; its unbuilt Live probe + push chunks are
+#     brookstalley/hallucinote#330.
+#   ARR-PROJ — archived completed; the residual live e2e is #306, and the two
+#     witness items it named are closed (#349) or subsumed.
+#   TOUR — was already archived on 2026-08-11 by the v1.8.3 release checklist's
+#     plan-backfill, so this entry described it as live for four weeks after the
+#     release that retired it. That is the failure this list invites: a
+#     hand-maintained roster of live plans drifts the moment one is archived by
+#     any other route.
+# Where the live plans are, rather than which they are: the per-scope
+# directories under artifacts/plans/, plus the flat build-plan*.md files at the
+# artifacts root. Those flat ones are merged-but-unreleased and stay live per
+# gitflow until the develop->main release ships; each names the merged PR that
+# carried it, and those are PULL REQUEST numbers, not backlog issues —
+# `backlog resolve` will not find them. Enumerating the set here is what the
+# warning above is about, and a roster written in this comment has already gone
+# stale twice: `ls .prawduct/artifacts/plans/ .prawduct/artifacts/*build-plan*.md`
+# (the infix glob, not a `build-plan*` prefix — onboarding-teaching-build-plan.md
+# does not start with it, and both prior enumerations here missed exactly that)
+# answers it from the tree, which cannot drift.
+# Each plan says so in its own text;
+# this comment is a pointer, and if it disagrees with the tree the tree wins.
 # Shipped/stale plan history: the git history of this file (pre-2026-07-04,
 # PRC-5W2N trim) has the full narrative; a per-machine copy also sits in the
 # gitignored reflections archive where present.
@@ -550,6 +628,14 @@ build_state:
 # gone.)
 active_build_plan:
 
+# The canonical suite invocation. Without it the evidence recorder falls back to
+# the hook interpreter's own pytest, which is not this project's environment —
+# `project-preferences.md` is explicit that a "green" claim must come from the
+# locked env, and a fallback run silently is not one. Kept in step with the
+# preferences entry; the xdist grouping is per-directory (tests/conftest.py), so
+# the parallel form is the same suite, not a subset.
+test_command: uv run --frozen pytest -n auto --dist loadgroup --junit-xml={junit_xml} -q
+
 # Test roots for the evidence recorder, which otherwise discovers repo-root
 # `tests/` only. This repo is a two-package layout: the engine's suite is under
 # `tests/`, the MCP server's under `hallucinote_mcp/tests/`, and `examples/`
@@ -565,7 +651,7 @@ tests_dirs: tests hallucinote_mcp/tests examples
 backlog_format_version: 2
 
 # Stamped by /prawduct:backlog list/pick/triage — resolves the backlog-overdue-grooming advisory.
-backlog_last_groomed_at: 2026-08-11
+backlog_last_groomed_at: 2026-09-10
 
 # THE LIVE BACKLOG. Set at the MG4 migration-scrub cutover 2026-08-10, after
 # `verify-migration` exited 0 with all five lists empty (225 source items, 225
@@ -587,7 +673,54 @@ backlog_service_repo: brookstalley/hallucinote
 # data-model, nonfunctional-requirements and observability-strategy; the Enforcement
 # table in artifacts/project-preferences.md is the index (pointer rows for the
 # artifact-homed norms, plus the code-level rows with Audit home / Why columns).
-norm_registry_ratified: 2026-08-12 — 29 norms: 27 across six strategy artifacts, plus two prose norms homed in project-preferences.md itself (write what a thing IS; user holds the creative verbs). The pending veto on the two agent-authored narrowings is RESOLVED by owner ruling: narrowing 1 (the "competitor/critic vs mechanism" test) REJECTED — the absolute reading stands and a contrast-definition is banned whatever it is describing; narrowing 2 (prior-art lineage may be named, never ranked against) RATIFIED. The owner also set the norm's scope for the first time: positioning prose only (README, CONTRIBUTING, SECURITY, VISION, faq, tour), and later the same day ratified the two carve-outs the sweep had applied and recorded as pending — a prescriptive rule may prohibit, and verbatim quotation is untouchable. The row now carries FOUR owner-ratified carve-outs and nothing pending; adding a fifth is a ruling, not a judgment call. Prior 2026-08-11 — same 29, both narrowings pending veto. Prior 2026-08-10 — 27 norms; six forks ruled by the owner (API scope stays internal; arrangement projection contained push-side)
+norm_registry_ratified: >-
+  2026-08-12 — 29 norms: 27 across six strategy artifacts, plus two prose norms homed in
+  project-preferences.md itself (write what a thing IS; user holds the creative verbs). The
+  pending veto on the two agent-authored narrowings is RESOLVED by owner ruling: narrowing 1
+  (the "competitor/critic vs mechanism" test) REJECTED — the absolute reading stands and a
+  contrast-definition is banned whatever it is describing; narrowing 2 (prior-art lineage may
+  be named, never ranked against) RATIFIED. The owner also set the norm's scope for the first
+  time: positioning prose only (README, CONTRIBUTING, SECURITY, VISION, faq, tour), and later
+  the same day ratified the two carve-outs the sweep had applied and recorded as pending — a
+  prescriptive rule may prohibit, and verbatim quotation is untouchable. The row now carries
+  FOUR owner-ratified carve-outs and nothing pending; adding a fifth is a ruling, not a
+  judgment call. Prior 2026-08-11 — same 29, both narrowings pending veto. Prior 2026-08-10 —
+  27 norms; six forks ruled by the owner (API scope stays internal; arrangement projection
+  contained push-side)
+
+# Norm Health sweep — stamped by /prawduct:janitor's Norm Health theme. Resolves the
+# `norm-health-sweep-overdue` advisory.
+norm_health_last_run: 2026-09-08
+
+# Measured distance per norm, one entry per sweep, APPENDED never overwritten — the
+# trend is the point. Many individually-defensible exceptions summing to a dead norm is
+# exactly what no single diff review can see, and a point-in-time reading cannot either.
+# Keep the last 3 entries; git holds the rest.
+norm_health:
+  - date: 2026-09-08
+    note: >-
+      First sweep — this is the baseline, so there is no trend yet. Of the ten norms
+      measured, six held clean and four had real distance, and the four split evenly by
+      cause, which is the part worth carrying forward. TWO were statement drift, where the
+      code was disciplined and the norm's wording had grown wrong: "no raw SQL in callers,
+      EVER" was wider than the why that justifies it, and the sync row was narrower than
+      the Executor layer its own sibling artifact had already ratified. TWO were ordinary
+      code drift: kit.py imported db.queries, and five modules lacked the future import
+      whose row had carried an unacted-on "promote to a ruff rule" note. The lesson is not
+      that statements always drift — it is that a sweep must ask which side moved, because
+      the remedy is opposite. Fixing code to match a wrong statement, or amending a
+      statement to excuse real drift, are both available and both wrong.
+    measurements:
+      "raw-sql-outside-db": "22 sites outside db/ — 5 writes (all markdown_refs, now a recorded bounded exception), 17 reads. Norm narrowed to writes by owner ruling R1; reads tracked as #486"
+      "generators-pure": "1 violation site (kit.py imported db.queries) — inverted this sweep, now 0, locked by an import-graph test"
+      "sync-plans-not-calls": "7 modules call client.send. Not code drift: sync-boundary-contract.md already ratified an Executor layer, so the preferences row was narrower than its own sibling artifact. Row restated"
+      "future-annotations": "5 modules missing the import — now 0 and mechanized via ruff I002. Two docstring-only __init__ modules are outside the rule's reach and recorded as such"
+      "mcp-handlers-async": "0 violations — enforced structurally at one anyio.to_thread wrapper (server.py) plus test_threading_invariants.py"
+      "broad-except-waived": "38 catches / 45 waiver pragmas — over-covered, not under"
+      "deps-locked": "0 violations — uv lock --check gates CI"
+      "no-telemetry": "0 outbound calls in the tree"
+      "push-projection": "0 violations. Had sat AGENT-PROPOSED / PENDING OWNER VETO for 19 days; ratified by owner ruling R4 this sweep"
+      "engine-api-support-window": "event-bound revisit has NOT fired — no external contributor song repo, no break report (#305 is the owner's own two-machine experiment). Correctly still deferred"
 
 # API versioning — the decision is authored in artifacts/api-contract.md
 # ("Recorded decision: versioning" + "Recorded decision: deprecation and
@@ -607,3 +740,13 @@ distribution: plugin
 # scope `merge-base...HEAD` against develop, not the default origin/main. (INS-7V2D
 # Critic NOTE 2026-06-04.)
 base_branch: develop
+
+# Governance-file size ceiling in KB for the session-briefing nudge (default 40).
+# Raised for THIS file, whose bulk is `technical_decisions` + `design_decisions` —
+# the Reasoned Decisions principle working, not bloat. change-log.md is not covered
+# by the raise: it is ROLLED at each release cut instead (docs/release-process.md
+# step 1, "Roll the log"). Do NOT raise past ~58 without deciding that separately:
+# learnings.md sits at ~60 KB and is deliberately left above the ceiling so its
+# compaction nudge, which nobody has acted on yet, keeps firing. Full reasoning: the 2026-09-08 change-log
+# entry for scope=governance-file-sizes.
+oversized_file_threshold_kb: 55

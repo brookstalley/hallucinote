@@ -1000,3 +1000,367 @@ def test_collision_key_parity_planner_vs_handler():
     # collide (the whole point of putting device_path in the key).
     a5 = {**a4, "device_path": [{"chain_index": 2, "device_position": 1}]}
     assert perform_target_key(a4) != perform_target_key(a5)
+
+
+# ---------------------------------------------------------------------------
+# Per-arc outcomes reach the push report (#471 ask 3)
+# ---------------------------------------------------------------------------
+
+
+def test_apply_honours_the_handlers_own_verdict(conn, song, session, master_arc):
+    """The handler computes the verdict where the pass actually happened, so
+    the apply layer takes it rather than re-deriving one. An arc it calls
+    unverified records nothing, even though the two legacy fields — a lane that
+    exists, values that were written — would both have said yes."""
+    arc = {
+        "arc_id": master_arc,
+        "automation_state": 1,
+        "updates_written": 12,
+        "outcome": "unverified",
+        "outcome_reason": "the transport rolled from beat 351.",
+    }
+    warnings = push.apply_push_results(
+        conn, [_batch_result(arc)], session_id=session,
+    )
+
+    assert len(warnings) == 1
+    assert "unverified" in warnings[0]
+    assert "beat 351" in warnings[0]
+    assert Q.get_performed_automation(conn, master_arc, session) is None
+
+
+def test_apply_still_gates_on_the_fields_when_outcome_is_absent(
+    conn, song, session, master_arc,
+):
+    """A server predating the outcome field must not read as an absent
+    objection — the two field checks stay the floor."""
+    arc = {"arc_id": master_arc, "automation_state": 1, "updates_written": 0}
+    warnings = push.apply_push_results(
+        conn, [_batch_result(arc)], session_id=session,
+    )
+
+    assert len(warnings) == 1
+    assert "updates_written=0" in warnings[0]
+    assert Q.get_performed_automation(conn, master_arc, session) is None
+
+
+def test_apply_reports_what_happened_to_every_arc_not_only_the_failures(
+    conn, song, session, master, linked_group,
+):
+    """A phase that spends minutes of realtime and reports "ok (1 call)" gives
+    the author nothing to act on. Every arc gets a line, on the benign channel
+    so a clean push still reads as clean."""
+    a_eid = M.create_envelope(
+        conn, song_id=song, target_kind="mixer_volume", target_track_id=master,
+    )
+    _two_point_ramp(conn, a_eid)
+    b_eid = M.create_envelope(
+        conn, song_id=song, target_kind="mixer_volume",
+        target_track_id=linked_group,
+    )
+    _two_point_ramp(conn, b_eid)
+
+    notes: list[str] = []
+    warnings = push.apply_push_results(
+        conn,
+        [_batch_result(
+            {"arc_id": a_eid, "automation_state": 1, "updates_written": 27,
+             "outcome": "recorded", "span_beats": [96.0, 104.0]},
+            {"arc_id": b_eid, "automation_state": 1, "updates_written": 0,
+             "outcome": "unverified",
+             "outcome_reason": "no value was written during the pass.",
+             "span_beats": [96.0, 104.0]},
+        )],
+        session_id=session,
+        notes_sink=notes.append,
+    )
+
+    assert len(notes) == 1
+    line = notes[0]
+    assert f"{a_eid} [96-104] recorded (27 value writes)" in line
+    assert f"{b_eid} [96-104] UNVERIFIED (0 value writes)" in line
+    # The failure is ALSO on the actionable channel; the roll-up does not
+    # replace it.
+    assert len(warnings) == 1
+    assert b_eid in warnings[0]
+
+
+def test_a_clean_perform_still_gets_a_roll_up_and_no_warning(
+    conn, song, session, master_arc,
+):
+    notes: list[str] = []
+    warnings = push.apply_push_results(
+        conn,
+        [_batch_result({"arc_id": master_arc, "automation_state": 1,
+                        "updates_written": 27, "outcome": "recorded"})],
+        session_id=session,
+        notes_sink=notes.append,
+    )
+
+    assert warnings == []
+    assert len(notes) == 1
+    assert "recorded (27 value writes)" in notes[0]
+
+
+def test_a_caller_with_no_benign_channel_still_applies_cleanly(
+    conn, song, session, master_arc,
+):
+    """The roll-up is an extra, not a requirement — ``notes_sink`` is optional
+    and its absence must not cost the arc its fingerprint."""
+    warnings = push.apply_push_results(
+        conn, [_batch_result(master_arc)], session_id=session,
+    )
+
+    assert warnings == []
+    assert Q.get_performed_automation(conn, master_arc, session) is not None
+
+
+def test_the_roll_up_states_the_handlers_verdict_not_a_proxy_for_it():
+    """An envelope deleted mid-cycle also produces a warning. Reading the
+    verdict off "did a warning come back" prints UNVERIFIED for an arc the
+    handler recorded correctly, sending the reader after a recording fault
+    that never happened."""
+    from hallucinote.sync.push.plan import _describe_arc_outcome
+
+    arc = {
+        "arc_id": "e1", "span_beats": [96.0, 104.0],
+        "updates_written": 27, "outcome": "recorded",
+    }
+
+    assert "recorded, NOT FINGERPRINTED" in _describe_arc_outcome(
+        arc, fingerprinted=False
+    )
+    assert "UNVERIFIED" not in _describe_arc_outcome(arc, fingerprinted=False)
+    assert _describe_arc_outcome(arc, fingerprinted=True).endswith(
+        "recorded (27 value writes)"
+    )
+
+
+def test_a_degraded_locate_reaches_the_push_report(
+    conn, song, session, master_arc,
+):
+    """A pass that ran on `playhead_only` recorded against a start position
+    nothing moved. It may well be right, and no per-arc verdict can say — so
+    the author is told, rather than left to read Live's own log."""
+    notes: list[str] = []
+    result = _batch_result(
+        {"arc_id": master_arc, "automation_state": 1, "updates_written": 27,
+         "outcome": "recorded"},
+    )
+    result["result"]["start_position_moved"] = False
+    result["result"]["locate_method"] = "playhead_only"
+    result["result"]["locate_detail"] = "this Live exposes no cue-toggle API"
+
+    warnings = push.apply_push_results(
+        conn, [result], session_id=session, notes_sink=notes.append,
+    )
+
+    assert len(warnings) == 1
+    assert "playhead_only" in warnings[0]
+    assert "no cue-toggle API" in warnings[0]
+    # The arc itself still recorded — this is a caveat, not a failure.
+    assert Q.get_performed_automation(conn, master_arc, session) is not None
+
+
+def test_a_healthy_locate_adds_no_caveat(conn, song, session, master_arc):
+    notes: list[str] = []
+    result = _batch_result(
+        {"arc_id": master_arc, "automation_state": 1, "updates_written": 27,
+         "outcome": "recorded"},
+    )
+    result["result"]["start_position_moved"] = True
+    result["result"]["locate_method"] = "temporary_cue"
+
+    warnings = push.apply_push_results(
+        conn, [result], session_id=session, notes_sink=notes.append,
+    )
+
+    assert warnings == []
+    assert len(notes) == 1
+
+
+# ---------------------------------------------------------------------------
+# Sub-tick fidelity (#475) — the perform route records on a fixed
+# ~2.5 Hz grid, so an authored edge shorter than one tick cannot be represented.
+# The ruling is WARN-not-refuse, raised at blocked() severity: every arc still
+# records (refusing would reject songs that already carry sub-tick edges), but
+# the phase must not report a clean ok over a ramp that did not materialize.
+# ---------------------------------------------------------------------------
+
+
+def _subtick_arc(conn, song, master, *, edge_beats, bpm=120.0):
+    """A master mixer_volume arc: a long hold, then one value edge of
+    ``edge_beats``, then a long hold. Only the edge is a candidate."""
+    M.add_tempo_point(conn, song_id=song, start_bar=1.0, tempo_bpm=bpm)
+    eid = M.create_envelope(
+        conn, song_id=song, target_kind="mixer_volume",
+        target_track_id=master,
+    )
+    M.replace_breakpoints(
+        conn, envelope_id=eid,
+        breakpoints=[
+            {"time_beats": 0.0, "value": 0.85},
+            {"time_beats": 8.0, "value": 0.85},
+            {"time_beats": 8.0 + edge_beats, "value": 0.2},
+            {"time_beats": 16.0, "value": 0.2},
+        ],
+    )
+    return eid
+
+
+def _subtick_reasons(plan):
+    return [r for r in plan.blocked_reasons if "record tick" in r]
+
+
+def test_subtick_edge_is_named_and_blocks_a_clean_ok(conn, song, session, master):
+    """carpet's defect: a 120 ms duck edge at 60 BPM is under the 400 ms tick.
+    0.12 beats at 60 BPM = 120 ms."""
+    eid = _subtick_arc(conn, song, master, edge_beats=0.12, bpm=60.0)
+    plan = _plan(conn, song, session)
+    # The arc is still queued — nothing is refused.
+    _, arcs = _batch_arcs(plan)
+    assert [a["arc_id"] for a in arcs] == [eid]
+    reasons = _subtick_reasons(plan)
+    assert len(reasons) == 1, plan.blocked_reasons
+    r = reasons[0]
+    assert eid in r
+    assert "beats 8-8.12" in r          # the segment, named
+    assert "~120 ms" in r               # its authored duration
+    assert "~400 ms" in r               # the tick it fell under
+    assert "slowdown_factor" in r       # the dial that would carry it
+    assert "3.33" in r                  # 400 / 120, the factor it needs
+    # blocked() is strictly stronger than alert(): it also rides the alert
+    # channel, so alert-shaped consumers keep seeing it.
+    assert r in plan.alerts
+
+
+def test_an_edge_longer_than_a_tick_is_silent(conn, song, session, master):
+    """0.5 beats at 60 BPM = 500 ms > the 400 ms tick — nothing to say."""
+    _subtick_arc(conn, song, master, edge_beats=0.5, bpm=60.0)
+    plan = _plan(conn, song, session)
+    _batch_arcs(plan)
+    assert _subtick_reasons(plan) == []
+    assert plan.blocked_reasons == []
+
+
+def test_slowdown_factor_buys_the_edge_back(conn, song, session, master):
+    """The whole point of the dial: at 4x slowdown the effective tick is 100 ms,
+    so the same 120 ms edge now survives and the warning goes away."""
+    _subtick_arc(conn, song, master, edge_beats=0.12, bpm=60.0)
+    assert _subtick_reasons(_plan(conn, song, session)) != []
+    slow = push.plan_push_performed_automation(
+        conn, song_id=song, session_id=session, slowdown_factor=4.0,
+    )
+    assert _subtick_reasons(slow) == []
+    assert slow.blocked_reasons == []
+
+
+def test_the_effective_tick_named_in_the_warning_is_slowdown_adjusted(
+    conn, song, session, master,
+):
+    """At 2x the tick is 200 ms; a 120 ms edge still falls under it, and the
+    message must quote the EFFECTIVE tick, not the 400 ms one."""
+    _subtick_arc(conn, song, master, edge_beats=0.12, bpm=60.0)
+    plan = push.plan_push_performed_automation(
+        conn, song_id=song, session_id=session, slowdown_factor=2.0,
+    )
+    r = _subtick_reasons(plan)[0]
+    assert "~200 ms at 2x slowdown" in r
+    # The remedy is still stated as an ABSOLUTE factor, not a further multiple.
+    assert "3.33" in r
+
+
+def test_a_flat_sub_tick_hold_is_not_an_edge(conn, song, session, master):
+    """Two breakpoints at the same value lose nothing to sparse sampling —
+    flagging them would make the check noise instead of a reading."""
+    M.add_tempo_point(conn, song_id=song, start_bar=1.0, tempo_bpm=60.0)
+    eid = M.create_envelope(
+        conn, song_id=song, target_kind="mixer_volume", target_track_id=master,
+    )
+    M.replace_breakpoints(
+        conn, envelope_id=eid,
+        breakpoints=[
+            {"time_beats": 0.0, "value": 0.85},
+            {"time_beats": 0.1, "value": 0.85},   # 100 ms, but no value change
+            {"time_beats": 16.0, "value": 0.2},
+        ],
+    )
+    plan = _plan(conn, song, session)
+    _batch_arcs(plan)
+    assert plan.blocked_reasons == []
+
+
+def test_a_deliberate_instantaneous_step_is_not_flagged(conn, song, session, master):
+    """Two breakpoints at ONE time are an authored step, and the route
+    reproduces a step as a step — a different (smaller) claim than a lost ramp."""
+    M.add_tempo_point(conn, song_id=song, start_bar=1.0, tempo_bpm=60.0)
+    eid = M.create_envelope(
+        conn, song_id=song, target_kind="mixer_volume", target_track_id=master,
+    )
+    M.replace_breakpoints(
+        conn, envelope_id=eid,
+        breakpoints=[
+            {"time_beats": 0.0, "value": 0.85},
+            {"time_beats": 8.0, "value": 0.85},
+            {"time_beats": 8.0, "value": 0.2},    # zero-length: a step
+            {"time_beats": 16.0, "value": 0.2},
+        ],
+    )
+    plan = _plan(conn, song, session)
+    _batch_arcs(plan)
+    assert plan.blocked_reasons == []
+
+
+def test_an_unchanged_skipped_arc_raises_no_subtick_reason(
+    conn, song, session, master,
+):
+    """Nothing is recorded for a fingerprint-gated arc, so there is no
+    fidelity claim to make about it — a standing warning on a lane this pass
+    never touches would be nagging."""
+    eid = _subtick_arc(conn, song, master, edge_beats=0.12, bpm=60.0)
+    assert _subtick_reasons(_plan(conn, song, session)) != []
+    push.apply_push_results(
+        conn, [_batch_result(eid, song=song)], session_id=session,
+    )
+    plan = _plan(conn, song, session)
+    assert plan.calls == []
+    assert plan.blocked_reasons == []
+
+
+def test_many_sub_tick_edges_are_summarized_not_dumped(conn, song, session, master):
+    """One reason per arc, naming the first few segments and counting the rest."""
+    from hallucinote.sync.push.perform import _SUBTICK_NAMED_LIMIT
+
+    M.add_tempo_point(conn, song_id=song, start_bar=1.0, tempo_bpm=60.0)
+    eid = M.create_envelope(
+        conn, song_id=song, target_kind="mixer_volume", target_track_id=master,
+    )
+    bps = []
+    for i in range(10):
+        bps.append({"time_beats": i * 1.0, "value": 0.8})
+        bps.append({"time_beats": i * 1.0 + 0.1, "value": 0.2})
+    M.replace_breakpoints(conn, envelope_id=eid, breakpoints=bps)
+    plan = _plan(conn, song, session)
+    reasons = _subtick_reasons(plan)
+    assert len(reasons) == 1
+    assert "10 edge(s) shorter than one record tick" in reasons[0]
+    assert f"+{10 - _SUBTICK_NAMED_LIMIT} more" in reasons[0]
+
+
+def test_the_tick_check_reads_the_tempo_map_not_a_fixed_bpm(
+    conn, song, session, master,
+):
+    """0.4 beats is 400 ms at 60 BPM (survives) and 200 ms at 120 (does not) —
+    the same authored span, two verdicts, decided by the tempo map."""
+    _subtick_arc(conn, song, master, edge_beats=0.41, bpm=60.0)
+    assert _subtick_reasons(_plan(conn, song, session)) == []
+
+    conn2_song = M.create_song(conn, name="fast", key="Dm")
+    sess2 = M.create_ableton_session(conn, song_id=conn2_song, name="draft")
+    master2 = M.create_track(conn, song_id=conn2_song, track_index=0,
+                             name="Master", kind="master")
+    _subtick_arc(conn, conn2_song, master2, edge_beats=0.41, bpm=120.0)
+    plan = push.plan_push_performed_automation(
+        conn, song_id=conn2_song, session_id=sess2,
+    )
+    assert _subtick_reasons(plan) != []

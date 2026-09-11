@@ -115,6 +115,22 @@ class Arrangement:
     range sequentially. A section's ``layers`` map ``track name -> notes``
     (0-based within the section); a track absent from the map simply doesn't
     play that section (e.g. organ tacet in the metal sections).
+
+    **Single meter only.** Bar arithmetic here multiplies by ONE
+    ``beats_per_bar`` for the whole arrangement. The DB, meanwhile, records a
+    song's real ``time_signature_map`` and push converts bar positions through
+    it, so for a song with a within-song meter change the two disagree at every
+    position after the change: push's number gains the extra beats that every bar
+    after the change adds. In a 4/4 song that turns 7/4 at bar 9, this class puts
+    bar 13 at beat 48 and push puts it at 60. Push detects and reports the
+    divergence when it materializes the arrangement, but cannot repair it.
+
+    So: for a multi-meter song, do not rely on this class's bar accumulation
+    past the first meter change. Author those placements directly (the
+    ``add_arrangement_clip`` / ``create_section`` mutators take float bars and
+    push resolves them through the map), or keep the song single-meter and
+    carry the odd groupings as accent instead. Making this class meter-aware
+    is tracked as ARR-4M3T.
     """
 
     def __init__(self, *, beats_per_bar: float = 4.0) -> None:
@@ -404,6 +420,16 @@ class Arrangement:
 
         A layer naming a track absent from ``tracks`` raises ``KeyError`` — fail
         loud rather than silently drop a part.
+
+        Every row this writes is stamped ``bar_ruler="uniform"`` (#496). This
+        class accumulates whole bars against ONE ``beats_per_bar`` and never
+        reads the song's ``time_signature_map``, so its positions ARE uniform
+        bar math — and it is the only component in the tree that says so. Every
+        other writer takes the mutator's ``map`` default, which is what makes a
+        writer that has never heard of the column correct by construction. The
+        push planner reads the stamp to tell a deliberate multi-meter song
+        (positions authored against the map, no alert) from a ``build.py`` that
+        did uniform bar math past a meter change (alert, with the bars named).
         """
         placed = self.plan(start_bar=start_bar)
         created = {"clips": 0, "notes": 0, "placements": 0, "sections": 0, "cues": 0}
@@ -415,14 +441,15 @@ class Arrangement:
                 M.create_section(
                     conn, song_id=song_id, name=sec.name,
                     start_bar=float(sec.start_bar), end_bar=float(sec.end_bar),
-                    energy=sec.energy,
+                    energy=sec.energy, bar_ruler="uniform",
                     actor=actor, reason=f"{sec.name} section",
                 )
                 created["sections"] += 1
             if author_cues:
                 M.add_cue_point(
                     conn, song_id=song_id, position_bar=float(sec.start_bar),
-                    name=sec.name, actor=actor, reason=f"{sec.name} cue",
+                    name=sec.name, bar_ruler="uniform",
+                    actor=actor, reason=f"{sec.name} cue",
                 )
                 created["cues"] += 1
 
@@ -445,7 +472,7 @@ class Arrangement:
                 M.add_arrangement_clip(
                     conn, song_id=song_id, track_id=tracks[track_name],
                     clip_id=clip_id, start_bar=float(sec.start_bar),
-                    end_bar=float(sec.end_bar),
+                    end_bar=float(sec.end_bar), bar_ruler="uniform",
                     actor=actor, reason=f"{sec.name} {track_name} placement",
                 )
                 created["clips"] += 1

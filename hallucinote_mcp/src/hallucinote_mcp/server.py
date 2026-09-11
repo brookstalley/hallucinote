@@ -24,7 +24,7 @@ import inspect
 import logging
 import os
 import pathlib
-from typing import Annotated, Any, Optional
+from typing import Annotated, Any, Optional, Union
 
 import anyio
 from mcp.server.fastmcp import FastMCP
@@ -35,6 +35,25 @@ from .dispatcher import dispatch
 from .wire import Request, Response
 
 
+# "Any JSON value", spelled out branch by branch — the annotation behind
+# ``ParamSpec(type="any")`` (today: ableton_probe set's ``value``).
+#
+# Annotating such a param ``typing.Any`` made pydantic emit
+# ``anyOf: [{}, {"type": "null"}]``, and the empty ``{}`` branch tells a
+# calling client NOTHING about how to serialize the value. A client then
+# emits a string bare — unquoted — and it dies in the client's own JSON
+# parse before any request reaches the server, so a string could never be
+# sent at all. Every JSON type therefore gets its own explicit branch.
+#
+# ``bool`` leads because bool is an int subclass; ``int`` stays in the union
+# so an integer is never widened to float (Live's C++ setters reject a float
+# where the signature wants an int). The union admits exactly the JSON value
+# space ``Any`` already admitted — this makes the declared schema honest, it
+# does not narrow what ``probe set`` accepts, and it leaves the handler-side
+# ``coerce_wire_value`` (which still sees raw strings verbatim) untouched.
+_JSON_VALUE = Union[bool, int, float, str, dict, list, None]
+
+
 # Param.type → Python type used for FastMCP's pydantic-derived JSONSchema.
 _PARAM_TYPE_MAP: dict[str, Any] = {
     "str": str,
@@ -43,7 +62,7 @@ _PARAM_TYPE_MAP: dict[str, Any] = {
     "bool": bool,
     "list": list,
     "dict": dict,
-    "any": Any,  # polymorphic params (ableton_probe set's value)
+    "any": _JSON_VALUE,  # polymorphic params (ableton_probe set's value)
 }
 
 
@@ -118,9 +137,12 @@ work, read /song-workflow first — it is the lifecycle map. The arc:
   /return-new, /mix-sidechain, /clip-humanize, /ableton-pull, /song-context.
   The three checkpoints (/song-brief, /compose-review, /mix-review) are easy
   to skip and shouldn't be — /song-brief specifies the work, the other two
-  apply the framework's ear to it. Each stage has a definition of done
-  (docs/song-workflow.md): a stage may not hand a load-bearing question
-  downstream dressed as a decision.
+  apply the framework's ear to it. /song-brief is a conversation that runs
+  until the user hands off, not a single turn. Each stage has a definition
+  of done (docs/song-workflow.md): a stage may not hand a load-bearing
+  question downstream dressed as a decision. It is a loop, not a line:
+  compose the first hearable unit, push it, offer a hearing, continue —
+  the offer is never a requirement.
 
 Hard constraints:
   - 1-based indexing throughout (track_index >= 1).
@@ -262,7 +284,121 @@ def handle_tool_call(
             ),
         ).to_dict()
 
+    _record_audio_capture_event(request, remote_response)
     return _refine_version_mismatch(remote_response).to_dict()
+
+
+def _record_audio_capture_event(
+    request: Request, response: "client.Response",
+) -> None:
+    """AUD-5M8H: append an ``AUDIO_CAPTURED`` audit event when a render lands.
+
+    **Also performs WSP-3R7K's captures self-ignore**, which is a second,
+    unrelated deliverable riding the same ``state == done`` trigger. Naming it
+    here because the function name does not: relocating or dropping the audit
+    event without reading this line would silently take the self-ignore with
+    it, and the tracked tree would start surfacing every render take as
+    committable with nothing explaining why.
+
+    Fires HERE, in the MCP server process, because the render worker runs
+    inside Live's vendored env with no `hallucinote` engine and no DB access —
+    the same constraint that makes `_attach_render_db_seq` a server-side
+    preprocessor. The status response is the first moment this side learns a
+    capture finished.
+
+    Keyed off ``status`` rather than ``start``: at start time there is no
+    captures dir on disk and no track count, and the render may still fail.
+
+    Idempotent downstream — the agent polls until it reads ``done`` and every
+    later poll reads ``done`` too, so `record_audio_capture` dedupes on
+    ``captures_dir`` inside its transaction rather than trusting one emit here.
+
+    Best-effort and never render-affecting, mirroring `_attach_render_db_seq`:
+    a capture that succeeded must not be reported as failed because an audit
+    row could not be written.
+    """
+    if request.tool != "ableton_render" or request.action != "status":
+        return
+    if not getattr(response, "ok", False):
+        return
+    result = getattr(response, "result", None) or {}
+    if result.get("state") != "done":
+        return
+    # `status_result()` is flat: captures_dir + manifest sit at the top level.
+    # The status request carries only job_id, so the slug comes from the
+    # manifest the render itself wrote.
+    captures_dir = result.get("captures_dir")
+    manifest = result.get("manifest") or {}
+    song_slug = manifest.get("song_slug")
+    if not isinstance(captures_dir, str) or not captures_dir:
+        return
+    if not isinstance(song_slug, str) or not song_slug:
+        return
+    try:
+        from hallucinote.db import mutations as M, queries as Q
+        from hallucinote.db.connection import init_db, resolve_db_path
+        from hallucinote.paths import self_ignore_dir
+        from hallucinote.takes import captures_root_for_slug
+
+        # WSP-3R7K: ignore the captures ROOT, not this one take — every take
+        # under it is regenerable. Done here rather than in the render worker
+        # for the same reason the audit event is: that worker runs inside Live's
+        # vendored env, which has no `hallucinote` to import.
+        #
+        # The root is derived from the SLUG, never from `captures_dir`'s parent,
+        # and this is load-bearing rather than stylistic — it is the same rule
+        # `_sweep_stale_takes` states for the retention sweep, for a sharper
+        # reason here. `output_dir` is fully caller-controlled ("a caller may
+        # render anywhere"), and `self_ignore_dir` writes a blanket `*`. Render
+        # into `songs/<slug>/captures` — the natural literal reading of the
+        # param — and the parent is the SONG DIR, so build.py, decisions/ and
+        # captured_session.json would silently drop out of `git status` under a
+        # header promising it is rewritten if removed. `captures_root_for_slug`
+        # is also the choke point that validates the slug, which arrives here
+        # off the render manifest, i.e. off the wire.
+        try:
+            captures_root = captures_root_for_slug(song_slug)
+            # A render pointed somewhere else is the caller's own directory to
+            # manage; never write a blanket ignore into a tree we did not choose.
+            if pathlib.Path(captures_dir).resolve().is_relative_to(
+                captures_root.resolve()
+            ):
+                self_ignore_dir(captures_root)
+        except (ValueError, OSError):
+            logger.debug(
+                "could not self-ignore the captures root for %r",
+                song_slug, exc_info=True,
+            )
+
+        db_path = resolve_db_path(song_slug)
+        if not db_path.exists():
+            return
+        # init_db, never a bare connect: this WRITES, so it needs the current
+        # schema. The additive migration lives only in `init_db`, so against a
+        # song DB written by an earlier release the row would be lost to a stale
+        # schema — a hole in the audit trail exactly where the DB is oldest.
+        # (`_attach_render_db_seq` keeps its bare connect deliberately: it is a
+        # side-effect-free read that must not alter a schema mid-render.)
+        conn = init_db(db_path)
+        try:
+            song = Q.get_song_by_name(conn, song_slug)
+            if song is None:
+                return
+            M.record_audio_capture(
+                conn,
+                song_id=song["id"],
+                captures_dir=captures_dir,
+                manifest_seq=manifest.get("db_seq"),
+                track_count=len(manifest.get("tracks") or []),
+                reason="ableton_render capture pass",
+            )
+        finally:
+            conn.close()
+    except Exception:  # prawduct:allow prawduct/broad-except -- the capture audit row is best-effort provenance; a render that actually succeeded must never be reported as failed because the event write did not land
+        logger.warning(
+            "render: could not record AUDIO_CAPTURED for %r (captures_dir=%s)",
+            song_slug, captures_dir, exc_info=True,
+        )
 
 
 def _refine_version_mismatch(response: "client.Response") -> "client.Response":

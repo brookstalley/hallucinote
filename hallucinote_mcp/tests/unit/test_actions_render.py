@@ -11,6 +11,7 @@ import pytest
 from hallucinote_mcp.analyzer.osc import AnalyzerOSC
 from hallucinote_mcp.dispatcher import dispatch
 from hallucinote_mcp.handlers import render as render_handlers
+from hallucinote_mcp.handlers._transport import PlayheadPositionError
 from hallucinote_mcp.wire import Request
 
 
@@ -64,6 +65,32 @@ def _analyzer_params() -> list[_FakeParam]:
     ]
 
 
+class _FakeChain:
+    """One chain inside a rack. Carries `solo` the way Live's Chain does —
+    independently of the track's, and silencing its SIBLINGS rather than the
+    song."""
+
+    def __init__(self, name: str, *, solo: bool = False):
+        self.name = name
+        self.solo = solo
+        self.mute = False
+        self.devices: list[_FakeDevice] = []
+
+
+class _ChainWithoutSolo(_FakeChain):
+    """A chain Live presents with NO `solo` attribute at all.
+
+    Named for the attribute it removes, not for `mute`: `_FakeChain` carries a
+    real `mute` field, so a name like `_MuteChain` reads as "a muted chain" —
+    the wrong state entirely, and the one the solo guards must not confuse it
+    with.
+    """
+
+    def __init__(self, name):
+        super().__init__(name)
+        del self.solo
+
+
 class _FakeDevice:
     def __init__(
         self,
@@ -72,6 +99,7 @@ class _FakeDevice:
         class_name: str | None = None,
         name: str | None = None,
         parameters: list[_FakeParam] | None = None,
+        chains: list[_FakeChain] | None = None,
     ):
         self.class_display_name = class_display_name
         self.class_name = class_name or class_display_name
@@ -85,6 +113,13 @@ class _FakeDevice:
         if parameters is None and self.name == "HallucinoteAnalyzer":
             parameters = _analyzer_params()
         self.parameters = parameters or []
+        # Only a RACK exposes `chains`, and the attribute must be ABSENT on
+        # everything else — that absence is what the chain-solo read uses to
+        # tell a rack from an ordinary device, so a fake that always carried an
+        # empty list would make every device look like a rack with no chains
+        # and hide the discrimination entirely.
+        if chains is not None:
+            self.chains = list(chains)
 
 
 class _FakeMixer:
@@ -117,6 +152,11 @@ class _FakeTrack:
         self.devices = list(devices or [])
         self.arrangement_clips = list(arrangement_clips or [])
         self.mixer_device = _FakeMixer()
+        # Real defaults, not attributes the tests bolt on: a fake that only
+        # grows `solo` when a test sets it models the handler's assumption
+        # rather than Live, and cannot show a read that finds nothing.
+        self.solo = False
+        self.mute = False
         self.has_audio_output = has_audio_output
         self.has_midi_input = has_midi_input
         self.has_audio_input = not has_midi_input
@@ -219,6 +259,7 @@ class _FakeSong:
         self._loop = True
         self.start_playing_calls = 0
         self.stop_playing_calls = 0
+        self.stale_start_position: float | None = None
 
     @property
     def loop(self):
@@ -232,6 +273,13 @@ class _FakeSong:
     def start_playing(self):
         self.is_playing = True
         self.start_playing_calls += 1
+        # Live rolls from its START PLAYING POSITION, which is a different
+        # property from the playhead. Set this to model a set someone has
+        # listened to: playback then begins wherever they last pressed play,
+        # no matter what the seek read back. Default None keeps the playhead
+        # where it was put, which is the healthy case.
+        if self.stale_start_position is not None:
+            self.current_song_time = self.stale_start_position
 
     def stop_playing(self):
         self.is_playing = False
@@ -526,6 +574,78 @@ def test_render_writes_manifest_and_returns_status_ok(
     for entry in manifest["tracks"] + manifest["returns"]:
         assert entry["filename"].endswith(".wav")
         assert Path(entry["absolute_path"]).is_absolute()
+
+
+# --- RND: the analyzers must be armed AFTER the locate ----------------
+
+
+def test_arm_happens_after_the_locate_not_before(
+    tmp_path, ctx_two_tracks_one_return, osc_factory, osc_sink, stub_sidecar,
+    monkeypatch,
+):
+    """Arming before the locate silently corrupts every capture.
+
+    The M4L patch resets its ``prev_beat`` to -1 on the Arm RISING EDGE
+    (m4l/HallucinoteAnalyzer.amxd.spec.md), which makes the start detector's
+    ``prev_beat < start_at_beat`` clause unconditionally true. While armed, the
+    detector therefore fires on the FIRST ``current_song_time`` change of any
+    kind -- and a locate is exactly such a change. Arming first opened
+    ``sfrecord~`` at the seek and recorded the wall clock before the transport
+    rolled, putting every per-section window about a beat early, with nothing
+    downstream able to notice.
+
+    So this asserts ORDER, not just that both happened: by the time the arm is
+    written the playhead must already be parked at the seek target, and the
+    transport must not have been started yet.
+    """
+    events: list[tuple[str, float, bool]] = []
+
+    real_arm = render_handlers._set_arm_on_all
+
+    def _recording_arm(context, layout, *, arm):
+        events.append(("arm" if arm else "disarm",
+                       context.song.current_song_time,
+                       context.song.is_playing))
+        return real_arm(context, layout, arm=arm)
+
+    real_locate = render_handlers.locate_start_position
+
+    def _recording_locate(context, beat):
+        result = real_locate(context, beat)
+        events.append(("locate", context.song.current_song_time,
+                       context.song.is_playing))
+        return result
+
+    monkeypatch.setattr(render_handlers, "_set_arm_on_all", _recording_arm)
+    monkeypatch.setattr(render_handlers, "locate_start_position",
+                        _recording_locate)
+
+    result = render_handlers.render_handler(
+        ctx_two_tracks_one_return,
+        output_dir=str(tmp_path / "captures"),
+        song_slug="test-song",
+        start_at_beat=16,
+        _osc_factory=osc_factory,
+        _sidecar=stub_sidecar,
+        _clock_source=lambda: 999.0,
+        _now_iso=lambda: "20260526T120000Z",
+    )
+    assert result["status"] == "ok"
+
+    kinds = [name for name, _, _ in events]
+    assert "locate" in kinds, "the render never located"
+    assert "arm" in kinds, "the render never armed"
+    assert kinds.index("locate") < kinds.index("arm"), (
+        f"arm must follow the locate; got {kinds}"
+    )
+
+    # The arm must see a playhead already parked, and a transport not yet
+    # rolling -- the two halves of "the next movement is the transport".
+    _, time_at_arm, playing_at_arm = events[kinds.index("arm")]
+    assert time_at_arm > 0.0, (
+        "armed while the playhead was still at 0 -- the locate had not landed"
+    )
+    assert not playing_at_arm, "armed after the transport was already rolling"
 
 
 # --- BUG3: status.json completion heartbeat --------------------------
@@ -1398,3 +1518,543 @@ def test_ensure_loaded_action_surfaces_terminal_status(ctx_two_tracks_one_return
     for inst in resp.result["instances"]:
         assert inst["terminal"] is True
         assert inst["was_repositioned"] is False
+
+
+def test_render_refuses_to_capture_from_the_wrong_part_of_the_song(
+    tmp_path, ctx_two_tracks_one_return, osc_factory, stub_sidecar,
+):
+    """The render half of #471. Live rolls from a start playing position the
+    seek never moved, so a capture can record a completely different section
+    while every check the handler had said it was healthy — the engine
+    pre-flight asks whether the transport ADVANCES, and a transport in the
+    wrong place advances exactly as well as one in the right place."""
+    ctx_two_tracks_one_return.song.stale_start_position = 999.0
+
+    with pytest.raises(PlayheadPositionError) as exc:
+        render_handlers.render_handler(
+            ctx_two_tracks_one_return,
+            song_slug="t",
+            output_dir=str(tmp_path / "c"),
+            _osc_factory=osc_factory,
+            _sidecar=stub_sidecar,
+            # A healthy engine — which is the whole point. This transport is
+            # rolling perfectly well, three hundred bars from where it was
+            # sent, and the advance check cannot tell the difference.
+            _engine_check=lambda: True,
+        )
+
+    err = exc.value
+    assert err.observed_beats == pytest.approx(999.0)
+    assert "render capture" in str(err)
+    assert "START PLAYING POSITION" in str(err)
+
+
+def test_a_healthy_render_locates_the_start_position_before_playing(
+    tmp_path, ctx_two_tracks_one_return, osc_factory, stub_sidecar,
+):
+    """The capture positions with a cue jump, not a bare playhead write — and
+    gives back the locator it borrowed to do it."""
+    song = ctx_two_tracks_one_return.song
+    song.cue_points = []
+    cue_ops: list[tuple] = []
+
+    def _toggle() -> None:
+        at = song.current_song_time
+        cue_ops.append(("toggle", at))
+        for i, cue in enumerate(song.cue_points):
+            if abs(cue.time - at) < 1e-6:
+                del song.cue_points[i]
+                return
+        song.cue_points.append(_JumpingCue(song, at, cue_ops))
+
+    song.set_or_delete_cue = _toggle
+
+    render_handlers.render_handler(
+        ctx_two_tracks_one_return,
+        song_slug="t",
+        output_dir=str(tmp_path / "c"),
+        _osc_factory=osc_factory,
+        _sidecar=stub_sidecar,
+        _clock_source=lambda: 999.0,
+    )
+
+    assert [op[0] for op in cue_ops] == ["toggle", "jump", "toggle"]
+    assert song.cue_points == []
+
+
+class _JumpingCue:
+    def __init__(self, song, time_, ops):
+        self._song = song
+        self._ops = ops
+        self.time = float(time_)
+        self.name = ""
+
+    def jump(self) -> None:
+        self._ops.append(("jump", self.time))
+        self._song.current_song_time = self.time
+
+
+# --- a render under a soloed track is refused ----------------------------
+#
+# Regression for the 2026-09-10 `alien` incident: track 3 was left soloed
+# after a by-ear editing session, and three consecutive renders reported
+# `render_status: ok` with all nine surfaces terminal while the master bus
+# carried one part. Solo is saved in the .als, so it survived a full Live
+# restart and looked deterministic — which is what made it read as an engine
+# fault rather than a mixer state.
+
+
+def test_render_refuses_when_a_track_is_soloed(
+    tmp_path, ctx_two_tracks_one_return, osc_factory, stub_sidecar,
+):
+    ctx_two_tracks_one_return.song.tracks[0].solo = True
+
+    with pytest.raises(render_handlers.SoloedTrackError) as excinfo:
+        render_handlers.render_handler(
+            ctx_two_tracks_one_return,
+            song_slug="t",
+            output_dir=str(tmp_path / "c"),
+            _osc_factory=osc_factory,
+            _sidecar=stub_sidecar,
+            _clock_source=lambda: 999.0,
+        )
+
+    msg = str(excinfo.value)
+    assert "track 1" in msg
+    assert ctx_two_tracks_one_return.song.tracks[0].name in msg
+    # Refused before the transport rolled — nothing was captured.
+    assert ctx_two_tracks_one_return.song.start_playing_calls == 0
+
+
+def test_a_solo_refusal_names_every_soloed_track(
+    tmp_path, ctx_two_tracks_one_return, osc_factory, stub_sidecar,
+):
+    for track in ctx_two_tracks_one_return.song.tracks[:2]:
+        track.solo = True
+
+    with pytest.raises(render_handlers.SoloedTrackError) as excinfo:
+        render_handlers.render_handler(
+            ctx_two_tracks_one_return,
+            song_slug="t",
+            output_dir=str(tmp_path / "c"),
+            _osc_factory=osc_factory,
+            _sidecar=stub_sidecar,
+            _clock_source=lambda: 999.0,
+        )
+
+    msg = str(excinfo.value)
+    assert "2 surface(s)" in msg
+    for track in ctx_two_tracks_one_return.song.tracks[:2]:
+        assert track.name in msg
+
+
+def test_a_muted_track_warns_and_the_render_proceeds(
+    tmp_path, ctx_two_tracks_one_return, osc_factory, stub_sidecar,
+):
+    """A mute can be exactly what the author meant for this render, so it is
+    named rather than refused."""
+    ctx_two_tracks_one_return.song.tracks[0].mute = True
+
+    out = render_handlers.render_handler(
+        ctx_two_tracks_one_return,
+        song_slug="t",
+        output_dir=str(tmp_path / "c"),
+        _osc_factory=osc_factory,
+        _sidecar=stub_sidecar,
+        _clock_source=lambda: 999.0,
+    )
+
+    assert ctx_two_tracks_one_return.song.start_playing_calls == 1
+    muted = out["manifest"]["muted_tracks"]
+    assert len(muted) == 1
+    assert ctx_two_tracks_one_return.song.tracks[0].name in muted[0]
+
+
+def test_the_manifest_records_the_mixer_state_on_a_clean_render(
+    tmp_path, ctx_two_tracks_one_return, osc_factory, stub_sidecar,
+):
+    """A report is read long after Live has moved on; without this there is no
+    way to establish afterwards what mixer state produced the capture."""
+    out = render_handlers.render_handler(
+        ctx_two_tracks_one_return,
+        song_slug="t",
+        output_dir=str(tmp_path / "c"),
+        _osc_factory=osc_factory,
+        _sidecar=stub_sidecar,
+        _clock_source=lambda: 999.0,
+    )
+
+    song = ctx_two_tracks_one_return.song
+    rows = out["manifest"]["mixer_state"]
+    # Tracks AND returns — a return is a Track in Live and carries solo.
+    assert len(rows) == len(song.tracks) + len(song.return_tracks)
+    for row, track in zip(rows, [*song.tracks, *song.return_tracks]):
+        assert row["surface_name"] == track.name
+        assert row["solo"] is False and row["mute"] is False
+        assert row["volume"] == pytest.approx(track.mixer_device.volume.value)
+    # The manifest's one surface vocabulary, and a track_id that joins these
+    # rows to the stem entries they explain.
+    assert [r["surface_kind"] for r in rows][-len(song.return_tracks):] == (
+        ["return"] * len(song.return_tracks)
+    )
+    assert [r["track_id"] for r in rows[:len(song.tracks)]] == [
+        f"track:{i}" for i in range(1, len(song.tracks) + 1)
+    ]
+    assert out["manifest"]["muted_tracks"] == []
+
+
+def test_render_refuses_when_a_RETURN_is_soloed(
+    tmp_path, ctx_two_tracks_one_return, osc_factory, stub_sidecar,
+):
+    """A return is a Track in Live and carries solo. Soloing one silences
+    every regular track's direct output, so the master bus carries only what
+    the returns are fed — the same wrong mix a soloed track produces, through
+    a collection that is not `song.tracks`."""
+    ret = ctx_two_tracks_one_return.song.return_tracks[0]
+    ret.solo = True
+
+    with pytest.raises(render_handlers.SoloedTrackError) as excinfo:
+        render_handlers.render_handler(
+            ctx_two_tracks_one_return,
+            song_slug="t",
+            output_dir=str(tmp_path / "c"),
+            _osc_factory=osc_factory,
+            _sidecar=stub_sidecar,
+            _clock_source=lambda: 999.0,
+        )
+
+    msg = str(excinfo.value)
+    assert "return 1" in msg
+    assert ret.name in msg
+    assert ctx_two_tracks_one_return.song.start_playing_calls == 0
+
+
+def test_a_muted_return_warns_and_the_render_proceeds(
+    tmp_path, ctx_two_tracks_one_return, osc_factory, stub_sidecar,
+):
+    ret = ctx_two_tracks_one_return.song.return_tracks[0]
+    ret.mute = True
+
+    out = render_handlers.render_handler(
+        ctx_two_tracks_one_return,
+        song_slug="t",
+        output_dir=str(tmp_path / "c"),
+        _osc_factory=osc_factory,
+        _sidecar=stub_sidecar,
+        _clock_source=lambda: 999.0,
+    )
+
+    assert ctx_two_tracks_one_return.song.start_playing_calls == 1
+    muted = out["manifest"]["muted_tracks"]
+    assert len(muted) == 1 and "return 1" in muted[0]
+
+
+def test_render_refuses_when_solo_cannot_be_read(
+    tmp_path, ctx_two_tracks_one_return, osc_factory, stub_sidecar,
+):
+    """A guard that stops seeing the mixer must say so, not pass everything.
+
+    Defaulting a missing `solo` to False would make "not soloed" and "did not
+    answer" indistinguishable in the one guard whose purpose is that a wrong
+    mix must not pass as a right one — and would write `solo: false` into the
+    manifest as a fact consumers are told to trust. The operator-verification
+    entry records the premise (that a Live Track presents `solo`) as
+    unverified, which is exactly why absence is refused rather than assumed.
+    """
+    del ctx_two_tracks_one_return.song.tracks[0].solo
+
+    with pytest.raises(render_handlers.SoloedTrackError) as excinfo:
+        render_handlers.render_handler(
+            ctx_two_tracks_one_return,
+            song_slug="t",
+            output_dir=str(tmp_path / "c"),
+            _osc_factory=osc_factory,
+            _sidecar=stub_sidecar,
+            _clock_source=lambda: 999.0,
+        )
+
+    msg = str(excinfo.value)
+    assert "could not read solo/mute" in msg
+    assert ctx_two_tracks_one_return.song.tracks[0].name in msg
+    assert ctx_two_tracks_one_return.song.start_playing_calls == 0
+
+
+# ---------------------------------------------------------------------------
+# #550 — a soloed rack CHAIN warns; it does not refuse
+# ---------------------------------------------------------------------------
+
+
+def test_a_soloed_rack_chain_warns_and_the_render_proceeds(
+    tmp_path, ctx_two_tracks_one_return, osc_factory, stub_sidecar,
+):
+    """Owner decision, 2026-09-10: warn, do not refuse.
+
+    A track or return solo makes the master bus carry a fraction of the SONG,
+    which is never a mix anyone meant to render. A chain solo silences the
+    sibling chains inside ONE rack — every track is still in the master — so
+    the capture is a real mix with one rack rendering as a fraction of itself.
+    Refusing would block an author auditioning a layer; silence would let the
+    report call that rack's absence a mix change.
+    """
+    rack = _FakeDevice(
+        class_display_name="Audio Effect Rack", name="Drum Bus",
+        chains=[_FakeChain("Clean"), _FakeChain("Sub", solo=True)],
+    )
+    track = ctx_two_tracks_one_return.song.tracks[0]
+    track.devices.append(rack)
+
+    out = render_handlers.render_handler(
+        ctx_two_tracks_one_return,
+        song_slug="t",
+        output_dir=str(tmp_path / "c"),
+        _osc_factory=osc_factory,
+        _sidecar=stub_sidecar,
+        _clock_source=lambda: 999.0,
+    )
+
+    # It did NOT refuse.
+    assert ctx_two_tracks_one_return.song.start_playing_calls == 1
+
+    # `warning: str` — the convention every sibling handler uses. NOT
+    # `warnings: list`, which is `wire.Response.warnings`, a different channel
+    # serialized at the top of the response rather than inside `result`.
+    warning = out["warning"]
+    assert "'Sub'" in warning and "'Drum Bus'" in warning
+    assert f"track 1 ({track.name!r})" in warning
+    # It explains the blast radius, not just the fact — "a chain is soloed"
+    # alone reads as the whole-song silencing that DOES refuse.
+    assert "SIBLING" in warning and "not refused" in warning
+
+    # Recorded in the manifest too — a report is read long after Live moved on.
+    # The manifest carries the per-surface labels; `warning` wraps them in the
+    # prose that says what to do, so the two are not the same string.
+    # Position 1 literally: the rack is the track's first device. NOT
+    # len(track.devices) — the render appends the analyzer to that list, so
+    # deriving the number here would read a chain the render itself moved.
+    assert out["manifest"]["soloed_chains"] == [
+        f"track 1 ({track.name!r}): chain 'Sub' is soloed inside rack "
+        f"'Drum Bus' at position 1"
+    ]
+    row = out["manifest"]["mixer_state"][0]
+    assert row["soloed_chains"] == [{
+        "device_position": 1,
+        "device_name": "Drum Bus",
+        "chain_index": 2,
+        "chain_name": "Sub",
+        # True, not merely present: `None` is a distinct state (Live did not
+        # answer) and a consumer told to join on these rows must be able to
+        # tell the two apart.
+        "solo": True,
+    }]
+
+
+def test_a_soloed_chain_on_a_RETURN_is_seen_too(
+    tmp_path, ctx_two_tracks_one_return, osc_factory, stub_sidecar,
+):
+    """The shipped surface guard read `song.tracks` and missed `return_tracks`
+    once already, and a clean-render test pinned the gap in place. The chain
+    read walks the same two collections, so it is pinned on both."""
+    ret = ctx_two_tracks_one_return.song.return_tracks[0]
+    ret.devices.append(_FakeDevice(
+        class_display_name="Audio Effect Rack", name="Verb Rack",
+        chains=[_FakeChain("Plate", solo=True)],
+    ))
+
+    out = render_handlers.render_handler(
+        ctx_two_tracks_one_return,
+        song_slug="t",
+        output_dir=str(tmp_path / "c"),
+        _osc_factory=osc_factory,
+        _sidecar=stub_sidecar,
+        _clock_source=lambda: 999.0,
+    )
+
+    assert f"return 1 ({ret.name!r})" in out["warning"]
+    assert "'Plate'" in out["warning"]
+
+
+def test_a_track_solo_still_REFUSES_even_with_a_clean_rack(
+    tmp_path, ctx_two_tracks_one_return, osc_factory, stub_sidecar,
+):
+    """Chunk 04 must not weaken the guard it extends. Warning on chain solo is
+    a statement about chain solo only; a soloed TRACK is still fatal."""
+    track = ctx_two_tracks_one_return.song.tracks[0]
+    track.devices.append(_FakeDevice(
+        class_display_name="Audio Effect Rack", name="Drum Bus",
+        chains=[_FakeChain("Clean"), _FakeChain("Sub")],
+    ))
+    track.solo = True
+
+    with pytest.raises(render_handlers.SoloedTrackError):
+        render_handlers.render_handler(
+            ctx_two_tracks_one_return,
+            song_slug="t",
+            output_dir=str(tmp_path / "c"),
+            _osc_factory=osc_factory,
+            _sidecar=stub_sidecar,
+            _clock_source=lambda: 999.0,
+        )
+    assert ctx_two_tracks_one_return.song.start_playing_calls == 0
+
+
+def test_a_clean_render_carries_no_chain_solo_and_no_warnings(
+    tmp_path, ctx_two_tracks_one_return, osc_factory, stub_sidecar,
+):
+    """A rack whose chains are all unsoloed is the common case, and an
+    ordinary non-rack device must not read as a rack with no chains."""
+    ctx_two_tracks_one_return.song.tracks[0].devices.append(_FakeDevice(
+        class_display_name="Audio Effect Rack", name="Drum Bus",
+        chains=[_FakeChain("Clean"), _FakeChain("Sub")],
+    ))
+
+    out = render_handlers.render_handler(
+        ctx_two_tracks_one_return,
+        song_slug="t",
+        output_dir=str(tmp_path / "c"),
+        _osc_factory=osc_factory,
+        _sidecar=stub_sidecar,
+        _clock_source=lambda: 999.0,
+    )
+
+    assert "warning" not in out
+    assert out["manifest"]["soloed_chains"] == []
+    assert all(
+        row["soloed_chains"] == []
+        for row in out["manifest"]["mixer_state"]
+    )
+
+
+def test_a_chain_that_does_not_report_solo_is_listed_as_unknown(
+    tmp_path, ctx_two_tracks_one_return, osc_factory, stub_sidecar,
+):
+    """`None`, never `False` — the rule `_row`'s `_flag` states for the surface
+    flags, and sharper here: these rows go into `manifest.json` and
+    `boundary-patterns.md` tells consumers to JOIN on them.
+
+    A chain that did not answer, recorded as "not soloed", is a false negative
+    asserted as fact to a reader who has no way to check it. So it is listed,
+    flagged unknown, and the warning says which it is — the warn-tier analogue
+    of the surface guard refusing on an unreadable flag.
+    """
+    rack = _FakeDevice(
+        class_display_name="Audio Effect Rack", name="Drum Bus",
+        chains=[_ChainWithoutSolo("Clean")],
+    )
+    ctx_two_tracks_one_return.song.tracks[0].devices.append(rack)
+
+    out = render_handlers.render_handler(
+        ctx_two_tracks_one_return,
+        song_slug="t",
+        output_dir=str(tmp_path / "c"),
+        _osc_factory=osc_factory,
+        _sidecar=stub_sidecar,
+        _clock_source=lambda: 999.0,
+    )
+
+    # Not refused — an unreadable CHAIN flag is not the whole-song silencing
+    # that an unreadable SURFACE flag could be hiding.
+    assert ctx_two_tracks_one_return.song.start_playing_calls == 1
+    assert out["manifest"]["mixer_state"][0]["soloed_chains"] == [{
+        "device_position": 1,
+        "device_name": "Drum Bus",
+        "chain_index": 1,
+        "chain_name": "Clean",
+        "solo": None,
+    }]
+    assert "did NOT report whether it is soloed" in out["warning"]
+    # The ENVELOPE must not assert a solo either. "1 soloed rack chain" would be
+    # the read claiming what it just said it could not determine, and it sends
+    # the operator at the wrong action: a real solo is cleared, an unreadable
+    # flag is investigated.
+    assert "soloed rack chain(s) during this render" not in out["warning"]
+    assert "could not be read" in out["warning"]
+    assert "unknown, not safe" in out["warning"]
+
+
+def test_a_rack_with_two_soloed_and_one_unreadable_chain_counts_both(
+    tmp_path, ctx_two_tracks_one_return, osc_factory, stub_sidecar,
+):
+    """The envelope's third head: some chains soloed AND some unreadable.
+
+    The other two heads each make one claim over the whole list. Mixed is the
+    only head that reports two numbers, and the only one whose arithmetic can
+    be wrong: `unknown` is derived by subtraction, so a miscount reports either
+    a solo the read never found or an unreadable flag it never had. Those send
+    the operator at opposite actions — a real solo is cleared, an unreadable
+    flag is investigated — which is the distinction the all-unknown head
+    already exists to protect.
+
+    **The counts are deliberately asymmetric (2 and 1), and that is the whole
+    design of the fixture.** With one of each, the two numbers are both `1` and
+    the head is byte-identical whether or not they are transposed, so the test
+    would pass against the bug it names. Verified by mutation: swapping
+    `len(certain)` and `unknown` in the head passes a 1-and-1 fixture and fails
+    this one.
+    """
+    rack = _FakeDevice(
+        class_display_name="Audio Effect Rack", name="Drum Bus",
+        chains=[
+            _FakeChain("Sub", solo=True),
+            _FakeChain("Kick", solo=True),
+            _ChainWithoutSolo("Clean"),
+        ],
+    )
+    track = ctx_two_tracks_one_return.song.tracks[0]
+    track.devices.append(rack)
+
+    out = render_handlers.render_handler(
+        ctx_two_tracks_one_return,
+        song_slug="t",
+        output_dir=str(tmp_path / "c"),
+        _osc_factory=osc_factory,
+        _sidecar=stub_sidecar,
+        _clock_source=lambda: 999.0,
+    )
+
+    # Still a warn, not a refusal — mixing an unreadable chain flag into the
+    # set does not escalate it to the whole-song silencing that DOES refuse.
+    assert ctx_two_tracks_one_return.song.start_playing_calls == 1
+
+    warning = out["warning"]
+    # Both counts, each bound to the thing it counts. Asserted as one string
+    # so the two cannot swap; see the docstring for why 2-and-1, not 1-and-1.
+    assert (
+        "2 soloed rack chain(s) during this render, and 1 whose solo "
+        "could not be read"
+    ) in warning
+    # And it is not either single-head phrasing: the all-unknown head would
+    # drop the real solos, and the all-certain head the unreadable chain.
+    assert not warning.startswith("3 rack chain(s) whose solo could not be read")
+    assert "2 soloed rack chain(s) during this render:" not in warning
+
+    # All three chains reach the list the head wraps, each described as what
+    # it is — the head counts them, the entries name them.
+    assert "'Sub'" in warning and "'Kick'" in warning and "'Clean'" in warning
+    assert "did NOT report whether it is soloed" in warning
+
+    # The manifest keeps the two states apart the way the envelope does: True
+    # and None are distinct, and a consumer told to join on these rows has no
+    # other way to tell a solo from a chain that never answered.
+    assert out["manifest"]["mixer_state"][0]["soloed_chains"] == [
+        {
+            "device_position": 1,
+            "device_name": "Drum Bus",
+            "chain_index": 1,
+            "chain_name": "Sub",
+            "solo": True,
+        },
+        {
+            "device_position": 1,
+            "device_name": "Drum Bus",
+            "chain_index": 2,
+            "chain_name": "Kick",
+            "solo": True,
+        },
+        {
+            "device_position": 1,
+            "device_name": "Drum Bus",
+            "chain_index": 3,
+            "chain_name": "Clean",
+            "solo": None,
+        },
+    ]

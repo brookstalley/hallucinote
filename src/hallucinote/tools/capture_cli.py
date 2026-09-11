@@ -11,9 +11,12 @@ hand-driven / first capture.
 Workflow (deterministic — NODE-ADDR Chunk B):
 
   1. Open the target Ableton set.
-  2. ``python -m hallucinote.tools.capture_cli execute --song <slug>`` walks the
-     live set via `hallucinote.capture.assemble_snapshot_via_probes`, reaching
-     device parameters at every nesting depth (NodeAddr `path`), and writes
+  2. ``python -m hallucinote.tools.capture_cli execute --song <slug>`` parks the
+     playhead at beat 0 (a parameter under an automation envelope reads at the
+     playhead, and a value captured elsewhere becomes the baseline every later
+     rebuild re-asserts — ``_park_playhead_at_zero``), then walks the live set via
+     `hallucinote.capture.assemble_snapshot_via_probes`, reaching device
+     parameters at every nesting depth (NodeAddr `path`), and writes
      `songs/<slug>/captured_session.refresh.json` (carrying `browser_path`
      forward from the existing snapshot).
   3. ``diff`` the refresh against the committed snapshot; on confirm, ``merge``
@@ -22,18 +25,36 @@ Workflow (deterministic — NODE-ADDR Chunk B):
 
 CLI subcommands:
 
-  * ``execute --song <slug>``   deterministic in-code capture -> writes the
-                                `.refresh.json` and prints its path to stdout
-  * ``--plan``                  print the MCP probe plan (JSON to stdout) — the
-                                hand/first-capture documentation form
+  * ``plan``                    print the MCP probe plan (JSON to stdout) — the
+                                hand/first-capture documentation form. Also
+                                reachable as the legacy ``--plan`` flag.
+  * ``execute --song <slug>``   deterministic in-code capture -> parks the
+                                playhead at 0, writes the `.refresh.json` and
+                                prints its path to stdout (``--no-seek`` opts out
+                                of the park, accepting playhead-dependent values)
   * ``diff <old.json> <new.json>``  W12-B snapshot-refresh diff; structured
                                 JSON to stdout + human summary to stderr
-                                so the agent can pipe it both ways.
+                                so the agent can pipe it both ways. Exit 0 when
+                                the two are identical, 1 when they differ.
+  * ``merge <old.json> <new.json>``  take `new` as the base and carry `old`'s
+                                sticky load-time fields (`browser_path`) onto
+                                it; merged JSON to stdout, or to ``--output
+                                PATH``. This is what `/song-snapshot` writes
+                                over the canonical snapshot — on BOTH the
+                                confirmed-overwrite path and the empty-diff
+                                bake.
   * ``migrate <captured_session.json>``  SNP-8R4K: clean a committed snapshot
                                 at rest — strip HallucinoteAnalyzer device
                                 entries, densify survivors, stamp the snapshot
                                 version. Writes in place + prints what it
                                 stripped; no-op (no write) if already clean.
+
+This list is the argparse ``description``, i.e. the `--help` text, so it is
+pinned to the parser by a test: the set of names bulleted here must equal the
+set of registered subcommands. There is deliberately no re-stamp override —
+only a real capture moves `captured_at`, so the only ways past the replay
+staleness guard are a fresh capture (durable) and ``--force-replay``
+(conscious revert). See `docs/snapshot-schema.md`.
 
 The diff path lets the `/song-snapshot` skill compare a fresh capture against
 the on-disk snapshot before overwriting — see `src/hallucinote/capture.py`
@@ -52,10 +73,8 @@ from hallucinote.capture import (
     capture_plan,
     diff_snapshots,
     format_diff_summary,
-    has_usable_captured_at,
     merge_snapshots,
     migrate_snapshot,
-    restamp_captured_at,
     snapshot_needs_migration,
 )
 
@@ -74,8 +93,18 @@ def _resolve_send_fn():
     inject a fake via ``monkeypatch.setattr(capture_cli, "_resolve_send_fn",
     lambda: fake)``.
     """
-    from hallucinote_mcp import client as _client  # type: ignore[import-not-found]
-    return _client.send
+    # Escalation-aware: a call that outruns Live's main-thread ceiling comes
+    # back ok=True carrying a job handle, and reading that as the call's result
+    # books work that has not landed. Resolving through the shared helper is
+    # what makes that true here without this module knowing the contract.
+    from hallucinote.sync.live_escalation import (
+        resolve_client_send,
+        stderr_progress,
+    )
+
+    return resolve_client_send(
+        progress_fn=stderr_progress,
+    )
 
 
 def _make_probe(send_fn):
@@ -98,6 +127,104 @@ def _make_probe(send_fn):
     return probe
 
 
+# How close to beat 0 the playhead must settle for the capture to trust it. A
+# locate is polled for, not raced, so this is slop for float formatting rather
+# than for timing — anything larger means the seek did not do what it said.
+#
+# COUPLED to `_LOCATE_TOLERANCE_BEATS` in the bridge's seek handler
+# (hallucinote_mcp/.../handlers/_transport.py), which is the tolerance
+# `_wait_for_playhead` uses to decide the playhead ARRIVED. This must not be
+# TIGHTER than that one: if it is, `capture execute` refuses on settles the bridge
+# itself calls arrived, and the refusal tells the operator to move the playhead by
+# hand — which cannot fix it. Widen this with that one, or not at all.
+_BEAT_EPSILON = 1e-3
+
+
+def _park_playhead_at_zero(probe) -> str | None:
+    """Put Live's playhead at beat 0 before anything is probed, or explain why the
+    capture must not proceed.
+
+    Every parameter under an automation envelope reads at whatever value the
+    envelope holds AT THE PLAYHEAD. After a render or a performed-automation push
+    the playhead sits at the END of the arrangement, so a capture taken there
+    records end-of-song values as the device's dialed baseline — and
+    ``replay_capture`` re-asserts that baseline on every subsequent build,
+    permanently redefining the value every envelope rides from. It is silent: the
+    diff shows an ordinary field change, indistinguishable from a by-ear tweak.
+    Beat 0 is the baseline an envelope departs from, so parking there makes the
+    capture deterministic instead of playhead-dependent.
+
+    Returns ``None`` when the capture may proceed, else the refusal text.
+    """
+    info = probe("ableton_session", "info")
+    # Both keys are required rather than defaulted: a capture that cannot read
+    # where the playhead is cannot claim its baselines are the right ones, and
+    # quietly assuming "stopped at 0" is the same silence this guard exists to
+    # end. `info` returns both on every real bridge.
+    missing = [k for k in ("is_playing", "current_song_time") if k not in info]
+    if missing:
+        return (
+            f"capture execute: ableton_session(action='info') did not report "
+            f"{', '.join(missing)}, so there is no way to tell whether an automated "
+            f"parameter would be read at its baseline or at some other beat. "
+            f"Refusing to capture rather than recording values that may be wrong "
+            f"and indistinguishable from deliberate ones."
+        )
+
+    if bool(info.get("is_playing")):
+        return (
+            "capture execute: the transport is rolling. A capture reads each "
+            "parameter at whatever beat the probe lands on, so a moving playhead "
+            "makes the snapshot nondeterministic and no seek can fix that. Stop "
+            "the transport, then re-run.\n"
+            "  (--no-seek captures where the playhead is, accepting that.)"
+        )
+
+    # Parsed, not defaulted. `or 0.0` sent a present-but-null (or any falsy
+    # non-numeric) reading down the "already at beat 0" path — no seek, no refusal,
+    # every automated parameter captured at the real playhead — which is the same
+    # silence the presence check above refuses, reached one line later.
+    raw_at = info["current_song_time"]
+    try:
+        at = float(raw_at)
+    except (TypeError, ValueError):
+        return (
+            f"capture execute: ableton_session(action='info') reported "
+            f"current_song_time={raw_at!r}, which is not a beat position. There is "
+            f"no way to tell whether an automated parameter would be read at its "
+            f"baseline or at some other beat. Refusing to capture rather than "
+            f"recording values that may be wrong and indistinguishable from "
+            f"deliberate ones."
+        )
+    if abs(at) <= _BEAT_EPSILON:
+        return None
+
+    result = probe("ableton_session", "seek", bar=1, beat=0.0)
+    # Trust the seek handler's settle poll rather than reading current_song_time
+    # back here: Live 12.x's getter can return a stale cached value within the
+    # same callback as the setter, so a read-back is not evidence the write
+    # landed (learnings.md, "do NOT verify a transport write by reading the same
+    # property back"). `settled_beats` is what the handler polled for.
+    settled = result.get("settled_beats")
+    if settled is None or abs(float(settled)) > _BEAT_EPSILON:
+        return (
+            f"capture execute: asked Live to seek to beat 0 and it settled at "
+            f"{settled!r}. Refusing to capture: every automated parameter would be "
+            f"recorded at whatever value its envelope holds at the real playhead, "
+            f"and replay_capture would then re-assert that as the baseline on every "
+            f"rebuild. Move the playhead to the start of the arrangement in Live "
+            f"and re-run.\n"
+            "  (--no-seek captures where the playhead is, accepting that.)"
+        )
+    print(
+        f"capture execute: playhead was at beat {at:.2f}; parked it at 0 so "
+        f"automated parameters read their baseline value, not their value at "
+        f"that beat.",
+        file=sys.stderr,
+    )
+    return None
+
+
 def _cmd_execute(args: argparse.Namespace) -> int:
     """Deterministic in-code capture (NODE-ADDR Chunk B): walk the live set via
     the MCP bridge, assemble a full snapshot, and write it to a side-by-side
@@ -105,6 +232,9 @@ def _cmd_execute(args: argparse.Namespace) -> int:
     has seen the diff is the bug `/song-snapshot` exists to prevent). Carries
     `browser_path` forward from the existing snapshot. Prints the refresh path
     to stdout so the skill can diff it.
+
+    Parks the playhead at beat 0 first — see :func:`_park_playhead_at_zero` for
+    what a capture taken elsewhere silently bakes in.
     """
     from hallucinote.capture import assemble_snapshot_via_probes
     from hallucinote.workspace import resolve_song_dir
@@ -129,7 +259,26 @@ def _cmd_execute(args: argparse.Namespace) -> int:
         old_snapshot = json.loads(old_path.read_text())
 
     probe = _make_probe(_resolve_send_fn())
-    snapshot = assemble_snapshot_via_probes(probe, old_snapshot=old_snapshot)
+
+    if args.no_seek:
+        print(
+            "capture execute: --no-seek — capturing at Live's current playhead. "
+            "Any parameter under an automation envelope will be recorded at the "
+            "value that envelope holds THERE, and replay_capture will re-assert "
+            "it as the baseline on every rebuild.",
+            file=sys.stderr,
+        )
+    else:
+        refusal = _park_playhead_at_zero(probe)
+        if refusal is not None:
+            print(refusal, file=sys.stderr)
+            return 2
+
+    # song_dir makes a captured sampler's sample path song-relative when the
+    # file lives under the song; absolute otherwise (the clips.audio_file form).
+    snapshot = assemble_snapshot_via_probes(
+        probe, old_snapshot=old_snapshot, song_dir=out_path.parent,
+    )
 
     out_path.write_text(json.dumps(snapshot, indent=2) + "\n")
     print(
@@ -231,78 +380,9 @@ def _cmd_migrate(args: argparse.Namespace) -> int:
     return 0
 
 
-def _cmd_restamp(args: argparse.Namespace) -> int:
-    """Refresh a committed snapshot's ``captured_at`` in place WITHOUT a content
-    change, disarming the replay guard (BAK-7D2V).
-
-    Refuses (exit 2) unless the snapshot already carries a usable `captured_at`.
-    Back-stamping an unstamped/legacy file is the one case that is strictly worse
-    than doing nothing: replay reads an unusable stamp as "no ordering evidence"
-    and warns before reverting, so the user at least SEES it — stamping moves
-    replay to its silent-pass branch and destroys that last signal.
-
-    Otherwise this is a deliberate operator override, NOT a safe default, and no
-    workflow reaches for it automatically: moving the stamp asserts that the
-    on-disk content already matches Live, and nothing here can verify that. An empty
-    ``capture diff`` is NOT such a verification — the diff never compares device
-    sidechain sources, drum-pad mappings, or per-chain authored props, all of
-    which replay re-asserts, so a pull touching only those fields diffs clean
-    while the file is stale. Re-stamping over that state silently reverts the
-    pulled work on the next build. Prefer baking a real capture (`/song-snapshot`,
-    which merges the fresh refresh over the canonical file); prefer
-    ``--force-replay`` when you consciously want to discard pulled edits, since
-    it re-warns on every build instead of disarming the guard permanently."""
-    from hallucinote.workspace import resolve_song_dir
-
-    if args.song:
-        path = resolve_song_dir(args.song) / "captured_session.json"
-    elif args.path:
-        path = Path(args.path)
-    else:
-        print(
-            "error: capture restamp needs --song SLUG or a snapshot PATH",
-            file=sys.stderr,
-        )
-        return 2
-    if not path.exists():
-        print(f"error: snapshot not found: {path}", file=sys.stderr)
-        return 2
-
-    snapshot = json.loads(path.read_text())
-    old = snapshot.get("captured_at")
-    # Refuse on an absent/malformed stamp. Replay treats an unstamped snapshot as
-    # "no ordering evidence" and takes its warn-and-proceed branch — the user at
-    # least SEES that pulled edits are being overwritten. Back-stamping one moves
-    # it to the silent-pass branch instead, destroying the only signal in the one
-    # case this tool cannot reason about. (Same reason `migrate_snapshot` never
-    # stamps: dating unknown-age content defeats the guard.)
-    if not has_usable_captured_at(snapshot):
-        print(
-            f"error: {path} has no usable `captured_at` stamp ({old!r}). "
-            "Re-stamping it would silence the replay guard's warning without "
-            "any evidence the content is current — capture the snapshot "
-            "instead (`/song-snapshot`), which stamps it correctly.",
-            file=sys.stderr,
-        )
-        return 2
-    new = restamp_captured_at(snapshot)
-    path.write_text(json.dumps(snapshot, indent=2) + "\n")
-    print(
-        f"{path}: re-stamped captured_at {old!r} -> {new!r} "
-        "(content unchanged; the replay guard is now disarmed)."
-    )
-    print(
-        "warning: this asserts the on-disk snapshot already matches Live — "
-        "nothing verified that. If a pull touched a device sidechain source, "
-        "drum-pad mapping, or chain authored prop, those values are still "
-        "stale here and the next build will silently revert them. Bake a real "
-        "capture with `/song-snapshot` instead when you can.",
-        file=sys.stderr,
-    )
-    return 0
-
-
-def main(argv: list[str] | None = None) -> int:
+def _build_parser() -> argparse.ArgumentParser:
+    """Build the CLI parser. Split out of :func:`main` so the docstring-vs-parser
+    drift test can enumerate the registered subcommands without running one."""
     p = argparse.ArgumentParser(description=__doc__)
     # The legacy --plan flag is preserved so older skill bodies / docs keep
     # working; the subcommand form is the going-forward shape.
@@ -337,6 +417,13 @@ def main(argv: list[str] | None = None) -> int:
         "--old", default=None,
         help="explicit existing-snapshot path for browser_path preservation "
              "(only meaningful with --output)",
+    )
+    exec_p.add_argument(
+        "--no-seek", action="store_true",
+        help="capture at Live's current playhead instead of parking it at beat 0 "
+             "first. Off by default: an automated parameter read away from 0 "
+             "records its value THERE as the device's baseline, and replay_capture "
+             "re-asserts that on every rebuild",
     )
     exec_p.set_defaults(func=_cmd_execute)
 
@@ -376,26 +463,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     migrate_p.set_defaults(func=_cmd_migrate)
 
-    restamp_p = sub.add_parser(
-        "restamp",
-        help=(
-            "BAK-7D2V: refresh captured_at in place with NO content change, to "
-            "disarm the replay guard. Deliberate operator override — it asserts "
-            "the on-disk content already matches Live and cannot verify it. "
-            "Refuses a snapshot with no usable captured_at (back-stamping one "
-            "silences replay's warning). Prefer /song-snapshot or --force-replay."
-        ),
-    )
-    restamp_p.add_argument(
-        "--song", default=None,
-        help="song slug — re-stamps songs/<slug>/captured_session.json",
-    )
-    restamp_p.add_argument(
-        "path", nargs="?", default=None,
-        help="explicit snapshot path (escape hatch / tests); overridden by --song",
-    )
-    restamp_p.set_defaults(func=_cmd_restamp)
+    return p
 
+
+def main(argv: list[str] | None = None) -> int:
+    p = _build_parser()
     args = p.parse_args(argv)
     if args.plan:
         return _cmd_plan(args)

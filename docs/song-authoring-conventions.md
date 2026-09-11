@@ -455,9 +455,9 @@ Drum Rack pads are **kit-specific MIDI notes**. Late Nite Kit puts the kick at 3
 **Three resolution paths**, each suited to a different authoring intent:
 
 ```python
-from hallucinote.generators.kit import Kit
+from hallucinote.kits import load_kit
 
-kit = Kit.from_device(conn, drum_device_id, name="Hot Rod Kit")
+kit = load_kit(conn, drum_device_id, name="Hot Rod Kit")
 
 # Strict — the part fundamentally needs this pad. Raises on wrong-sound
 # substitution (Hot Rod Kit ride → GM 51 → cowbell). Use when the part
@@ -488,7 +488,7 @@ kit.assert_has("kick", "snare", "ride", "crash", strict=True)
 **Auto-population.** `push_cli execute` probes `pad_info` for every linked Drum Rack after the devices phase and persists the result via `M.replace_drum_pad_mappings`. Best-effort: per-Drum-Rack failures count but don't halt the push. So the typical flow is:
 
 1. First push of a song that loads a Drum Rack → devices phase succeeds → pad-probe writes the kit's actual pad-note layout to `drum_pad_mappings`.
-2. Next `build.py` run → `Kit.from_device(conn, drum_device_id)` returns kit-specific notes (kit's actual kick at whatever note Hot Rod Kit puts it on).
+2. Next `build.py` run → `load_kit(conn, drum_device_id)` returns kit-specific notes (kit's actual kick at whatever note Hot Rod Kit puts it on).
 3. Subsequent pushes — `replace_drum_pad_mappings` is idempotent, so re-probing on every push refreshes if the kit changes and no-ops otherwise.
 
 **Property shortcuts** (`kit.kick`, `kit.snare`, `kit.crash`, etc.) wrap `pitch_of`. Use them for kicks/snares/hats that every kit has; reach for `try_pitch_of` when a pad's presence is genre-dependent (rides, crashes, splashes, cowbells, tambourines).
@@ -505,6 +505,53 @@ A rack's *chains* carry authorable state of their own, separate from the rack's 
 These are **materialized-state authorship**, exactly like `params_dialed` — the snapshot's authoring leg, not a `build.py` generator (the medium model: [`authorship-model.md`](../.prawduct/artifacts/authorship-model.md)). Author them the two ways the rest of the mix layer is authored: write the fields straight into the chain's `captured_session.json` entry (`docs/snapshot-schema.md` "Per-chain authored properties"), or set them in Live — by hand or via `ableton_device(action='set_chain_property', node={…terminal:'chain'…}, choke_group=…, out_note=…, mute=…, solo=…, volume=…, pan=…)` — and capture (`/hallucinote:song-snapshot` or `capture_cli execute`). Push re-asserts them on the reloaded rack via the `chain` terminal, so a by-ear tweak survives a `build.py --reset` rebuild **without saving the `.als`**. Capture filters to non-defaults, so a clean rack stays out of the snapshot.
 
 > **Before authoring any node feature, read `ableton://reference/node-feature-matrix`** — the tri-state (`SUPPORTED` / `NOT_IMPLEMENTED` / `UNSUPPORTED_IN_LIVE`) capability table for every feature × node kind, with the LOM evidence and a workaround per cell. It tells you up front whether a thing is reachable at all: per-chain audio-out routing, macro *names*, and chain *zones* are hard Live walls (`UNSUPPORTED_IN_LIVE`); macro *values* are just ordinary device parameters; chain *sends* aren't built yet (`NOT_IMPLEMENTED`). Consult it so you never burn a turn attempting an impossible op blind.
+
+---
+
+## Reordering / inserting mid-chain
+
+**Live 12.4 has no device-reorder API, and `load` always tail-appends.** There is no in-place move: a device you load lands at the END of the destination chain, wherever the DB says it belongs. So "swap the instrument at position 1 and keep the EQ + Erosion after it" is not an edit — it is a rebuild of everything from that position down.
+
+The supported command is:
+
+```bash
+"$PY" -m hallucinote.cli chain-rebuild --song <slug> --track <live index> --from-position 1
+```
+
+It runs five phases against Live: **capture** the chain from `--from-position` to the tail (every parameter, each device's input routing — which is where a compressor's *sidechain source* lives — and a rack's per-chain properties and drum pads); **journal** all of it to `songs/<slug>/.rebuild/<parent>.json` *before the first delete*; **demolish** (mute the parent, then delete descending — Live shifts later indices down after each delete, so descending is the only order that works); **rebuild** by loading in ascending DB `position` order and letting the tail-append produce the right order; then **restore** the captured state and **re-read Live to prove it landed**. The parent's mute is put back to whatever it was, and the journal is deleted only once the read-back agrees.
+
+`--return <n>` and `--master` address the other two parent kinds. On the master there is no mute, so the transient window cannot be silenced — stop the transport first.
+
+Three things worth knowing before you run it:
+
+- **It refuses rather than half-doing it.** Two states stop the command *before the first delete*, each naming what it found. A device in the affected span with no loadable identity — a `placeholder` (an intentionally empty slot, which a tail-append cannot reproduce mid-chain), or a row with no kind or preset selector. And a device Live reports in the chain that the rebuild can neither address nor delete: it survives the demolish, so the rebuilt chain can never match the DB's order, and a device the command cannot address is one it cannot capture, restore or verify — so it cannot even tell you what was lost. The `HallucinoteAnalyzer` is the one device allowed to survive a rebuild — the render path owns it, the authoring model ignores it by identity, and the restore maps around it by DB position rather than trusting a physical index. Deleting something that cannot be put back is unrecoverable, so both checks run while the chain is still there to look at.
+- **An interrupted run leaves a journal, and `--resume` replays it.** If Live disconnects mid-rebuild, the chain is gutted and the journal is the record of what was in it. `chain-rebuild --resume auto --song <slug>` re-probes, deletes whatever the interrupted run left in the span, reloads and restores from the journal alone — but only for a journal *this* engine wrote. A journal left by an older engine records no DB `position` per device, which is exactly the record that could not see a surviving analyzer, so replaying it would reproduce the off-by-one the position pairing exists to end: `--resume` refuses it by version, naming the file. That refusal and `push execute`'s refusal are the same dead end seen from two sides, and they share one way out — **read the journal, then rebuild the chain from the DB** (`chain-rebuild` without `--resume`), and delete the journal once the chain carries what it should.
+- **A parameter it cannot restore is reported, never dropped — and a rebuild that lost any is not a success.** A macro-mapped or locked parameter (`is_enabled` reads False) is named in the output rather than silently skipped. A parameter Live *refuses* goes further: the command reports a **SHORTFALL**, **keeps the journal**, and **exits non-zero**. Landing none of what it captured fails the verify outright, rather than passing a read-back that had nothing to compare. The whole point of the command is that a rebuild never quietly costs you mix work, so it does not get to call a partial restore done.
+
+  A kept journal is the record of the values that did not land. `push execute` tells the two kinds apart and does the right thing with each: it **refuses** while a journal describes a rebuild that stopped mid-flight (the chain is gutted and the DB's links describe one Live no longer has), and only **warns** about a shortfall journal, because there the chain is rebuilt and its links are rebound — so `push execute --only devices`, which is how you re-apply what the DB authors, is not blocked by the very state it exists to repair. Delete the journal once you are satisfied the chain carries what it should.
+
+### In-rack hand edits do not survive a rebuild
+
+**A rack is put back by reloading its preset.** Everything the preset contains comes back — its chains, its nested devices, the macros, the samples — *as the preset saved them*. Two things do not survive:
+
+- **Structure you added inside the rack in Live**: a device dropped into a drum pad's chain by hand, a chain created in the rack's editor. The preset does not contain it, so the reloaded rack does not have it.
+- **Nested-device parameters you dialed by ear and never saved**: the rebuild restores the rack's own top-level parameters (its macros), not the parameters of devices *inside* it. Those come back at whatever the preset holds.
+
+What *is* carried across is the rack's top-level parameters and its authored **per-chain properties** (`choke_group`, `out_note`, chain `mute` / `solo` / `volume` / `pan`) — captured before the delete and re-applied onto the reloaded preset. See *Per-chain authorship* above.
+
+Push does re-assert nested-device parameters the **DB** carries (`device_param_overrides` — see DEEP-RACK-ADDR), so a nested tweak that reached the DB via `/hallucinote:song-snapshot` comes back on the next `push execute --only devices`. It is the tweak that never left Live that is lost.
+
+If you have hand-built inside a rack, save it as a preset (or capture it with `/hallucinote:song-snapshot`, which records the preset identity the DB reloads from) **before** rebuilding the chain around it.
+
+### The push side: `--reconcile-chains`
+
+The same orchestration has a second caller. When a push finds a device the DB authors at a position Live already has something else at, the `devices` phase **halts** — it refuses to load, because a load would tail-append a second copy and silently double the signal path. Three fixes, in the order to try them:
+
+1. `push_cli probe-and-link <session> --song <slug> --probe` — bind the chain Live already has (nothing changes in Live).
+2. `/hallucinote:song-snapshot` — accept Live's order and make the DB describe it.
+3. `push execute --reconcile-chains` — make the **DB's** order true, by running the rebuild above on every chain the phase would have halted on, before the phases dispatch.
+
+The flag is **opt-in per push and never automatic**: a rebuild is destructive and holds Live for real wall-clock time, which is not something a routine push starts on its own. Without it the halt stands, and its message names the command.
 
 ---
 
@@ -554,13 +601,17 @@ For non-4/4 sections:
 - Use the library generators with `beats_per_bar=N` if the within-bar 4/4 shape is musically acceptable for the section (e.g. 6/4 — a longer bar with the same downbeat-snare-snare frame).
 - Hand-author or compose a meter-specific primitive when the within-bar shape matters (e.g. 7/8 with grouping 2+2+3). The `odd-meter-experimental/build.py` example is a worked example for 7/8 + polyrhythm authoring.
 - Name `BEATS_PER_BAR_7_8 = 3.5` (etc.) as a constant in `build.py` and pass it through.
-- Use the time-signature map (`M.add_time_signature_point`) for **the global meter** — one row at `start_bar=1.0`.
+- Use the time-signature map (`M.add_time_signature_point`) to record **the song's true meter**, including within-song changes: one row per meter change, at the bar it starts on. `start_bar` is a float and rows below 1.0 are refused (bars are 1-based), but there is no ceiling and no one-row limit.
 
-> **A within-song meter change cannot be recorded today.** `add_time_signature_point` raises for *any* `start_bar > 1.0`, per-section changes included: Live 12.4's MCP has no `song_signature` automation target, so the ratchet can't reach Live, and the refusal is dual-layered at the mutator and the planner. (Earlier revisions of this page said per-section changes were supported. They are not — the code refuses them.)
+> **The DB records the meter; Live shows a flat ruler.** Live 12.4's MCP has no `song_signature` automation target, so only the bar-1 row reaches Live — `plan_push_time_signature_map` pushes it and raises a push-report *alert* (not a diagnostic note) saying the rest were skipped. That alert is the one place the limit is stated: the song's meter is a property of the authored work, Live's ability to render it is a materialization detail, and the projection is where a projection loss belongs. Author the true meter map regardless.
 >
-> **This is a projection limitation, not a modelling one.** The song's meter is a property of the authored work; Live's ability to represent it is a materialization detail. Author the true meter into the brief regardless, mark the row open with **the engine** as its owner (see [*A stage may not emit an unresolved gap*](#a-stage-may-not-emit-an-unresolved-gap)), and realize the meter *as felt groove* — bar-scaled generators via `beats_per_bar`, plus hand-authored within-bar accent groupings — over the single global ruler. Never present that workaround to the user as a creative option; it isn't one.
+> **Realize the meter as felt groove, because the ruler won't carry it.** Bar-scaled generators via `beats_per_bar`, plus hand-authored within-bar accent groupings. Never present that to the user as a creative option — it isn't one; it's what the renderer forces.
 >
-> **Who owns moving this.** `TMP-7B3X` is the source-of-truth half — lift the policy refusal out of the mutator so the DB can record what the song *is*. `TMP-4J6Q` is the projection half — how a declared meter map actually materializes in Live. Neither closes the other.
+> **Two bar rulers, and they diverge after the first meter change.** Push translates bar positions through the meter map (`_split_bar` / `_position_bar_to_beats`), while `hallucinote.arrangement` accumulates whole bars against one uniform `beats_per_bar` and never reads the map. `Arrangement(beats_per_bar=...)` is a single value, so there is no setting that makes them agree for a multi-meter song — in a 4/4 song that turns 7/4 at bar 9, bar 13 is beat 48 to the arrangement layer and beat 60 to push (push gains the extra beats every bar after the change adds). Every bar-position row records which ruler produced it, and the arrangement push phase alerts only on the ones that came from the uniform accumulation — so a song authored directly against the map raises nothing, and the alert stops being one an operator learns to skip. It names the placements affected; it cannot repair them.
+>
+> Two ways through, both real: **author the placements after the change directly** — `M.add_arrangement_clip` / `M.create_section` take float bars and push resolves them through the map, so `Arrangement` is simply not the tool past that point — or **keep the song single-meter in the DB** and carry the odd groupings as accent alone. Making `Arrangement.plan()` meter-aware is `ARR-4M3T`.
+>
+> **What is still open.** `TMP-4J6Q` is the projection half — how a declared meter map actually materializes in Live (per-bar arrangement clips, or the per-scene mechanism `TMP-5K1R` proposes). `ARR-4M3T` is the authoring half — a meter-aware `Arrangement.plan()` and meter-aware read-side lenses. Neither closes the other.
 
 ---
 
@@ -576,11 +627,123 @@ What that means when you author one:
 - **Write-only.** Recorded arrangement automation has no LOM read surface. Push verifies `automation_state == 1` per arc; shape verification is your ears/eyes (or a `.als` dump).
 - **Nested-rack device parameters ARE reachable** on this route (unlike session clips): perform addresses the `Parameter` object directly, so the arc carries the top-level device's link plus a positional `device_path` to the nested param (DEEP-RACK-ADDR / NODE-ADDR). The session-clip route still can't address them — Live 12.4 `Clip.create_automation_envelope` has no nested surface.
 
+---
+
 ## Audio-track + song-spanning envelopes (ENV-9P4T: now performed)
 
-**Mixer / pan / send / device envelopes on audio tracks** are authorable. An audio track has no MIDI session clip to host a per-clip envelope, so a clip-independent (e.g. song-spanning) ride routes to **perform** — a continuous arrangement lane, exactly like a plain or group track. (A per-clip ride that *is* covered by a single audio session clip is still refused, pending the session-audio-clip push surface CLP-AUD2.)
+**Mixer / pan / send / device envelopes on audio tracks** are authorable, and route exactly like a MIDI host's: covered by a single session clip → that clip carries the ride; covered by none → **perform**, a continuous arrangement lane, like a plain or group track. An audio *session clip* hosts an envelope perfectly well — `Clip.create_automation_envelope` is parameter-keyed and clip-type-agnostic — so a volume ride or send throw under a dialogue line is just an envelope. Arrangement clips host none, on any track kind; that is Live's limit, not ours.
 
 **Long envelopes that no single session clip covers** — midi OR audio hosts — also perform. The planner infers the route from the envelope's span: covered by one session clip → per-clip (session-clip route); not covered → perform (continuous ride). So a song-spanning volume/pan/send ride needs no hand-partitioning; it's span-bounded, not clip-bounded. A within-one-clip envelope still rides that clip.
+
+---
+
+## Referencing a sample (audio clips)
+
+A sample is song material, so it lives with the song and is referenced from
+`build.py` like anything else:
+
+```
+songs/<slug>/
+  assets/                        # audio the song is built from
+```
+
+**The path form is load-bearing.** `clips.audio_file` carries **song-relative
+POSIX** when the file lives under the song dir (`assets/line-01.wav`) and an
+**absolute** path when it does not. Those are the only two forms. Do not
+hand-write a `~`-prefixed path: the resolver this column is read back through
+does not expand `~`, so a `~` form resolves as a *relative* path under the song
+dir and fails at the next push. Pull writes the right form for you when it
+ingests a clip you dragged into Live.
+
+**Conform in Live first; commit a derived asset when you can hear why.** Live's
+warp (Complex Pro for speech), `pitch_coarse`/`pitch_fine`, clip gain and the
+start/end markers are non-destructive, modeled in the DB, and cost one push.
+They are the first reach. An offline transform is higher quality, costs a file
+somebody has to be able to regenerate, and earns its place for formant-sensitive
+work and for chopping — not by default. The producer-practice guardrail holds
+underneath: cut-and-slide before time-stretch, because stretch smears formants.
+
+**Sources, recipes and the derived cache.** A sample enters the song through
+`hallucinote asset add <file> --name <name> --note "<what the line is>" --origin
+"<title / medium / scene>"`: the file is normalized to WAV under
+`assets/sources/<name>.wav` (MP3 and the like decoded through `ffmpeg`), never
+edited again, and recorded in `assets/manifest.json` with its checksum, rate,
+channels, duration and provenance — for film material the note is the only
+record of what the sample *is*. `hallucinote asset list|verify` read the manifest
+back. In `build.py` the source is looked up by name and transformed by a recipe:
+
+```python
+from hallucinote.assets import source, derive, trim, normalize, reverse
+
+line = source(SONG_DIR, "rivers-01")
+hit = derive(line, trim(0.4, 2.1), normalize(peak_dbfs=-1.0))
+create_audio_clip(conn, ..., audio_file=str(hit.path))
+```
+
+`derive` returns a file under `assets/derived/` named by the hash of its source,
+its chain and every parameter (and, for a carve, the notes it was carved
+against), beside a JSON record of what made it. Commit both directories: the
+derived file is a cache — regenerable from source + recipe, kept so opening the
+song never requires a re-render — and the recipe in `build.py` is the authored
+thing. Change the source or the recipe and the address changes; nothing can
+reference a stale file by a current name. `hallucinote derived verify|prune`
+checks the cache and lists what no clip or device references any more. The
+transforms: `trim`, `fade`, `normalize`, `reverse`, `pitch_shift`,
+`stretch_to_bars`, `chop_at_onsets`, and the score-dependent `carve` / `vocode`
+(a reference schedule of nodes plus `MaskParams`; `field='symbolic'` reads the
+score, `field='measured'` reads a capture — never substituted for each other).
+A clip row with `reverse=1` needs none of this spelled out: push derives the
+reversed file itself and points the clip at it, in the session and the
+arrangement alike.
+
+**Reading a line before composing to it.** `hallucinote sample-lens <slug>
+<source>` (`/sample-lens`) renders the line's pitch centre and its relation to
+the song's key, its phrases in beats at the song's tempo, syllable rate, and
+where a named detector *would* fire, against bars — readings, never verdicts.
+The follower generator (`generators.follow_pitch`) turns an F0 stream into a
+tagged part; the key constraint is a parameter, and `None` keeps the line's own
+pitch classes — whether the music leads is the author's call, never a default.
+
+**A sampler.** A `devices` row for a Simpler carries `audio_file`; push assigns
+the sample (`assign_sample`, re-callable, diffed against what Live reports) and
+capture writes a hand-dropped sample back in the same two forms
+`clips.audio_file` uses — song-relative under the song dir, **absolute**
+otherwise. Not the `~`-collapsed portable form: `resolve_audio_path` does not
+expand `~`, so such a reference would resolve as a *relative* path under the
+song dir and fail at the next push. Window,
+pitch and gain are ordinary device parameters and envelopes.
+
+**What is not there yet.** The score-dependent `carve` / `vocode` transforms are
+built and unit-tested but have **never been pushed to Live** — the one piece of
+the sampling path with no live run behind it. Per-note MPE bends
+(`note_expression`) cannot be pushed at all — Live's Python API exposes no
+per-note expression surface under any name, so this is permanent rather than
+pending a Live update (#515). A monophonic line's glide goes through a
+`device_parameter` ride instead. Source separation is deferred (#266); a sampler nested inside
+a rack is pushed but not captured back; a sampler's reverse has no intent column
+to read from. R4.3 (formant-preserving grain-scatter) is **no longer gated** —
+R6.2 was decided on 2026-09-09 in favour of Rubber Band, which prices in the
+`rubberband` binary as a dependency.
+
+An arrangement copy's BLOCK is fixed when Live places it — `Clip.end_time` has no
+setter, so this is a permanent Live limit rather than work outstanding, and it is
+not in the list above. What the push DOES control is the copy's playable region:
+on a WARPED row, `end_marker` and `loop_end` are written to the authored span
+after the placements apply, so the copy is meant to sound `end_bar` even while
+sitting in a longer block. A row authoring `warping = 0` is skipped — Live keeps
+that clip's markers in seconds while the arrangement is authored in bars, so the
+copy keeps its full region and the run names it rather than trimming to the wrong
+place. That write is built and unit-tested but **not yet confirmed against a real
+set** — only a shrinking marker write was ever probed. Author
+accordingly — a placement much shorter than its sample leaves a silent tail that
+can overlap what follows it on the same track. Sampler assignment and reverse-via-derived
+**ran against Live 12.4.5 on 2026-09-09** and passed. `capability-truth.md`'s
+audio row is the current answer; believe it over this paragraph if the two ever
+drift.
+
+Movie dialogue and commercial recordings are somebody's copyright. Personal and
+creative use is one thing and distributing a released track built on it is
+another; clearance is yours to judge, not the tool's.
 
 ---
 
@@ -609,7 +772,7 @@ Push materializes this in the `routing` phase (after `mix` and `devices` — an 
 
 **Monitor=In is load-bearing**, not optional polish: a summing bus that receives routed audio is silent until its monitor is `In` (the live-probed dependency). The `routing` push phase sets it from `monitoring_state='In'`.
 
-**Automation-fidelity caveat — read before claiming "master automation is solved."** The bus delivers **perform-fidelity** rides today (the lossy ~2.5 Hz gesture-record path described under "Master, group, and return envelopes" above) — adequate for slow master moves (volume rides, filter sweeps over many bars), not sample-accurate. **True-lossless** bus automation needs a hosting session clip the audio bus can't carry until **CLP-AUD2** lands. This convention delivers **routing** — it removes the master special-casing and makes the bus a first-class, normally-automatable track; it does **not** add a new automation fidelity. Full fidelity map + decisions: [RTE-1K9T design](../.prawduct/artifacts/plans/RTE-1K9T/design.md#automation-fidelity-caveat-read-before-claiming-master-automation-solved).
+**Automation-fidelity caveat — read before claiming "master automation is solved."** The bus delivers **perform-fidelity** rides today (the lossy ~2.5 Hz gesture-record path described under "Master, group, and return envelopes" above) — adequate for slow master moves (volume rides, filter sweeps over many bars), not sample-accurate. **True-lossless** bus automation needs a hosting session clip. The reason that was out of reach has changed: an audio track *can* now hold a session audio clip, and such a clip hosts envelopes like any other — so the blocker is no longer "no audio clips exist" but the open question of what a bus track should be playing in order to carry one. Unverified either way; do not claim it works. This convention delivers **routing** — it removes the master special-casing and makes the bus a first-class, normally-automatable track; it does **not** add a new automation fidelity. Full fidelity map + decisions: [RTE-1K9T design](../.prawduct/artifacts/plans/RTE-1K9T/archive/design.md#automation-fidelity-caveat-read-before-claiming-master-automation-solved).
 
 > A `route_to_bus` convenience helper is deliberately **not** shipped yet — the pattern has no second user. Friction-driven, like the interplay primitives above: the first song to adopt the bus authors it from these mutators; a helper earns its place when a second one does.
 
@@ -690,7 +853,7 @@ Both print the new session_id; use it for the rest of the push cycle and reuse i
 
 - [`.prawduct/artifacts/arrangement-model.md`](../.prawduct/artifacts/arrangement-model.md) — the arrangement model + the **dimension taxonomy** (structure intents · realization layers · subsystems) these conventions sit within
 - [`.prawduct/artifacts/performance-model.md`](../.prawduct/artifacts/performance-model.md) — the performance realization layer (the formal model behind "microtiming is authorship")
-- [`.prawduct/artifacts/plans/RTE-1K9T/design.md`](../.prawduct/artifacts/plans/RTE-1K9T/design.md) — the routing model + the **automation-fidelity caveat** behind the PRE-MAIN submaster bus
+- [`.prawduct/artifacts/plans/RTE-1K9T/archive/design.md`](../.prawduct/artifacts/plans/RTE-1K9T/archive/design.md) — the routing model + the **automation-fidelity caveat** behind the PRE-MAIN submaster bus
 - [`.prawduct/artifacts/song-conventions.md`](../.prawduct/artifacts/song-conventions.md) — the **WHY** corpus: decisions/annotations, the frontmatter schema + controlled mix/groove **tag vocabulary** (the markdown companion to the `feel`-dict *WHAT* here)
 - `docs/snapshot-schema.md` — `captured_session.json` shape
 - `ableton://reference/node-feature-matrix` (MCP resource) — which features (routing, macros, chain mixer, choke groups, zones) are reachable on which node kind, tri-state with LOM evidence; read before authoring a node feature

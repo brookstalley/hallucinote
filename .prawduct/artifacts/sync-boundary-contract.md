@@ -1,5 +1,6 @@
 <!-- Sync boundary contract — SYN-8Q3F (audit 2026-07-02 rec #8). Tier 1 (Source of Truth).
-     Derived from the phase IMPLEMENTATIONS (file:line referenced), not from prose.
+     Derived from the phase IMPLEMENTATIONS (module + symbol, never line numbers —
+     see the note under Scope), not from prose.
      Complexity budget: a new push phase needs a section here (test-enforced:
      tests/unit/sync/test_sync_boundary_contract.py) AND a _PHASE_DEPS entry; a new
      executor special-case pass needs an entry in §Executor in the same change. -->
@@ -9,7 +10,7 @@ version: 1
 scope: SYN-8Q3F
 depends_on:
   - artifact: build-plan
-    path: .prawduct/artifacts/plans/SYN-8Q3F/build-plan.md
+    path: .prawduct/artifacts/plans/SYN-8Q3F/archive/build-plan.md
 last_validated: 2026-07-04
 ---
 
@@ -18,11 +19,25 @@ last_validated: 2026-07-04
 **Scope.** What each push phase may **assume** (from prior phases / the pre-phase
 gates / the DB), what it must **re-probe from Live**, and its **failure/halt
 policy** — plus the executor's cross-phase contract and the apply-layer dispatch.
-Line references are against this branch's HEAD (SYN-8Q3F chunks applied).
+
+**Citations name symbols, never line numbers.** A line range is a claim that
+goes stale on the next edit to the file it points at, silently — this artifact
+carried ~70 of them and a single bundle invalidated a third. Every reference
+here names the module and the function, which a grep resolves and a refactor
+carries with it.
+
+**One bounded write a planner may make (2026-09-09, SMP-6V2K wave 2).** The clips and
+arrangement planners render a `reverse=1` row's derived file into the song's
+`assets/derived/` at plan time (dry-run included), so the create they plan names a file
+that already exists — the same discipline `resolve_authored_sample` enforces for a source.
+The write is deterministic, content-addressed and idempotent (a second plan finds the
+file), it never touches Live, and the plan stays inspectable without Live running, which
+is the property the purity norm protects. It is the only such write; a planner that
+writes anything else is still a violation.
 
 **The trust chain in one paragraph.** Planners are pure DB→plan functions: they
 read the song DB + `ableton_links` and *never* talk to Live
-(`push/plan.py:25-51` — the thunk contract). All Live truth enters through three
+(`push/plan.py` — the thunk contract). All Live truth enters through three
 doors: (1) the **pre-phase gates** (`push_cli._cmd_execute` — coherence check +
 arrangement probe, §Gates), (2) **apply_push_results** writing link rows between
 phases (§Apply), and (3) the **executor's explicit re-probe passes**
@@ -32,51 +47,51 @@ probe, and every prior phase that creates X halted the push if it failed.
 
 ---
 
-## Gates (before any phase runs — `push_cli._cmd_execute`, push_cli.py:694-808)
+## Gates (before any phase runs — `push_cli._cmd_execute`, push_cli.py)
 
 | Gate | What it establishes | Failure policy |
 |---|---|---|
-| Phase-target validation (`push_execute.validate_phase_targets`, push_execute.py:91-131; called pre-probe at push_cli.py:763-774 per PSH-PHASEORDER) | `--only/--start-at/--stop-after` name real phases, coherent window | `PhaseTargetError` → stderr teaching message, exit 2, no Live traffic |
-| Coherence check (`push/probe.py:976-1134 check_coherence`; wired push_cli.py:776-796) | session row exists; every `track`/`return` link points at a live index; no link points at a canonical default-scaffold track (set-swap signature) | refuse execute, exit 1, per-error `recovery` hints. **Opt-out:** `--no-coherence-check`. Nested links (clip/device) are NOT validated — a stale parent cascade-invalidates them (probe.py:1003-1007); residual risk note R1 below |
+| Phase-target validation (`push_execute.validate_phase_targets`, push_execute.py; called pre-probe at push_cli.py per PSH-PHASEORDER) | `--only/--start-at/--stop-after` name real phases, coherent window | `PhaseTargetError` → stderr teaching message, exit 2, no Live traffic |
+| Coherence check (`push/probe.py check_coherence`; wired push_cli.py) | session row exists; every `track`/`return` link points at a live index; no link points at a canonical default-scaffold track (set-swap signature) | refuse execute, exit 1, per-error `recovery` hints. **Opt-out:** `--no-coherence-check`. Nested links (clip/device) are NOT validated — a stale parent cascade-invalidates them (probe.py); residual risk note R1 below |
 | Arrangement probe (`_probe_live_arrangement_clips_via_mcp`, wrapped by `_cmd_execute._probe_arrangement_lanes`) | per-track Live arrangement clip inventory, feeding the projection's clear | **NOT a pre-phase gate** (PSH-ARRPROBE): it is passed as a THUNK and resolved inside the arrangement phase's planner, because the map is keyed by Live track index and a first push CREATES those tracks in the `tracks` phase — a pre-phase map described the pre-push numbering and made every track read as unprobed. The thunk re-probes `ableton_track(list)` itself; it does NOT reuse the coherence probe's track list. A per-track probe failure still leaves the lane out of the map, and the arrangement planner still skips that track rather than guess — but now via `PushPlan.blocked`, so the phase reports `incomplete` (non-zero exit), not `skipped` |
-| `probe_and_link` (separate subcommand, NOT run by execute; push/probe.py:360-748) | name-matched track/return links; W20-A device links by (parent, position, class); W18-B/SYN-3C8K/SYN-SCAFFOLD-MISLINK stale-link reconciliation | additive only (never deletes Live entities); duplicate names link-first + note; case near-matches noted, not linked |
+| `probe_and_link` (separate subcommand, NOT run by execute; push/probe.py) | name-matched track/return links; W20-A device links by (parent, position, class); W18-B/SYN-3C8K/SYN-SCAFFOLD-MISLINK stale-link reconciliation | additive only (never deletes Live entities); duplicate names link-first + note; case near-matches noted, not linked |
 
-## Executor cross-phase contract (`push_execute.execute_push`, push_execute.py:640-1576)
+## Executor cross-phase contract (`push_execute.execute_push`, push_execute.py)
 
-- **Phase-bounded error accumulation** (module docstring :15-19): within a phase
-  every call runs and per-call failures accumulate (`_dispatch_calls`, :936-1103);
-  at the phase boundary any failure **halts** (`_halt`, :1179-1205 — later phases
+- **Phase-bounded error accumulation** (module docstring): within a phase
+  every call runs and per-call failures accumulate (`_dispatch_calls`);
+  at the phase boundary any failure **halts** (`_halt` — later phases
   PENDING). No internal retry; re-running `execute` IS the retry (push idempotent).
-- **Connection loss halts immediately** mid-batch (:967-982, `_CONNECTION_EXCS` =
-  `LiveConnectionError`/`OSError` only, :684-690) → outcome `connection_lost`,
+- **Connection loss halts immediately** mid-batch (`_CONNECTION_EXCS` =
+  `LiveConnectionError`/`OSError` only) → outcome `connection_lost`,
   exit 2. Other exceptions from `send_fn` deliberately propagate (wire-protocol
   bugs must not be mislabeled connection loss).
-- **Plan errors halt pre-dispatch** (:1237-1256): a planner's `plan.errors`
-  (hard authoring error, `_core.py:57-63`) halts the phase with zero calls
+- **Plan errors halt pre-dispatch**: a planner's `plan.errors`
+  (hard authoring error, `_core.py`) halts the phase with zero calls
   dispatched — the DB describes something unmaterializable.
-- **Apply between phases** (:1325-1333, `_apply_results` :1104-1164): successes
+- **Apply between phases** (`_apply_results`): successes
   are applied even on a failed phase, so link rows are live for the next
   plan/convergence. Apply-layer warnings ride the errors file without flipping
   the phase.
-- **State file always written** (`_flush_state`, :742-797): at every phase start,
-  on mid-phase heartbeat (every 25 calls, :59), and terminally — atomic replace.
-  `.last-push-errors.json` only on errors (stale one deleted on clean re-run,
-  :1547-1548). The push is one attributed request row, closed with
-  ok/partial/failed (:716-727, :1549-1567 — try/finally: the errors-file
-  write cannot leave the request open, review W1). **A contract-drift `ValueError` from
+- **State file always written** (`_flush_state`): at every phase start,
+  on mid-phase heartbeat (every 25 calls), and terminally — atomic replace.
+  `.last-push-errors.json` only on errors (stale one deleted on clean re-run).
+  The push is one attributed request row, closed with ok/partial/failed
+  (try/finally: the errors-file write cannot leave the request open, review W1).
+  **A contract-drift `ValueError` from
   the apply layer is converted to a controlled phase halt (SYN-8Q3F Chunk 03) —
   see §Apply.**
 - **Per-phase special-case passes** (complexity-budget rule 4 — new entries must
   be added here):
   - *devices*: diff-reconcile — re-probe `get_parameters` per device, drop
-    already-current `device_parameter:` writes (:1277-1293 →
+    already-current `device_parameter:` writes (→
     `device_param_diff.py`; skip-on-confident-equal, keep-on-any-doubt).
   - *devices*: empty-rack guard — re-probe `get_device_chains` for each rack a
     nested write addresses; drop doomed writes, synthesize ONE clear failure
-    (:1294-1306 main pass, :1364-1382 convergence pass → `empty_rack_guard.py`;
+    (both the main pass and the convergence pass → `empty_rack_guard.py`;
     suppress-on-confident-empty, keep-on-any-doubt).
   - *devices*: convergence re-plan — after an all-ok pass, re-run the planner once
-    so params of devices loaded THIS pass land same-push (:1335-1392, SYN-9F2L).
+    so params of devices loaded THIS pass land same-push (SYN-9F2L).
   - *devices*: **pre-phase chain probe + link reconcile** (PSH-DEVDUP) — a
     lazily-resolved, once-per-push `ableton_device(list)` per linked parent
     (`_probe_live_device_chains`), fed to `reconcile_device_links` and then to
@@ -91,36 +106,53 @@ probe, and every prior phase that creates X halted the push if it failed.
     hides in the fully-linked state (`device_chain_verify.py`).
   - *devices*: post-phase pad probe — best-effort `pad_info` per linked Drum Rack,
     persisted via `M.replace_drum_pad_mappings`; never affects the outcome
-    (:491-583, :804-826; runs on ok AND skipped, not on halt).
+    (runs on ok AND skipped, not on halt).
   - *devices dispatch fallbacks*: preset-URI miss → browser search + one retry
-    (:305-398 M1-B); refused `value_display` → one retry as enum or normalized
-    (:415-488 SYN-9F2L); orphan-param hint rewrite (:261-281 SYN-2D9K).
+    (M1-B); refused `value_display` → one retry as enum or normalized
+    (SYN-9F2L); orphan-param hint rewrite (SYN-2D9K).
   - *arrangement*: post-phase integrity assert — FRESH re-probe of every clip's
     audible note set vs the DB collapsed set; HALT on silent corruption; per-clip
-    NOTE probe failures degrade to a benign "N unverified" warning (:1423-1507,
-    ARR-PROJ Chunk 3). ARR-ORPHAN2: a per-track LANE probe failure
+    NOTE probe failures degrade to a benign "N unverified" warning (ARR-PROJ Chunk 3). ARR-ORPHAN2: a per-track LANE probe failure
     (`ableton_clip(list, location='arrangement')`) does NOT degrade — it is
     `lane_probe_failed`, counted as corruption, and HALTs. The planner reads the
     clear inventory from that same probe, so an unreadable lane was never cleared
     and never rebuilt, and orphan detection could not run on it.
   - *cues*: handler-deferred cues (`skipped_out_of_range`) surface as benign
-    warnings, never failures (:1039-1064, SYN-6B4Q).
-  - *pre-loop*: alt-tuning notices (gated, inert for tuning_ref NULL;
-    :1207-1218, MICROTUNE).
+    warnings, never failures (SYN-6B4Q).
+  - *pre-loop*: alt-tuning notices (gated, inert for tuning_ref NULL; MICROTUNE).
 
-## Apply layer (`push/plan.py:485-623 apply_push_results`)
+## Apply layer (`push/plan.py apply_push_results`)
 
-Table-driven on the `<kind>:` prefix of each result key: `_LINK_KINDS` (:351-363,
-writes an `ableton_links` binding from the declared result field),
-`_ACK_ONLY_KINDS` (:374-463, no DB write), the dedicated `perform_batch` branch
-(:535-592, per-arc fingerprint recording gated on `automation_state == 1` +
-`updates_written`, planned-vs-returned count cross-check). Failed results are
-skipped (the executor already recorded them). Runs in ONE transaction (:523) — a
+Table-driven on the `<kind>:` prefix of each result key: `_LINK_KINDS` (writes
+an `ableton_links` binding from the declared result field),
+`_ACK_ONLY_KINDS` (no DB write), the dedicated `perform_batch` branch
+(per-arc fingerprint recording gated on the handler's `outcome`, with
+`automation_state == 1` + `updates_written` as the floor for a server that
+predates the field; planned-vs-returned count cross-check). Failed results are
+skipped (the executor already recorded them). Runs in ONE transaction — a
 mid-batch raise rolls back every link in the batch.
+
+**Two channels out, and the split is load-bearing.** The return value is the
+ACTIONABLE one: `push_execute` writes it into `.last-push-errors.json`, so
+anything put there makes a clean push look failed. The optional `notes_sink`
+callable is the BENIGN one, wired to the same `warnings` list the push state
+file already carries. The perform phase's per-arc roll-up goes there — a
+realtime phase that spends minutes of wall clock and reports `ok (1 call)`
+leaves an author with nothing to act on, which is how a whole session's
+divergence went unnoticed until it was heard (issue #471, ask 3). `notes_sink`
+is optional; its absence costs the roll-up and nothing else.
+
+**The `outcome` string is the contract.** The engine does not import the MCP
+package — they ship and version separately — so `push/perform.py`'s
+`PERFORM_OUTCOME_RECORDED` and `handlers/automation.py`'s constant of the same
+name are two spellings of one wire value (`"recorded"`). Anything else the
+handler reports is a non-recording, whatever it is called, so the apply layer
+branches on inequality rather than on an enumeration it would have to keep in
+step.
 
 **Unknown-kind policy (deliberate, SYN-8Q3F Chunk 03).** A key kind outside
 `KNOWN_RESULT_KEY_KINDS` raises `ValueError` with the full key + the declaration
-instruction (:619-624) — fail-loud, because a silent skip would mean a
+instruction — fail-loud, because a silent skip would mean a
 planner-emitted write records nothing and re-fires every push (the exact
 silent-drop the table exists to prevent). Three layers close the class:
 
@@ -142,8 +174,8 @@ silent-drop the table exists to prevent). Three layers close the class:
 
 | Engine | Site | Semantics | Failure asymmetry that justifies it |
 |---|---|---|---|
-| Push devices diff | `push/device_param_diff.py:44-55 _floats_equal` | `abs(a-b) <= max(1e-6, 1e-6·max(abs a, abs b))` — tight, rel+abs | a false EQUAL silently skips a dialed write (wrong mix); a false DIFFER is one redundant write. Skip only on proven equality. |
-| Pull drift diff | `pull/_core.py:33 _FLOAT_EPS = 1e-3`; `_floats_differ` :123-135 (absolute), `_normalized_values_match` :138-149, `_raw_values_match` :152-168 (relative, floored) | loose — absorbs Live display-rounding (0.6249 vs 0.6250) | a false DIFFER churns a DB row + event on every pull; a false SAME misses a sub-0.1% hand nudge (musically negligible). |
+| Push devices diff | `push/device_param_diff.py _floats_equal` | `abs(a-b) <= max(1e-6, 1e-6·max(abs a, abs b))` — tight, rel+abs | a false EQUAL silently skips a dialed write (wrong mix); a false DIFFER is one redundant write. Skip only on proven equality. |
+| Pull drift diff | `pull/_core.py _FLOAT_EPS = 1e-3`; `_floats_differ` (absolute), `_normalized_values_match`, `_raw_values_match` (relative, floored) | loose — absorbs Live display-rounding (0.6249 vs 0.6250) | a false DIFFER churns a DB row + event on every pull; a false SAME misses a sub-0.1% hand nudge (musically negligible). |
 
 **Cross-engine invariant (pinned by `tests/unit/sync/test_diff_float_semantics.py`):**
 push-equal ⟹ pull-no-drift, **per channel** — any pair the push diff deems equal
@@ -158,9 +190,9 @@ matchers at raw magnitudes violates it (18000.0 vs 18000.016 is push-equal yet
 relative `_raw_values_match` (DEV-4P7R). The test pins that disagreement as a
 known boundary: any new pull comparison of raw-magnitude values must use the raw
 matcher. One unsampled corner remains: push's normalized branch compares in RAW
-space after projection (`device_param_diff.py:104-111`), so for a pathological
+space after projection (`device_param_diff.py`), so for a pathological
 parameter range with |hi| >> hi−lo (ratio ≳1000) the same boundary exists inside
-push's own normalized compare — realistic Live params sit well inside it. `arrangement_compare.py:44` (`DEFAULT_EPS_BEATS=1e-3`) is note-geometry
+push's own normalized compare — realistic Live params sit well inside it. `arrangement_compare.py` (`DEFAULT_EPS_BEATS=1e-3`) is note-geometry
 comparison, not a param diff engine — out of this invariant.
 
 ---
@@ -172,17 +204,23 @@ Order + dependency data: `push/plan.py` `_PHASE_NAMES` / `_PHASE_DEPS`
 the tuple satisfies the declared deps). "Assumes" = trusted without checking
 Live; every phase additionally assumes the §Gates ran (links truthful).
 
-### 1. `tempo_map` (`push/tempo.py:11-51`)
+### 1. `tempo_map` (`push/tempo.py`)
 - **Assumes:** nothing from prior phases; DB `tempo_map` rows.
 - **Re-probes:** nothing.
 - **Failure/halt:** no error path of its own; bar-1 row → one `set_tempo` call;
-  non-bar-1 rows skipped with warn (LOM gap — no per-bar tempo automation).
+  non-bar-1 rows skipped with an alert (LOM gap — no per-bar tempo automation).
   Per-call failure → boundary halt. Ack-only key `tempo_point:`.
 
-### 2. `time_signature_map` (`push/tempo.py:54-100`)
-- Symmetric with tempo_map (`time_signature_point:` ack-only; same LOM gap warn).
+### 2. `time_signature_map` (`push/tempo.py`)
+- Symmetric with tempo_map (`time_signature_point:` ack-only; same LOM gap alert).
+- **This phase is where the meter reach limit is enforced, and nowhere else.**
+  The DB records the song's true meter map (within-song changes included); this
+  planner pushes the bar-1 row, skips the rest, and alerts that Live's ruler will
+  show the bar-1 meter for the whole song. The two-bar-ruler divergence is NOT
+  reported here — it is reported where bar positions actually become beats, in
+  §13 and §14.
 
-### 3. `tracks` (`push/tracks.py:12-73`)
+### 3. `tracks` (`push/tracks.py`)
 - **Assumes:** link rows are truthful (gate-validated) — emits `create` only for
   unlinked non-master tracks; master skipped (no Live-side create).
 - **Re-probes:** nothing.
@@ -190,10 +228,10 @@ Live; every phase additionally assumes the §Gates ran (links truthful).
   tracks, so halting here is load-bearing). Link recorded from `track_index`
   (`_LINK_KINDS`). Idempotent: fully-linked song → empty plan (SKIPPED).
 
-### 4. `returns` (`push/tracks.py:76-105`)
+### 4. `returns` (`push/tracks.py`)
 - Mirror of tracks for returns (`return:` link kind).
 
-### 5. `scenes` (`push/scenes.py:25-63`)
+### 5. `scenes` (`push/scenes.py`)
 - **Assumes:** DB clip `slot` values are the needed scene count (derived from the
   same rows the clips phase reads, so they can't disagree).
 - **Re-probes:** Live-side — the `ensure_count` handler reads `len(song.scenes)`
@@ -201,32 +239,79 @@ Live; every phase additionally assumes the §Gates ran (links truthful).
 - **Failure/halt:** single idempotent call, ack-only (`scene:`); failure →
   boundary halt (clips would IndexError without it — SYN-4P2D).
 
-### 6. `clips` (`push/clips.py:11-154`)
+### 6. `clips` (`push/clips.py`)
 - **Assumes:** **every clip's track linked — RAISES `ValueError` otherwise**
-  (clips.py:72-80, W3-C strict; see violation V2 for how that raise surfaces).
-  Assumes scenes provisioned (phase 5). Linked-clip slot content is irrelevant:
-  `create` carries `replace=True` (:88-103) so an occupied slot is replaced —
-  re-probe avoided by making the write state-independent.
-- **Re-probes:** nothing.
-- **Failure/halt:** audio clips refuse-with-warn (CLP-AUD1, :51-61 — a MIDI
-  create would corrupt the slot). Per-call failure → boundary halt. `clip:` link
+  (clips.py, W3-C strict; see violation V2 for how that raise surfaces).
+  Assumes scenes provisioned (phase 5). For a MIDI clip the linked slot's
+  content is irrelevant: `create` carries `replace=True` so an occupied slot is
+  replaced, and the write is state-independent by construction.
+- **Audio clips materialize here** (SMP-6V2K): a `kind='audio'` row plans a
+  create carrying the resolved absolute path, plus one `set_property` per
+  authored conform field (gain, pitch coarse/fine, warping, warp mode, start and
+  end marker) keyed `clip_conform:{clip_id}:{property}`, ack-only because the
+  value originates in the DB and records no Live-side index. **The file's
+  existence is checked before the call is planned** — a clip that pushes and
+  then plays silence is the "reported OK without determining state" failure this
+  contract forbids, so a missing sample is `blocked`, not `error`: `error` halts
+  the phase before dispatch and one typo'd path would stop a thirty-clip song
+  pushing anything.
+- **State-independence does NOT extend to audio.** `Clip.file_path` is
+  read-only, so which file a slot plays can only be changed by delete-and-
+  recreate — a destructive reconcile the MIDI path never had. The phase
+  therefore accepts an optional session-clip probe (`live_session_clips_by_track`)
+  and diffs against it: same file → conform in place; slot empty → recreate;
+  file changed, or the slot holds a MIDI clip → **delete → create → conform →
+  re-emit every envelope the row hosts**, as one planned sequence
+  (`_recreate_audio_clip`). The delete is an explicit ack-only
+  `clip_delete:{clip_id}` call, not a `replace=True` on the create, so the
+  destruction is visible in the plan; the create re-records the `clip:` link at
+  the same slot. The re-emit goes through the envelopes phase's own per-clip
+  planner (`plan_push_envelopes_for_clip`, keyed `envelope:`), because a
+  recreate drops every envelope the old clip hosted (probe-confirmed) and a copy
+  of the emitter would be a second route table. In a full push the envelopes
+  phase writes the same envelope again — `write_envelope` clears before it
+  inserts, so redundant, not doubled; a scoped `--only clips` push has only the
+  re-emit. The recreate is announced with an alert (a clip the operator had was
+  deleted). **Probe-less is the safe degradation** — conform in place, no
+  create, no delete — and it announces itself with an alert rather than acting
+  on a guess. Only a SUCCESSFUL probe reaches the destructive branch.
+  **The not-linked branch is itself destructive for one class of row** (#507):
+  pull never writes a `clip` link, so an audio clip ingested from Live reaches the
+  clips phase unlinked and plans `create(..., replace=True)` — the handler deletes
+  the clip Live has and rebuilds it from the same file, re-conformed from the DB.
+  Sample kept, churn plus loss of un-modelled hand work (warp markers; the DB
+  models warp mode, not markers). Where the link gets written is a design
+  decision with three candidate homes, filed rather than patched here. The execute path supplies it as a thunk resolved inside the
+  phase, so it sees the tracks the `tracks` phase created on a first push.
+  **A track whose probe FAILED is absent from the map, and absence is not
+  emptiness** — the reader is tri-state (`PROBE_UNKNOWN`), because answering an
+  unknown slot as an empty one plans a `replace=True` recreate against a clip
+  the operator really has. The two unknown cases report differently, and the
+  channel is the contract: **no probe at all** (a caller that deliberately did
+  not probe) is a `warn` plus one song-level alert; **this track's probe
+  failed** is `blocked`, so the phase reports `incomplete` with a non-zero
+  exit — same ruling as the arrangement phase's per-track probe failure, for
+  the same reason. A conform written without verifying which file Live holds
+  must not exit 0 in silence.
+- **Re-probes:** nothing on its own; the session-clip probe above is supplied by
+  the caller (dict or thunk), never taken by the phase.
+- **Failure/halt:** Per-call failure → boundary halt. `clip:` link
   kind (create returns `clip_index`; `replace_notes` returns none → link skip,
-  plan.py:516-520).
+  plan.py). A blocked audio row leaves every sibling clip planned.
 
-### 7. `mix` (`push/mix.py:25-176`)
+### 7. `mix` (`push/mix.py`)
 - **Assumes:** tracks + returns linked. Master needs no link
-  (`set_master_property`, :61-83). Only non-NULL DB fields are written (:95-98) —
+  (`set_master_property`). Only non-NULL DB fields are written —
   NULL means "never authored", never "reset Live".
 - **Re-probes:** nothing — unconditional idempotent re-emit (no diff pass; cheap
   LOM writes).
-- **Failure/halt:** unlinked track → warn + skip (:88-93). Unlinked return →
-  **emits the create itself** (:116-127 — violation V3, phase overlap with
-  phase 4). Send with either end unlinked → warn + skip (:158-163). Per-call
+- **Failure/halt:** unlinked track → warn + skip. Unlinked return →
+  **emits the create itself** (violation V3, phase overlap with phase 4). Send with either end unlinked → warn + skip. Per-call
   failure → boundary halt. All keys ack-only except the fallback `return:`.
 
-### 8. `devices` (`push/devices.py:28-638`)
-- **Assumes:** tracks/returns linked (warn + skip whole parent otherwise,
-  :96-103/:119-126); device links truthful — a linked device's load is skipped
+### 8. `devices` (`push/devices.py`)
+- **Assumes:** tracks/returns linked (warn + skip whole parent otherwise);
+  device links truthful — a linked device's load is skipped
   entirely, trusting W20-A probe matching + SYN-SCAFFOLD-MISLINK cascades;
   **an UNLINKED device is no longer assumed absent** (PSH-DEVDUP): with a
   `live_devices_by_parent` probe map the planner emits a load ONLY for a
@@ -235,83 +320,145 @@ Live; every phase additionally assumes the §Gates ran (links truthful).
   Without a map (pure-planner callers) the pre-PSH-DEVDUP "load on faith"
   behavior is preserved;
   nested devices arrive WITH the rack preset (never loaded, only param-addressed
-  by `device_path`, :513-573); master devices load without a parent link
-  (`master=True`, :77-92, DEV-6M2K).
+  by `device_path`); master devices load without a parent link
+  (`master=True`, DEV-6M2K).
 - **Re-probes (executor-side, §Executor):** per-parent `ableton_device(list)`
   (PSH-DEVDUP pre-phase chain probe + link reconcile, and again post-phase for
   the integrity assert), per-device `get_parameters` (diff-reconcile), per-rack
   `get_device_chains` (empty-rack guard), post-phase `pad_info`.
-- **Failure/halt:** placeholder + analyzer rows skip-with-warn (:164-185).
+- **Failure/halt:** placeholder + analyzer rows skip-with-warn.
   Param with no writable form → operator **alert**, never a silent drop
-  (:499-510, SYN-9F2L). Corrupt stored JSON (browser_path/preset_query/override
-  path) → warn/alert + degrade (:236-272, :401-409). Per-call failure → boundary
+  (SYN-9F2L). Corrupt stored JSON (browser_path/preset_query/override
+  path) → warn/alert + degrade. Per-call failure → boundary
   halt, after the executor's one-shot fallbacks. Keys: `device:` (link),
   `device_parameter:` / `device_param_override:` / `device_chain_props:`
   (ack-only).
 
-### 9. `routing` (`push/routing.py:52-222`)
+### 9. `routing` (`push/routing.py`)
 - **Assumes:** tracks linked; **devices loaded** (a MIDI track exposes *audio*
   output routing — the only kind that can target a submaster bus — only once an
   instrument is loaded, RTE-2P9X); a track-target's Live display name == its DB
   `name` (push created it with that name, D6).
 - **Re-probes:** nothing (deliberate — D7, no fingerprint gate; idempotent
   re-emit like mix).
-- **Failure/halt:** unlinked track → warn + skip (:101-117, deliberately `warn`
+- **Failure/halt:** unlinked track → warn + skip (deliberately `warn`
   not `alert` — unreachable on the gated path). Dangling/unresolvable/unknown
-  routing target → **alert** + skip that direction (:161-201). Per-call failure →
+  routing target → **alert** + skip that direction. Per-call failure →
   boundary halt. Ack-only keys.
 
-### 10. `device_sidechain` (`push/devices.py:641-742`)
+### 10. `device_sidechain` (`push/devices.py`)
 - **Assumes:** devices linked (phase 8 — its plan runs after devices' apply);
   source track exists in Live under its DB `name` (FK resolved to display name,
   same D6 convention as routing); source track's own link only needed to prove
-  it's in the song (`by_id`, :663).
+  it's in the song (`by_id`).
 - **Re-probes:** nothing.
-- **Failure/halt:** source FK not in the song → **alert** + skip (:676-681);
-  unlinked device → warn + skip (:686-690 — see violation V6 on the message's
-  wrong mechanism claim). Per-call failure → boundary halt. Ack-only
+- **Failure/halt:** source FK not in the song → **alert** + skip;
+  unlinked device → warn + skip (see violation V6 on the message's wrong
+  mechanism claim). Per-call failure → boundary halt. Ack-only
   (`device_sidechain:`).
 
-### 11. `envelopes` (`push/envelopes.py:45-163` + emitters)
+### 11. `envelopes` (`push/envelopes.py` + emitters)
 - **Assumes:** tracks/clips/returns/devices linked (each emitter warn+skips a
-  missing link — :434-482, :678-690, :756-770, :829-838, :899-912); a covering
+  missing link); a covering
   session-clip placement exists for clip-hosted rides (geometry computed from the
   DB, never re-probed); runs BEFORE arrangement (W4-A — `duplicate_to_arrangement`
   snapshots the session clip, so clip envelopes must exist first).
 - **Re-probes:** nothing.
-- **Failure/halt:** `clip_cc`/`clip_pitch_bend` → warn + skip (LOM gap, :97-119);
+- **Failure/halt:** `clip_cc`/`clip_pitch_bend` → warn + skip (LOM gap);
   perform-routed families are NOT emitted here (noted + left to phase 12,
   ENV-7G4K/9P4T); zero-breakpoint → warn + skip. **Unknown `target_kind` RAISES
-  `ValueError`** (:159-162, schema-belt; same plan_fn-raise surface as V2).
+  `ValueError`** (schema-belt; same plan_fn-raise surface as V2).
   Per-call failure → boundary halt. `envelope:` link kind (handler returns
   `envelope_index`).
+- **Host kind does not change the route.** An audio-track host partitions exactly
+  like a MIDI one — `session_clip` when a single session clip covers the span,
+  `perform` when none does — because `Clip.create_automation_envelope` is
+  parameter-keyed and clip-type-agnostic, probe-confirmed end-to-end on a real
+  audio session clip (write, `insert_step`, read back). There is no audio refusal
+  in the classifier. **Arrangement clips remain impossible hosts**, and that is
+  structural rather than a branch: every emitter addresses `location='session'`
+  and resolves `clip_index` from the source session clip's own link, never from a
+  placement.
 
-### 12. `performed_automation` (`push/perform.py:325-508`)
+### 12. `performed_automation` (`push/perform.py`)
 - **Assumes:** tracks/returns/devices linked (per-arc warn + "arc pending, next
-  push retries", :108-262); the `performed_automation` fingerprint table is an
+  push retries"); the `performed_automation` fingerprint table is an
   honest memory of what Live's lanes hold (NOT re-probed — the perform surface is
   write-only; an unchanged fingerprint means "do not re-record", which is what
   protects hand-edited Live lanes); `perform_target_key` stays field-identical to
-  the handler's `_PreparedArc.addressing_key()` (cross-package parity test,
-  :265-307).
-- **Re-probes:** verification is handler-side: per-arc `automation_state == 1` +
-  `updates_written > 0` gate the fingerprint write at apply
-  (perform.py:511-571) — an unverified arc re-performs next push.
+  the handler's `_PreparedArc.addressing_key()` (cross-package parity test).
+- **Re-probes:** verification is handler-side and now stated rather than
+  derived: each arc carries an `outcome` (`recorded` / `unverified`) plus an
+  `outcome_reason`, and the apply layer records a fingerprint only for
+  `recorded`. `automation_state == 1` + `updates_written > 0` remain the floor
+  for a server predating the field. An unverified arc re-performs next push.
+  `automation_state` alone can never carry this: it reads 1 whenever ANY lane
+  exists on the parameter, including one an earlier session wrote, so on every
+  iteration after the first it is 1 no matter what the pass did (#471).
+- **Positions before it plays.** The pass locates Live's START PLAYING POSITION
+  (`handlers/_transport.py`), not just the playhead — those are separate
+  properties and `start_playing()` rolls from the first. It then judges the
+  ramp's own first beat against the span, so a transport rolling from somewhere
+  else aborts instead of closing every gesture on a beat past the end and
+  returning a clean result.
 - **Failure/halt:** duplicate-target arcs: recorded lanes claimed first, extra
-  arcs **alert** + defer (:424-454, ENV-8K2R #3). One `perform_batch:` call with
-  a derived read ceiling (:487-496) — realtime cost surfaced via alert. Restore
-  failures + count mismatches → apply warnings (plan.py:461-506). Watchdog for a
+  arcs **alert** + defer (ENV-8K2R #3). One `perform_batch:` call with
+  a derived read ceiling — realtime cost surfaced via alert. Restore
+  failures + count mismatches → apply warnings (plan.py). Watchdog for a
   dead worker = **PSH-3H8M**, not this contract.
 
-### 13. `arrangement` (`push/arrangement.py:91-331`)
+### 13. `arrangement` (`push/arrangement.py`)
+- **This phase and §14 are where the two-bar-ruler divergence is reported**, not
+  the meter phase: this is where an authored bar position actually becomes a Live
+  beat. The alert names how many placements sit after a meter change, because
+  push resolves them through the `time_signature_map` while
+  `hallucinote.arrangement` accumulates whole bars against one uniform
+  `beats_per_bar`. A song whose every placement precedes the first change
+  diverges nowhere and is not alerted.
 - **Assumes:** tracks linked (alert + skip whole track otherwise); envelope-bearing
   placements' source clips linked (duplicate route); the DB is the ONLY author of
   the timeline (projection: clear then rebuild, ARR-PROJ).
+- **Audio placements project like any other** (SMP-6V2K). The whole-track audio
+  skip is gone: a track the DB has placements for is projected, and a track it
+  has none for is still left untouched — that distinction is *named in the
+  report* (an `alert`, so it reaches the operator) rather than being an
+  unexplained absence. The route is decided by
+  whether the source clip **hosts an envelope**, exactly as for MIDI: an
+  envelope-hosting audio placement takes `duplicate_to_arrangement` onto the
+  cleared region (needs the session clip linked), because the duplicate carries
+  a ride off an audio session clip as off a MIDI one (probe-confirmed with an
+  envelope-free control); an envelope-free audio placement is created directly
+  via `Track.create_audio_clip(path, beats)` and needs no session counterpart.
+  Only the envelope-hosting rows duplicate — the duplicate carries the session
+  clip's length, not the placement's, and the positional renumbering ARR-PROJ
+  fixed was born in that path, so widening it is a separate decision.
+- **One audio gap the phase reports rather than papers over, and one it used to.**
+  A direct create loads a fresh clip at Live's defaults, and the planner cannot
+  `set_property` the copy in the same plan: an arrangement clip is addressed by an
+  index that exists only in the create's *result*, after apply, and predicting it
+  is exactly the positional guess ARR-PROJ diagnosed as a root cause. The authored
+  conform therefore cannot travel *from this planner* — but it does travel, from
+  the same post-apply pass that writes the region, so what was a reported gap is
+  now a two-stage write. A duplicated placement never had the gap, since the
+  duplicate copies the conformed session clip. EXTENT is two facts, not one, and
+  both are said ONCE per phase as an `alert` naming each placement (capped, cap
+  stated) — an alert because `notes` is the channel the executor discards; one
+  per phase because one per placement would bury a stem-heavy song's report.
+  (1) The PLAYABLE REGION and the conform both travel, but not from this planner:
+  a second pass (`plan_push_arrangement_audio_regions`) runs after apply, writes
+  the copy's warp state FIRST — which is what makes the beats the region is
+  written in true rather than assumed of a file Live may have loaded unwarped —
+  then the rest of the conform, then each copy's `end_marker`/`loop_end` to the
+  authored span. (2) The BLOCK the copy
+  occupies does not and cannot — `Clip.end_time` has no setter (probe row 27),
+  so it is a Live limit, not a gap awaiting work, and the operator shortens it
+  in Live only when the visual span matters or a block overlaps what follows. The untouched-audio-track summary is
+  an `alert` for the same reason.
 - **Re-probes:** the arrangement probe (resolved at THIS phase, not before the
   loop — §Gates) supplies each track's current Live clips for the clear; a lane
   ABSENT from the probe map → `blocked` + skip that track (unknown state must
   not be cleared into). Probe map `None` (non-execute callers) → loud alert, no
-  clear emitted (:155-161) — an alert, not `blocked`: everything is still
+  clear emitted — an alert, not `blocked`: everything is still
   planned.
   Post-phase: the executor's integrity assert re-probes every placement FRESH —
   and (ARR-ORPHAN2) HALTs when that re-probe cannot list a lane, which is what
@@ -319,15 +466,26 @@ Live; every phase additionally assumes the §Gates ran (links truthful).
   that kept its stale clips and got none of its placements.
 - **Failure/halt:** §6a all-or-nothing per track — every link validated BEFORE
   any of that track's calls (clear included) join the plan; an unmaterializable
-  track emits nothing + `blocked` (audio/CLP-AUD2 → warn, a deliberate no-op)
-  (:204-291). A phase carrying blocked reasons is reported `incomplete` with a
-  non-zero exit and its reasons verbatim — never `skipped (idempotent)`. Clears emitted
-  descending-index (:298-320). Per-call failure → boundary halt;
+  track emits nothing + `blocked`. A phase carrying blocked reasons is reported
+  `incomplete` with a non-zero exit and its reasons verbatim — never
+  `skipped (idempotent)`. Clears emitted descending-index. Per-call failure → boundary halt;
   `ArrangementIntegrityError` → halt (silent corruption must not report OK).
   Keys: `arrangement_clip:` (link), `arrangement_clip_clear:` /
-  `arrangement_clip_notes:` (ack-only).
+  `arrangement_clip_notes:` / `arrangement_clip_region:` (ack-only).
+- **Post-apply second dispatch (region pass):** this is the one phase that
+  dispatches a SECOND planner after its own results apply. `execute_push` calls
+  `plan_push_arrangement_audio_regions`, which addresses each copy by the
+  `arrangement_clip` link apply just recorded — never a predicted index. It is
+  bounded to placements whose create succeeded THIS phase: a region write aimed
+  at a link the phase did not just record would land on whatever clip now holds
+  that index, so a failed placement costs that placement its region and no
+  other. Withheld or failed region writes are reported on the operator channel,
+  and the remedy they name is a re-push: this phase rebuilds its projection
+  every run, so the placement is re-created and the region written with it.
 
-### 14. `cues` (`push/arrangement.py:334-488`)
+### 14. `cues` (`push/arrangement.py`)
+- Carries the same two-ruler divergence alert as §13, for the same reason: a
+  cue's `position_bar` resolves through the meter map here.
 - **Assumes:** arrangement materialized (Live clamps `set_or_delete_cue` to
   `[0, last_event_time]`); DB arrangement extent = the authored truth for "can
   this cue EVER be placed".
@@ -335,13 +493,13 @@ Live; every phase additionally assumes the §Gates ran (links truthful).
   ("placeable NOW?") via `on_out_of_range='skip'` — deferred cues report back as
   benign warnings (§Executor).
 - **Failure/halt:** cue past the composed extent → **`plan.error`** → phase halts
-  pre-dispatch with the DB-grounded message (:408-428, SYN-6B4Q); no arrangement
-  authored → all deferred with warn (:429-435). Duplicate names auto-suffixed at
-  plan time (:437-459, W19-E). One `cue_batch:` call, `if_exists='skip'`
+  pre-dispatch with the DB-grounded message (SYN-6B4Q); no arrangement
+  authored → all deferred with warn. Duplicate names auto-suffixed at
+  plan time (W19-E). One `cue_batch:` call, `if_exists='skip'`
   (idempotent re-push). Ack-only.
 
 *(`plan_push_sections` is deliberately NOT a phase — no canonical Live surface;
-plan.py:217-219, arrangement.py:491-507.)*
+plan.py, arrangement.py.)*
 
 ---
 
@@ -352,28 +510,28 @@ plan.py:217-219, arrangement.py:491-507.)*
   vs 14 names in `_PHASE_NAMES` (the `device_sidechain` "9b." splice). Fixed on
   the files the chunk already touches.
 - **V2 (open, behavior): a plan_fn raise escapes the executor as a raw
-  traceback.** `plan = phase.plan_fn()` (push_execute.py:1229) is uncaught, so
-  the clips planner's W3-C strict `ValueError` (clips.py:72-80) — reachable via
+  traceback.** `plan = phase.plan_fn()` (push_execute.py) is uncaught, so
+  the clips planner's W3-C strict `ValueError` (clips.py) — reachable via
   `--only clips` / `--start-at clips` against unlinked tracks — and the envelopes
-  unknown-target-kind raise (envelopes.py:159-162) bypass the terminal state
+  unknown-target-kind raise (envelopes.py) bypass the terminal state
   write and leave the request row open. Same class as V4; should become a
   controlled halt. → build-plan Chunk 06.
 - **V3 (open, design): the mix phase owns a second return-creation path.**
   `plan_push_mix` emits `ableton_return(create)` for unlinked returns
-  (mix.py:116-127), duplicating phase 4's job. Unreachable on the gated full-push
+  (mix.py), duplicating phase 4's job. Unreachable on the gated full-push
   path (returns halts first) but live under `--only mix` / direct planner calls —
   two phases can create the same entity kind. Decide: drop the fallback (strict,
   matches clips' W3-C posture) or keep for direct-call ergonomics and document.
   → Chunk 06.
 - **V4 (fixed in SYN-8Q3F Chunk 03): unknown result kind escaped as a
-  traceback.** The apply-layer `ValueError` (plan.py:619-624) propagated out of
+  traceback.** The apply-layer `ValueError` (plan.py) propagated out of
   `execute_push` uncaught — no terminal state file, request left open, exit = a
   Python traceback. This is the runtime half of the twice-point-patched bug
   class. Now a controlled phase halt (§Apply).
 - **V5 (fixed inline, prose): stale "via plan_push_clip" guidance.** Five
   operator-facing strings still named `plan_push_clip` as the track-creation
-  path (moved to `plan_push_song_tracks` in W3-C): push/mix.py:91 (+ its
-  docstring :39-42), pull/mix.py:96, pull/clips.py:56,115, pull/devices.py:221.
+  path (moved to `plan_push_song_tracks` in W3-C): push/mix.py (+ its
+  docstring), pull/mix.py, pull/clips.py, pull/devices.py.
   Not test-pinned; corrected to name the tracks phase.
 - **V8 (open, behavior): apply-layer non-ValueError raises reproduce V4.**
   The Chunk 03 halt net catches `ValueError` only; a `sqlite3.IntegrityError`
@@ -385,7 +543,7 @@ plan.py:217-219, arrangement.py:491-507.)*
   V2 / Chunk-06 controlled-halt treatment; decide catch-widening there,
   with a DISTINCT hint (an integrity error is not "declare the kind").
 - **V6 (open, prose): device_sidechain's deferral message names the wrong
-  mechanism.** devices.py:687-690 says an unlinked device's sidechain is
+  mechanism.** devices.py says an unlinked device's sidechain is
   "deferred to the devices-convergence re-plan" — the convergence pass re-runs
   `plan_push_devices` only; what actually resolves the deferral is that the
   `device_sidechain` PHASE plans after the devices phase's apply. The branch is
@@ -394,14 +552,14 @@ plan.py:217-219, arrangement.py:491-507.)*
 - **V7 (fixed in SYN-8Q3F Chunk 02, prose): `plan_push_song` docstring
   overclaimed the warn-not-empty convention.** The base-revision docstring said
   every empty phase carries a "no … to push" warn; `plan_push_song_tracks`/
-  `_returns` return a bare empty plan when fully linked (tracks.py:44-45) and
+  `_returns` return a bare empty plan when fully linked (tracks.py) and
   `plan_push_arrangement_clip_notes` emits neither. The Chunk 02 docstring
-  rewrite (plan.py:222-228) now states both shapes are reported SKIPPED.
+  rewrite (plan.py) now states both shapes are reported SKIPPED.
 
 **Residual risk (documented design, not a violation):**
 - **R1:** the coherence gate validates only track/return links; a stale *device*
   link whose parent survived is caught by nothing until the devices phase writes
-  through it (probe.py:1003-1007 accepts this cost/benefit; ANALYZER-INDEX and
+  through it (probe.py accepts this cost/benefit; ANALYZER-INDEX and
   SYN-SCAFFOLD-MISLINK each closed one concrete instance). Watch for a third
   instance before generalizing.
 - **R2:** phase 12's fingerprint table is trust-without-verify of Live lane

@@ -80,7 +80,8 @@ def test_to_dict_round_trips_structure():
     # every recall dict carries section + layer + variation
     for s in d["sections"]:
         for r in s["recalls"]:
-            assert {"motif", "section", "layer", "variation", "coverage", "is_home"} <= set(r)
+            assert {"motif", "section", "layer", "variation", "coverage", "is_home",
+                    "duration_match"} <= set(r)
 
 
 # --------------------------------------------------------------------------
@@ -184,3 +185,165 @@ def test_analyze_arrangement_synthetic():
     assert any(r.variation == "augment ×2" and r.layer == "organ" for r in b)
     # the recall's section-relative offset is anchored at section b's start (16 beats)
     assert all(r.cell_offset_beats >= 16.0 for r in b)
+
+
+def test_duration_match_reaches_to_dict_for_a_free_duration_recall():
+    """A recall whose onsets and pitches land but whose durations were freely re-sung
+    reaches the JSON boundary with the relaxation visible: the `(durations free)`
+    qualifier on the label AND `duration_match: False` on the recall dict. Without it
+    a reader could not tell an augmentation (durations scaled with the onsets) from an
+    onset-only compression."""
+    reach = [_n(59, 0.0, 1.5), _n(63, 4.0, 2.0), _n(66, 8.0, 1.5)]
+    coda = [_n(71, 0.0, 1.5), _n(75, 2.0, 1.5), _n(78, 4.0, 1.0)]
+    sections = [
+        SectionRecurrenceInput("verse1", 16.0, {"lead": reach}),
+        SectionRecurrenceInput("coda", 16.0, {"lead": coda}, start_beat=16.0),
+    ]
+    rep = analyze_recurrence(sections, _registry(("reach", reach)), song_slug="syn")
+    coda_recalls = [r for r in rep.recalls if r.section == "coda"]
+    assert coda_recalls, "the composed transpose+diminish recall must be reported"
+    r = coda_recalls[0]
+    assert r.variation == "transpose +12 ∘ diminish ×2 (durations free)"
+    assert r.duration_match is False
+    d = rep.to_dict()["sections"][1]["recalls"][0]
+    assert d["duration_match"] is False
+    assert d["variation"] == "transpose +12 ∘ diminish ×2 (durations free)"
+
+    # A recall whose durations DO scale with its onsets keeps `duration_match: True`.
+    home = [_n(60, 0.0, 0.5), _n(64, 1.0, 0.5), _n(67, 2.0, 0.5)]
+    sections = [
+        SectionRecurrenceInput("home", 16.0, {"lead": home}),
+        SectionRecurrenceInput("outro", 16.0, {"lead": V.augment(home, 2.0)},
+                               start_beat=16.0),
+    ]
+    rep = analyze_recurrence(sections, _registry(("m", home)), song_slug="syn")
+    outro = [r for r in rep.recalls if r.section == "outro"]
+    assert outro and outro[0].variation == "augment ×2"
+    assert all(r.duration_match is True for r in outro)
+
+
+# --------------------------------------------------------------------------
+# The coverage floor: which readings count as recall (min_coverage / partial)
+# --------------------------------------------------------------------------
+
+
+def _derived_half(motif):
+    """A layer that matches `motif` under a transpose for only half its notes —
+    the tier-4 derived reading (`derived (<op>, <coverage>)`), which is what the
+    matcher reports when NO clean op was recoverable."""
+    return [_n(65, 0.0, 0.5), _n(69, 1.0, 0.5), _n(70, 2.0, 0.5), _n(71, 3.0, 0.5)]
+
+
+def test_a_sub_threshold_derived_reading_is_marked_partial_and_still_reported():
+    sections = [
+        SectionRecurrenceInput("home", 0.0, {"lead": list(_MOTIF)}),
+        SectionRecurrenceInput("later", 16.0, {"lead": _derived_half(_MOTIF)}),
+    ]
+    rep = analyze_recurrence(sections, _registry(("m", _MOTIF)), song_slug="syn")
+    later = [r for r in rep.recalls if r.section == "later"]
+    assert len(later) == 1
+    assert later[0].variation.startswith("derived (")
+    assert later[0].coverage == 0.5
+    assert later[0].partial is True
+    # Reported, never dropped — REC-4Z8Q. It reaches to_dict() too.
+    assert rep.to_dict()["sections"][1]["recalls"][0]["partial"] is True
+
+
+def test_a_partial_does_not_make_its_motif_recur():
+    """The consequence that matters: a motif whose only later reading is a
+    sub-threshold derived one still raises its coaching question, instead of
+    reading as recurring and silencing it."""
+    sections = [
+        SectionRecurrenceInput("home", 0.0, {"lead": list(_MOTIF)}),
+        SectionRecurrenceInput("later", 16.0, {"lead": _derived_half(_MOTIF)}),
+    ]
+    rep = analyze_recurrence(sections, _registry(("m", _MOTIF)), song_slug="syn")
+    assert rep.economy.recurring_motifs == 0
+    assert rep.economy.never_recalled == ("m",)
+    assert [f.kind for f in rep.findings] == ["registered-never-recalled"]
+
+
+def test_a_partial_cannot_claim_a_motifs_home_section():
+    """Home is the first section where the motif is heard AS ITSELF. Letting a
+    sub-threshold partial claim it hands the motif's genuine first statement a
+    NON-home reading, which puts it back in the cell-set, refills every economy
+    figure and empties `never_recalled` — the exact inflation the floor exists to
+    end, re-entered through the home split. Every other fixture here places a clean
+    home match first, which is why this was invisible."""
+    sections = [
+        SectionRecurrenceInput("early", 0.0, {"lead": _derived_half(_MOTIF)}),
+        SectionRecurrenceInput("statement", 16.0, {"lead": list(_MOTIF)}),
+    ]
+    rep = analyze_recurrence(sections, _registry(("m", _MOTIF)), song_slug="syn")
+    early = [r for r in rep.recalls if r.section == "early"]
+    assert [r.partial for r in early] == [True]
+    assert early[0].is_home is False
+    assert [r.section for r in rep.recalls if r.is_home] == ["statement"]
+    # And so the statement is not read as a recall of a motif that never sounded.
+    assert rep.counted_recalls == ()
+    assert rep.economy.recurring_motifs == 0
+    assert rep.economy.never_recalled == ("m",)
+
+
+def test_counts_as_recall_is_the_one_predicate():
+    """`counted_recalls` / `partials` / `counts_as_recall` are one definition, not
+    three: a consumer that filters the wide `recalls` on `is_home` alone re-lands
+    the miscount, so the predicate lives on the model where economy and the render
+    both read it."""
+    sections = [
+        SectionRecurrenceInput("home", 0.0, {"lead": list(_MOTIF)}),
+        SectionRecurrenceInput("recap", 16.0, {"lead": list(_MOTIF)}),
+        SectionRecurrenceInput("haze", 32.0, {"lead": _derived_half(_MOTIF)}),
+    ]
+    rep = analyze_recurrence(sections, _registry(("m", _MOTIF)), song_slug="syn")
+    assert [r.section for r in rep.counted_recalls] == ["recap"]
+    assert [r.section for r in rep.partials] == ["haze"]
+    # The wide set is still every occurrence — the facts are never filtered.
+    assert len(rep.recalls) == 3
+    assert all(r.counts_as_recall == (not r.is_home and not r.partial)
+               for r in rep.recalls)
+    # What economy counts and what the report calls counted are the same set.
+    assert rep.economy.occurrence_records == len(rep.counted_recalls)
+
+
+def test_a_clean_fragment_counts_as_recall_at_any_coverage():
+    """A `fragment[a,b)` is the matcher's STRUCTURED claim that the layer contains
+    that named sub-window of M — the quoted answering cell, a real recall — not the
+    tier-4 "most of M any op could explain". The floor must not demote it."""
+    sections = [
+        SectionRecurrenceInput("home", 0.0, {"lead": list(_MOTIF)}),
+        SectionRecurrenceInput("answer", 16.0,
+                               {"lead": [_n(60, 0.0, 0.5), _n(64, 1.0, 0.5)]}),
+    ]
+    rep = analyze_recurrence(sections, _registry(("m", _MOTIF)), song_slug="syn")
+    answer = [r for r in rep.recalls if r.section == "answer"]
+    assert len(answer) == 1
+    assert answer[0].variation.startswith("fragment[")
+    assert answer[0].coverage < 0.75
+    assert answer[0].partial is False
+    assert rep.economy.recurring_motifs == 1
+
+
+def test_min_coverage_is_a_parameter_not_a_constant():
+    """Lowering the floor below the reading's coverage makes it count again."""
+    sections = [
+        SectionRecurrenceInput("home", 0.0, {"lead": list(_MOTIF)}),
+        SectionRecurrenceInput("later", 16.0, {"lead": _derived_half(_MOTIF)}),
+    ]
+    rep = analyze_recurrence(sections, _registry(("m", _MOTIF)), song_slug="syn",
+                             min_coverage=0.25)
+    later = [r for r in rep.recalls if r.section == "later"]
+    assert later[0].partial is False
+    assert rep.economy.recurring_motifs == 1
+    assert rep.min_coverage == 0.25
+    assert rep.to_dict()["min_coverage"] == 0.25
+
+
+def test_report_carries_the_floor_it_applied():
+    """The render names the threshold it folded at; it must read it from the
+    report rather than print a number that could drift from the one used."""
+    from hallucinote.recurrence.lens import DEFAULT_MIN_RECALL_COVERAGE
+    rep = analyze_recurrence(
+        [SectionRecurrenceInput("home", 0.0, {"lead": list(_MOTIF)})],
+        _registry(("m", _MOTIF)), song_slug="syn")
+    assert rep.min_coverage == DEFAULT_MIN_RECALL_COVERAGE

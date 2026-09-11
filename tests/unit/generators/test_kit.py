@@ -1,7 +1,9 @@
 """Kit lookup: canonical pad name → MIDI note via fuzzy chain-name match."""
 from __future__ import annotations
 
+import os
 import warnings
+from pathlib import Path
 
 import pytest
 
@@ -340,3 +342,89 @@ def test_assert_has_strict_still_catches_missing_pads_after_capture():
     kit = Kit.from_dict({"kick": 36, "snare": 38}, name="Sparse Captured")
     with pytest.raises(KeyError, match="missing canonical pad"):
         kit.assert_has("kick", "ride", strict=True)
+
+
+# ---------- purity (JANITOR-2026-09 R2) ----------
+
+
+def test_from_rows_needs_no_database():
+    """A Kit is buildable from rows alone — the purity norm's actual guarantee.
+
+    `kit.py` imported `hallucinote.db.queries` for one call, which made the
+    norm ("generators stay pure — no DB imports under generators/") false at
+    exactly the point it was supposed to buy something: you could not build a
+    Kit without the DB layer imported. Rows in, Kit out, no connection.
+    """
+    kit = Kit.from_rows(
+        [{"midi_note": 36, "chain_name": "Kick Drum"},
+         {"midi_note": 51, "chain_name": "Cowbell"}],
+        name="Hot Rod Kit",
+        device_id="dev-abc12345",
+    )
+    assert kit.pitch_of("kick") == 36
+    assert kit.name == "Hot Rod Kit"
+    assert kit.device_id == "dev-abc12345"
+
+
+def test_generators_package_imports_no_database_code():
+    """Import-graph lock: nothing under `generators/` may pull in `db` or MCP.
+
+    Enforcing the norm on the import GRAPH rather than on the source text is
+    what makes it hold — a lazily-imported `db` would pass a grep for
+    module-level imports while still coupling the packages at run time. The
+    one legitimate DB path (`Kit.from_device`) is an alias whose import is
+    function-local, so it does not appear here.
+    """
+    import subprocess
+    import sys
+
+    # EVERY generator module, not just kit. Importing one proves nothing about
+    # its six siblings, and the norm is about the package.
+    probe = (
+        "import importlib, pkgutil, sys;"
+        "import hallucinote.generators as g;"
+        "[importlib.import_module(m.name) for m in pkgutil.iter_modules(g.__path__, g.__name__ + '.')];"
+        "leaked = sorted(m for m in sys.modules"
+        " if m.startswith('hallucinote.db') or m.startswith('hallucinote_mcp'));"
+        "print(','.join(leaked))"
+    )
+    out = subprocess.run(
+        [sys.executable, "-c", probe],
+        capture_output=True, text=True, check=True,
+        cwd=str(Path(__file__).resolve().parents[3]),
+        env={**os.environ, "PYTHONPATH": "src"},
+    )
+    assert out.stdout.strip() == "", (
+        "importing the generators package pulled in DB or MCP modules: "
+        f"{out.stdout.strip()}"
+    )
+
+
+def test_load_kit_reads_mappings_from_the_database(conn, device_with_mappings):
+    """`hallucinote.kits.load_kit` directly — not through the alias.
+
+    `Kit.from_device` is deprecated for removal in 2.0. Testing the loader only
+    through it would mean the surviving surface loses its coverage on the day
+    the alias goes, which is the wrong day to discover that.
+    """
+    from hallucinote.kits import load_kit
+
+    kit = load_kit(conn, device_with_mappings, name="Hot Rod Kit")
+    assert kit.name == "Hot Rod Kit"
+    assert kit.device_id == device_with_mappings
+    assert kit.pitch_of("kick") == Kit.from_device(
+        conn, device_with_mappings
+    ).pitch_of("kick")
+
+
+def test_from_rows_name_default_covers_both_branches():
+    """Both default branches, and the empty-name fall-through.
+
+    The extraction briefly changed `name or <stub>` into `name is None`, which
+    silently preserved an empty name where the pre-split `from_device` produced
+    a stub. Nothing caught it because neither branch had a test.
+    """
+    assert Kit.from_rows([], device_id="abcdef1234").name == "device:abcdef12"
+    assert Kit.from_rows([]).name == "rows"
+    assert Kit.from_rows([], name="", device_id="abcdef1234").name == "device:abcdef12"
+    assert Kit.from_rows([], name="Explicit").name == "Explicit"

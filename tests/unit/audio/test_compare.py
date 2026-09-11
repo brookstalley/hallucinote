@@ -37,11 +37,13 @@ def _timbre(
     spectral_centroid_hz: float | None = 1500.0,
     spectral_flatness: float | None = 0.1,
     spectral_rolloff_hz: float | None = 3000.0,
+    sharpness_acum: float | None = 1.5,
 ) -> dict:
     return {
         "spectral_centroid_hz": spectral_centroid_hz,
         "spectral_flatness": spectral_flatness,
         "spectral_rolloff_hz": spectral_rolloff_hz,
+        "sharpness_acum": sharpness_acum,
     }
 
 
@@ -110,8 +112,8 @@ def test_identical_reports_diff_to_zero_and_insignificant():
     assert out["overshoot_count"] == {
         "before": 0, "after": 0, "delta": 0, "significant": False,
     }
-    # master + track:1, each with 4 loudness + 3 timbre + 2 stereo metrics
-    assert len(out["deltas"]) == 18
+    # master + track:1, each with 4 loudness + 4 timbre + 2 stereo metrics
+    assert len(out["deltas"]) == 20
     for row in out["deltas"]:
         assert row["delta"] == 0.0
         assert row["significant"] is False
@@ -343,3 +345,317 @@ def test_resolve_baseline_skips_non_int_db_seq(tmp_path):
     assert resolve_baseline(tmp_path, 10) == target
     with pytest.raises(ValueError, match=r"db_seq=1;"):
         resolve_baseline(tmp_path, 1)
+
+
+def _section(name, stems, transients=(), *, master=None, returns=()):
+    sec = {"section_name": name, "stems": stems, "transients": list(transients),
+           "returns": list(returns)}
+    if master is not None:
+        sec["master"] = master
+    return sec
+
+
+def _transient(track_id, **over):
+    base = {"track_id": track_id, "hit_count": 16, "rise_ms": 16.0, "t20_ms": 164.0,
+            "censored_rise_hits": 0, "censored_t20_hits": 0, "censored_attack_hits": 0,
+            "attack_sub_40_100_db": -10.8, "attack_low_100_250_db": -6.9,
+            "attack_lowmid_250_600_db": -19.2, "attack_click_2k_6k_db": -33.7,
+            "click_minus_sub_db": -22.9, "low_minus_sub_db": 3.9}
+    base.update(over)
+    return base
+
+
+def test_section_deltas_carry_per_section_timbre_and_transient_rows():
+    base_sec = _section("chorus3", [_surface("track:4", timbre=_timbre(sharpness_acum=2.51))],
+                        [_transient("track:1")])
+    cur_sec = _section("chorus3", [_surface("track:4", timbre=_timbre(sharpness_acum=2.36))],
+                       [_transient("track:1", click_minus_sub_db=-15.9, rise_ms=17.0)])
+    baseline = _report()
+    baseline["per_section"] = [base_sec]
+    current = _report()
+    current["per_section"] = [cur_sec]
+    out = diff_reports(current, baseline)
+    rows = {(r["section"], r["track_id"], r["metric"]): r for r in out["section_deltas"]}
+    sharp = rows[("chorus3", "track:4", "sharpness_acum")]
+    assert sharp["delta"] == pytest.approx(-0.15) and sharp["significant"] is True
+    assert sharp["provisional"] is True
+    click = rows[("chorus3", "track:1", "click_minus_sub_db")]
+    assert click["delta"] == pytest.approx(7.0) and click["significant"] is True
+    rise = rows[("chorus3", "track:1", "rise_ms")]
+    assert rise["delta"] == pytest.approx(1.0) and rise["significant"] is False
+
+
+def test_section_deltas_cover_the_master_and_returns_not_just_stems():
+    """The per-section MASTER is the whole-mix read a de-shrill edit is judged
+    on, and a return's timbre is how the send bus moved — both are measured per
+    section, so both get an A/B row. Iterating stems alone left the surfaces
+    carrying the section's summary with no row at all."""
+    base_sec = _section(
+        "chorus3", [_surface("track:4", timbre=_timbre(sharpness_acum=2.51))],
+        master=_surface("master", timbre=_timbre(sharpness_acum=1.78)),
+        returns=[_surface("return:1", timbre=_timbre(sharpness_acum=1.20))])
+    cur_sec = _section(
+        "chorus3", [_surface("track:4", timbre=_timbre(sharpness_acum=2.36))],
+        master=_surface("master", timbre=_timbre(sharpness_acum=1.66)),
+        returns=[_surface("return:1", timbre=_timbre(sharpness_acum=1.05))])
+    baseline = _report()
+    baseline["per_section"] = [base_sec]
+    current = _report()
+    current["per_section"] = [cur_sec]
+    out = diff_reports(current, baseline)
+    rows = {(r["section"], r["track_id"], r["metric"]): r for r in out["section_deltas"]}
+    assert rows[("chorus3", "master", "sharpness_acum")]["delta"] == pytest.approx(-0.12)
+    assert rows[("chorus3", "return:1", "sharpness_acum")]["delta"] == pytest.approx(-0.15)
+    assert rows[("chorus3", "track:4", "sharpness_acum")]["delta"] == pytest.approx(-0.15)
+
+
+def test_section_deltas_tolerate_a_section_with_no_master_or_returns():
+    """Older reports (and any section the analyzer measured stems-only) carry
+    neither key — the surface sweep must not invent a row or raise."""
+    base_sec = _section("verse1", [_surface("track:1", timbre=_timbre(sharpness_acum=1.4))])
+    cur_sec = _section("verse1", [_surface("track:1", timbre=_timbre(sharpness_acum=1.4))])
+    base_sec.pop("returns")
+    cur_sec.pop("returns")
+    baseline = _report()
+    baseline["per_section"] = [base_sec]
+    current = _report()
+    current["per_section"] = [cur_sec]
+    out = diff_reports(current, baseline)
+    assert {r["track_id"] for r in out["section_deltas"]} == {"track:1"}
+
+
+def test_section_deltas_skip_unmatched_sections_and_null_sides():
+    baseline = _report()
+    baseline["per_section"] = [
+        _section("verse", [], [_transient("track:1", t20_ms=None)])]
+    current = _report()
+    current["per_section"] = [
+        _section("verse", [], [_transient("track:1")]),
+        _section("outro", [], [_transient("track:1")])]
+    out = diff_reports(current, baseline)
+    sections = {r["section"] for r in out["section_deltas"]}
+    assert sections == {"verse"}                       # outro has no baseline
+    t20 = next(r for r in out["section_deltas"] if r["metric"] == "t20_ms")
+    assert t20["delta"] is None and t20["significant"] is False
+
+
+def test_reports_without_sections_yield_no_section_deltas():
+    out = diff_reports(_report(), _report())
+    assert out["section_deltas"] == []
+
+
+# --- a master that is not the mix is not diffed --------------------------
+#
+# The 2026-09-10 `alien` incident: a track left soloed put one stem on the
+# master bus, and three consecutive reports advertised "26 significant deltas /
+# 112 section-level deltas" against a song nobody had touched.
+
+
+def _not_stem_sum_finding(
+    metric: str = "stem_sum_correlation",
+    observed: float = 0.159,
+    expected: float = 0.5,
+) -> dict:
+    return {
+        "kind": "master_not_stem_sum",
+        "severity": "blocking",
+        "subject": "master",
+        "metric": metric,
+        "observed": observed,
+        "expected": expected,
+        "db_reference": "the captured master is not the sum of the captured stems",
+    }
+
+
+def test_a_disqualified_master_yields_no_master_deltas():
+    baseline = _report(stems=[_surface("track:1")])
+    current = _report(
+        stems=[_surface("track:1")],
+        master=_surface("master", "master", "Main", lufs_i=-22.6),
+    )
+    current["findings"] = [_not_stem_sum_finding()]
+
+    out = diff_reports(current, baseline)
+
+    assert not [r for r in out["deltas"] if r["track_id"] == "master"]
+    assert out["master_deltas_refused"]["reason"] == "master_not_stem_sum"
+    assert out["master_deltas_refused"]["observed"] == 0.159
+
+
+def test_a_disqualified_master_does_not_suppress_stem_deltas():
+    """The stems are the evidence that proves the master is the odd one out —
+    on the real incident every stem was within 0.4 dB of its baseline."""
+    baseline = _report(stems=[_surface("track:1")])
+    current = _report(
+        stems=[_surface("track:1", lufs_i=-14.3)],
+        master=_surface("master", "master", "Main", lufs_i=-22.6),
+    )
+    current["findings"] = [_not_stem_sum_finding()]
+
+    out = diff_reports(current, baseline)
+
+    row = _find(out, "track:1", "lufs_i")
+    assert row["delta"] == pytest.approx(-0.3)
+
+
+def test_a_healthy_report_diffs_exactly_as_before():
+    """No finding, no gate: the key is absent rather than null, so a consumer
+    that does not know about it behaves as it always did."""
+    baseline = _report(stems=[_surface("track:1")])
+    current = _report(
+        stems=[_surface("track:1")],
+        master=_surface("master", "master", "Main", lufs_i=-14.6),
+    )
+    current["findings"] = []
+
+    out = diff_reports(current, baseline)
+
+    assert "master_deltas_refused" not in out
+    assert _find(out, "master", "lufs_i")["delta"] == pytest.approx(-0.6)
+
+
+def test_a_disqualified_master_yields_no_section_master_deltas():
+    """The per-section master readings come from the same capture as the
+    whole-song one and are wrong in the same way — the real incident's 112
+    section-level deltas came through this path."""
+    base_sec = _section(
+        "chorus3",
+        [_surface("track:4", timbre=_timbre(sharpness_acum=2.51))],
+        master=_surface("master", "master", "Main",
+                        timbre=_timbre(sharpness_acum=2.40)),
+    )
+    cur_sec = _section(
+        "chorus3",
+        [_surface("track:4", timbre=_timbre(sharpness_acum=2.36))],
+        master=_surface("master", "master", "Main",
+                        timbre=_timbre(sharpness_acum=1.10)),
+    )
+    baseline = _report()
+    baseline["per_section"] = [base_sec]
+    current = _report()
+    current["per_section"] = [cur_sec]
+    current["findings"] = [_not_stem_sum_finding()]
+
+    rows = diff_reports(current, baseline)["section_deltas"]
+
+    assert not [r for r in rows if r["track_id"] == "master"]
+    # The stem's section row survives — suppressing it would discard the
+    # evidence that the master is the one that moved.
+    assert [r for r in rows if r["track_id"] == "track:4"]
+
+
+def test_a_disqualified_BASELINE_also_refuses_master_deltas():
+    """A stored report is re-used as a baseline for as long as it is the
+    newest good one. A capture made under a solo does not stop being wrong
+    when it becomes the thing later renders are measured against."""
+    baseline = _report(stems=[_surface("track:1")])
+    baseline["findings"] = [_not_stem_sum_finding()]
+    current = _report(stems=[_surface("track:1")])
+    current["findings"] = []
+
+    out = diff_reports(current, baseline)
+
+    assert not [r for r in out["deltas"] if r["track_id"] == "master"]
+    assert out["master_deltas_refused"]["side"] == "baseline"
+
+
+def test_a_disqualified_master_does_not_report_a_significant_overshoot_change():
+    """An overshoot is a master-bus true-peak window — a master delta by
+    another name. On the incident the soloed master sat ~14 dB low so every
+    overshoot vanished, which would have reported a real headline change from
+    a capture the same payload declares is not the mix."""
+    baseline = _report(stems=[_surface("track:1")], overshoots=[{"x": 1}, {"x": 2}])
+    current = _report(stems=[_surface("track:1")], overshoots=[])
+    current["findings"] = [_not_stem_sum_finding()]
+
+    out = diff_reports(current, baseline)
+
+    assert out["overshoot_count"]["delta"] == -2
+    assert out["overshoot_count"]["significant"] is False
+
+
+def test_an_old_baseline_with_no_finding_is_still_disqualified():
+    """A report written before the gate existed carries `sum_reconciliation`
+    and no finding, and `resolve_baseline` filters on db_seq alone — so the
+    three stored `alien` reports stay selectable as baselines forever."""
+    baseline = _report(stems=[_surface("track:1")])
+    baseline["findings"] = []
+    baseline["sum_reconciliation"] = {
+        "residual_db": -3.0, "correlation": 0.159, "best_lag_samples": 64,
+        "gain_offset_db": -32.65, "worst_offender": None, "skipped": None,
+    }
+    current = _report(stems=[_surface("track:1")])
+    current["findings"] = []
+
+    out = diff_reports(current, baseline)
+
+    assert out["master_deltas_refused"]["side"] == "baseline"
+    assert not [r for r in out["deltas"] if r["track_id"] == "master"]
+
+
+def test_an_old_baseline_that_reconciles_cleanly_still_diffs():
+    baseline = _report(stems=[_surface("track:1")])
+    baseline["findings"] = []
+    baseline["sum_reconciliation"] = {
+        "residual_db": -18.0, "correlation": 0.959, "best_lag_samples": 64,
+        "gain_offset_db": -1.2, "worst_offender": None, "skipped": None,
+    }
+    current = _report(
+        stems=[_surface("track:1")],
+        master=_surface("master", "master", "Main", lufs_i=-14.6),
+    )
+    current["findings"] = []
+
+    out = diff_reports(current, baseline)
+
+    assert "master_deltas_refused" not in out
+    assert _find(out, "master", "lufs_i")["delta"] == pytest.approx(-0.6)
+
+
+def test_a_stored_residual_of_exactly_zero_survives_rehydration():
+    """`or` on a numeric field would map a real 0.0 measurement to NaN. The
+    verdict does not read `residual_db`, so this is inert today — which is
+    exactly why it would go unnoticed until something did read it."""
+    from hallucinote.audio.compare import _reconciliation_from_json
+
+    recon = _reconciliation_from_json({
+        "residual_db": 0.0, "correlation": 0.959, "best_lag_samples": 0,
+        "gain_offset_db": -1.2, "worst_offender": None, "skipped": None,
+    })
+
+    assert recon is not None
+    assert recon.residual_db == 0.0
+
+
+def test_a_finding_without_its_numbers_still_disqualifies_the_master():
+    """The finding's PRESENCE is the verdict, not its arithmetic.
+
+    `metric` / `observed` / `expected` are read off a stored report's JSON, so
+    the type checker sees `Any` even though this module's own writer always sets
+    all three. The honest handling of a report that carries the finding without
+    them is to disqualify anyway and report the missing value as null — the
+    alternatives are fabricating a number or raising on `float(None)`, and both
+    turn "I cannot tell you how bad it was" into something worse: a master diff
+    that ships, or a compare that dies on a malformed baseline.
+    """
+    baseline = _report(stems=[_surface("track:1")])
+    current = _report(
+        stems=[_surface("track:1")],
+        master=_surface("master", "master", "Main", lufs_i=-22.6),
+    )
+    # Derived from the one builder for this shape, minus the three values. The
+    # code under test reads every field through `.get`, so a literal here would
+    # stay green against a finding shape nothing produces once the builder
+    # gains a field.
+    finding = _not_stem_sum_finding()
+    for numeric in ("metric", "observed", "expected"):
+        del finding[numeric]
+    current["findings"] = [finding]
+
+    out = diff_reports(current, baseline)
+
+    assert not [r for r in out["deltas"] if r["track_id"] == "master"]
+    refused = out["master_deltas_refused"]
+    assert refused["reason"] == "master_not_stem_sum"
+    assert refused["metric"] is None
+    assert refused["observed"] is None and refused["expected"] is None

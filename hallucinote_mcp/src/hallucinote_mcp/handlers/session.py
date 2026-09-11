@@ -5,6 +5,9 @@ ops on the Live API and live in ``actions/session.py`` as ``LiveOp`` entries.
 The handlers in this module cover the actions that need real Python:
 
   - ``info``: read multiple Live properties, assemble a structured dict.
+  - ``bout_status`` / ``abandon_bout``: read (and, as a last resort, release)
+    the main-thread occupancy record. Both run on the WORKER thread — see
+    their handlers.
   - ``set_master_property``: branch on the ``property`` value to choose the
     correct Live API target (master_track.mixer_device.volume vs panning vs ...).
   - ``set_arrangement_loop``: 3 properties (enabled / start / length) touched
@@ -27,6 +30,8 @@ import re as _re
 from typing import Any
 
 from ..dispatcher import LiveContext
+from .jobs import JobRegistry, default_registry
+from ._transport import locate_start_position
 from ._arrangement_latch import (
     CLICK_BACK_TO_ARRANGEMENT,
     OVERRIDE_DESCRIPTION,
@@ -88,7 +93,101 @@ def info_handler(context: LiveContext) -> dict[str, Any]:
                 f"API clear and reports whether Live honored it."
             ),
         }
+    bout = _bout_block(context)
+    if bout is not None:
+        snapshot["main_thread_bout"] = bout
     return snapshot
+
+
+def _bout_block(context: LiveContext) -> dict[str, Any] | None:
+    """The main-thread occupancy record, or ``None`` when Live is free.
+
+    Read tolerantly: ``info`` is exercised against many minimal context
+    doubles, and a double that predates the occupancy record must yield a
+    snapshot without the block rather than an AttributeError. The record is
+    the visible half of "a never-signalling runner is never silently cleared".
+
+    Note that ``info`` itself is main-thread-wrapped, so a caller that reaches
+    this handler at all has been ADMITTED — which is why the block is normally
+    absent, and why ``bout_status`` (worker-thread) is the surface that can
+    still answer while the fence is closed. This block covers the case a
+    worker-thread caller can't: reading occupancy from inside a nested bout.
+    """
+    reader = getattr(context, "main_thread_bout", None)
+    if reader is None:
+        return None
+    bout = reader()
+    return bout if isinstance(bout, dict) else None
+
+
+# ---------------------------------------------------------------------------
+# bout_status / abandon_bout — the main-thread occupancy surface
+# ---------------------------------------------------------------------------
+
+
+def bout_status_handler(
+    context: LiveContext,
+    *,
+    job_id: str | None = None,
+    _registry: JobRegistry | None = None,
+) -> dict[str, Any]:
+    """Report what Live's main thread is occupied with, and poll an escalated
+    bout's job.
+
+    Runs on the WORKER thread (``runs_on_worker=True``). It has to: an action
+    that took a main-thread bout in order to ask about the main-thread bout
+    would be refused by the very fence it exists to report on, and would
+    deadlock by construction while a bout was escalated.
+
+    With ``job_id``, also returns that job's record — ``state`` is
+    ``running`` until Live's main thread finally returns, then ``done`` (with
+    the call's ``result``) or ``failed``. Without one, reports occupancy only,
+    which is the read a caller has when it never received a handle.
+    """
+    occupied = _bout_block(context)
+    out: dict[str, Any] = {"occupied": occupied is not None}
+    if occupied is not None:
+        out["main_thread_bout"] = occupied
+    if job_id is None:
+        if occupied is None:
+            out["message"] = (
+                "Live's main thread is free — no operation is holding the "
+                "admission gate."
+            )
+        return out
+    registry = _registry if _registry is not None else default_registry()
+    job = registry.get(job_id)
+    if job is None:
+        recent = registry.recent_ids(kind="main_thread")
+        hint = (
+            f"recent escalated bouts: {', '.join(recent)}"
+            if recent
+            else "no main-thread work has been escalated in this Live session"
+        )
+        raise ValueError(f"bout_status: unknown job_id {job_id!r} ({hint})")
+    out["job"] = job.status_result()
+    return out
+
+
+def abandon_bout_handler(context: LiveContext, *, job_id: str) -> dict[str, Any]:
+    """Force-release the admission gate held by an escalated bout.
+
+    Runs on the WORKER thread for the same reason as ``bout_status``.
+
+    This does NOT cancel anything — a Live API call cannot be interrupted. It
+    marks the job ``failed`` (nothing will ever settle it now) and reopens
+    admission, accepting that whatever comes next may queue behind work Live
+    is still doing. It exists because the alternative — a timed auto-clear —
+    would silently re-create the defect the fence exists to prevent.
+    """
+    abandon = getattr(context, "abandon_main_thread_bout", None)
+    if abandon is None:
+        raise ValueError(
+            "abandon_bout: this Live context does not track main-thread "
+            "occupancy, so there is no gate to release. Re-vendor the Remote "
+            "Script and restart Live."
+        )
+    return abandon(job_id)
 
 
 def _focused_view(context: LiveContext) -> str:
@@ -183,16 +282,28 @@ def set_master_property_handler(
 def seek_handler(
     context: LiveContext, *, bar: int, beat: float = 0.0
 ) -> dict[str, Any]:
-    """Move the playhead to (bar, beat). 1-based bar, 0-based-within-bar beat.
+    """Move the transport to (bar, beat). 1-based bar, 0-based-within-bar beat.
+
+    Moves Live's **start playing position**, not only the playhead. Those are
+    separate, and ``start_playing()`` rolls from the first while writing
+    ``current_song_time`` moves only the second — so a seek that moved only the
+    playhead read back perfectly and then played from wherever the operator had
+    last pressed play. Anyone using seek-then-play to inspect a position (the
+    read-back workflow that diagnosed #471) needs the strong one. See
+    ``handlers/_transport.py``.
+
+    ``start_position_moved`` says whether that succeeded; ``locate_method``
+    says how, and ``locate_detail`` says why not when it is False. A degraded
+    locate still leaves the playhead where it was asked — it just cannot
+    promise playback will begin there.
 
     Returns the COMPUTED ``song_time`` from the input, not a getter-readback.
     Live 12.x's ``Song.current_song_time`` getter can return a stale cached
     value within the same callback as the setter (the audio thread picks
     up writes on a delayed schedule); reporting the readback gave false
     response values like ``song_time=last_event_time`` when the readback
-    raced the write. The write itself is correct — Live's transport
-    eventually settles to the target — so reporting what we wrote is the
-    honest answer.
+    raced the write. ``settled_beats`` carries what the position actually
+    settled to, which is a different fact and is polled for, not raced.
 
     **Threading (W3-F follow-up):** Registered with ``runs_on_worker=True``.
     Holds ``context.live_state_lock`` around the write to serialize
@@ -204,18 +315,27 @@ def seek_handler(
     acquiring a lock held by worker-thread cue_create) was the
     deadlock that the Critic caught.
     """
-    def _compute_and_seek_on_main() -> float:
+    def _compute_song_time_on_main() -> float:
         song = context.song
         beats_per_bar = float(song.signature_numerator) * (
             4.0 / float(song.signature_denominator)
         )
-        song_time = (bar - 1) * beats_per_bar + beat
-        song.current_song_time = song_time
-        return float(song_time)
+        return float((bar - 1) * beats_per_bar + beat)
 
     with context.live_state_lock:
-        song_time = context.run_on_main(_compute_and_seek_on_main)
-    return {"bar": bar, "beat": beat, "song_time": song_time}
+        song_time = context.run_on_main(_compute_song_time_on_main)
+        locate = locate_start_position(context, song_time)
+    result: dict[str, Any] = {
+        "bar": bar,
+        "beat": beat,
+        "song_time": song_time,
+        "settled_beats": locate.settled_beats,
+        "start_position_moved": locate.start_position_moved,
+        "locate_method": locate.method,
+    }
+    if locate.detail is not None:
+        result["locate_detail"] = locate.detail
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -237,13 +357,15 @@ _PLAY_SEMANTICS_NOTE = (
     "play invokes Live's *Start*; continue_playing invokes *Continue* (resume "
     "from the last-stopped position). This result reports the verb invoked, NOT "
     "a read-back of where Live actually began — the realized start position is "
-    "Live-state-dependent and a handler can't reliably read it back. In a clean "
-    "transport state, seek then play locates-and-plays: the render capture path "
-    "relies on exactly that (current_song_time set, then start_playing). If you "
-    "seeked and playback didn't begin there — or the transport moves but you "
-    "hear no audio — the usual cause is the back_to_arranger override latch "
-    "suppressing Arrangement playback, not the seek; clear it with "
-    "ableton_session(action='back_to_arrangement')."
+    "Live-state-dependent and a handler can't reliably read it back. Both verbs "
+    "roll from Live's START PLAYING POSITION, which is a different property "
+    "from the playhead: writing current_song_time moves the playhead alone, so "
+    "a raw seek-then-play begins wherever play was last pressed. "
+    "ableton_session(action='seek') moves the start position too and reports "
+    "start_position_moved, so use it rather than writing the playhead directly. "
+    "If the transport moves but you hear no audio, the usual cause is the "
+    "back_to_arranger override latch suppressing Arrangement playback; clear it "
+    "with ableton_session(action='back_to_arrangement')."
 )
 
 

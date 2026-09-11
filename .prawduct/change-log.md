@@ -9,10 +9,17 @@
      exactly this payload (NOTE: delimiters written as words, because a literal
      closing delimiter here would end THIS comment early — HTML comments do not
      nest, and that bug hid the paragraph below as visible body text):
-         open-comment prawduct: type=<t> | chunks=<a,b,c> | scope=<tag> | status=<s> | release=<r> close-comment
-     Pipe ` | ` separates keys; `chunks` is a COMMA list (never pipe — pipe is the
-     key delimiter); keys are freeform (unknown keys are preserved). A tag line
-     placed after prose is treated as body text, not metadata.
+         open-comment prawduct: type=<t> | scope=<tag> | release=<r> close-comment
+     Pipe ` | ` separates keys; keys are freeform (unknown keys are preserved).
+     A tag line placed after prose is treated as body text, not metadata.
+
+     RETIRED KEYS — do not write these on a NEW entry. `chunks=<a,b,c>` (a COMMA
+     list, never pipe) and `status=<s>` are both documented RETIRED in the
+     plugin's lib/change_log.py: the derived-view regenerator that read them is
+     gone and no gate, view or lint consumes either value. They are listed here
+     only because older entries carry them and are preserved verbatim — this
+     paragraph exists because the form above USED to advertise both, which is
+     how a new entry came to be written with an invented `status=complete`.
 
      RELEASE VOCAB for in-flight work: an entry sitting on develop with no release
      cut carries NO `release=` key at all — that ABSENCE is the release-pending
@@ -25,4124 +32,1995 @@
      original concern: no version is pre-bumped, and nothing is mislabelled as
      already shipped.) -->
 
-## 2026-08-12 — README: the demo video embeds, and the owner's copy edits merge
-
-<!-- prawduct: type=docs | scope=docs-launch-readiness | release=v1.8.6 -->
-
-**The demo video plays inline.** `#329`'s conversion gap is closed: the README's
-only demo was an `.mp3` link, which GitHub will not play inline, so a reader had
-to download a file to hear anything. The 2:13 cut now leads *See it* as a player,
-hosted on GitHub's user-attachments CDN at zero repo weight. Committing the
-`.mp4` would not have worked — GitHub strips `<video>` pointing at repository
-files and blocks `raw.githubusercontent.com` from serving video — and would have
-spent a one-way-door slice of the 12 MB `docs/assets` budget for a download link.
-Acceptance was verified rather than asserted: envelope correlation **+0.993**
-against the stitched renders with matching RMS, the ±1024-sample per-state offset
-correction measured at 0.80–0.95, and the caveat legible at three timestamps.
-
-**The owner's copy edits merged from `main`.** `f10c92d` landed directly on
-`main` against the pre-sweep, pre-rewrap README, so it collided with all three
-passes on the branch. The copy was taken as authored; only mechanics were
-reconciled (semantic line breaks, one trailing-whitespace line, the video block
-kept above the punk-fate example their intro now leads into).
-
-**Two owner decisions recorded so neither is re-litigated as a defect:**
-
-1. **The README and the tour quote the punk-fate prompt differently, and both
-   stay.** The README says "rhythm guitar, and vocals emulated by a lead
-   guitar"; `docs/tour.md` quotes the session log verbatim as "lead guitar, and
-   vocals on a staccato synth". The README's version describes what the song
-   became — chapter 15 turns track 4 into a lead guitar — rather than what was
-   typed. Flagged as a contradiction of the kind the launch-readiness pass
-   existed to close; the owner ruled to keep both as they are. A future docs
-   review should treat this as decided, not as drift.
-2. **"What you end up with is an ordinary Ableton set you finish yourself" is
-   deliberately gone**, though the launch-readiness pass added it to answer a
-   question the FAQ devotes a section to. The FAQ still answers it in full.
-
-Docs-only. Suite green at 5005 passed / 2 skipped.
-
-## 2026-08-12 — The release process gains a GitHub Release step
-
-<!-- prawduct: type=docs | scope=release-process-docs | release=v1.8.6 -->
-
-**Six annotated tags, zero Release objects.** The ten-step release procedure
-ended at *Verify*, so every cut since v1.8.0 produced a tag and nothing a person
-landing on the repo would see. Found while checking whether `gh` could upload
-the demo video; the repo had no releases at all.
-
-Step 11 now covers it, and encodes four things learned doing it:
-
-- **Draft first, always.** A published Release notifies watchers and is the most
-  outward-facing artifact the process produces. A draft is invisible and
-  deletable, so it gets reviewed before it exists publicly.
-- **`--verify-tag`**, so a typo fails rather than inventing a tag pointing at
-  nothing.
-- A draft's URL reads `releases/tag/untagged-<hash>` until published — normal,
-  and worth writing down before someone reports it as a bug.
-- **Release notes are reader-facing positioning prose**, so the § Documentation
-  & prose norm governs them. The v1.8.5 notes were written to it and checked
-  against it.
-
-Also recorded: a release asset serves from `github.com/.../releases/download/`,
-which will **not** render as an inline player in markdown. Only a
-`user-attachments` URL does, and obtaining one is a web-UI upload with no `gh`
-equivalent — verified against the API, which 404s on the uploader endpoint.
-
-v1.8.5 is drafted from the two change-log entries carrying `release=v1.8.5`,
-with the 6.1 MB demo cut attached as an asset.
-
-Docs-only. Suite green at 5005 passed / 2 skipped.
-
-## 2026-08-12 — Semantic line breaks for markdown prose
-
-<!-- prawduct: type=docs | scope=docs-positive-framing | release=v1.8.6 -->
-
-**Owner decision, prompted by a fair question about the sweep.** The positioning
-sweep produced a whitespace-only reflow commit — sentences got shorter, so
-hard-wrapped paragraphs had to re-flow. Asked why the files were hand-wrapped
-at all, the honest answer was that two conventions were in play and neither was
-written down: `CONTRIBUTING`, `SECURITY`, `faq` and `tour` wrapped at ~70
-columns, while `README` and `VISION` put each paragraph on one long line.
-
-All six now use **semantic line breaks — one sentence per line**. A hard wrap
-makes a one-word edit reflow its paragraph, so the diff reports a paragraph
-where a word changed; one-sentence-per-line keeps the short lines an editor
-wants and makes diffs word-accurate. Rendered output is identical, since
-markdown folds single newlines inside a paragraph.
-
-Applied mechanically, with two guards worth keeping: the transform **refused to
-write any file whose word stream changed**, and it caught a real bug doing so —
-an optional closing-quote class sat inside the split pattern, so `re.split`
-silently ate the quote in `B."`. Each file was then verified token-identical
-against its committed version. Code fences, tables, blockquotes, headings and
-link-only lines passed through untouched, so the tour's quoted session
-transcript and `build.py` excerpts are byte-identical.
-
-The norm is recorded in `project-preferences.md` § Documentation & prose,
-including the honest scope: the rest of `docs/` and `skills/` are still
-hard-wrapped, and convert when next touched substantially — in their own
-whitespace-only commit, never mixed with a wording change.
-
-Docs-only. Suite green at 5005 passed / 2 skipped.
-
-## 2026-08-12 — The prose norm's absolute reading, restored by owner ruling
-
-<!-- prawduct: type=docs | chunks=C1,C2,C3 | scope=docs-positive-framing | release=v1.8.6 -->
-
-**The norm was narrowed twice by the agent on the day it shipped; the owner has
-now ruled on both narrowings.** *Write what a thing IS; never define it by what
-it isn't* was ratified 2026-08-11 from the owner's own correction. Within hours
-the agent narrowed it twice, each time immediately after a review round found
-shipping prose that violated it — the textbook shape of amending a rule to fit
-your own work. Both narrowings were recorded as pending veto rather than as
-ratified, which is the only reason they were still reversible.
-
-- **Narrowing 1 — REJECTED.** The "competitor/critic (banned) vs mechanism
-  (fine)" test is withdrawn. The owner's original clause — *no "this isn't a
-  Y"* — means what it says, whatever the sentence is describing.
-- **Narrowing 2 — RATIFIED.** Naming prior art as lineage stays permitted;
-  ranking this product against it remains banned. VISION's TidalCycles /
-  Sonic Pi / Lilypond / DAWproject paragraph keeps its place.
-
-**The owner also set the norm's scope, which had never been stated.** It governs
-positioning prose — `README.md`, `CONTRIBUTING.md`, `SECURITY.md`,
-`docs/VISION.md`, `docs/faq.md`, `docs/tour.md`. Reference docs elsewhere under
-`docs/`, agent-read `skills/`, `.prawduct/artifacts/` and the frozen
-`docs/archive/` sit outside it: in operating instructions the construction
-disambiguates ("the list itself, not the wrapper") rather than defends, and the
-absolute rule applied there would have cost precision across ~1,400 sites for no
-positioning gain. Scope is now written into the norm so the next agent inherits
-it instead of re-deriving it.
-
-**What the sweep changed.** Every contrast-definition in the six in-scope files,
-rewritten positively — the flagship "a long agentic workflow, not a chat"
-(`faq.md`), "Ableton is the speaker, not the score" and "A diff is not '33 notes
-changed'" (`VISION.md`), "Verified, not assumed", "Grit as timbre, not level",
-"a preset name is a claim, not a measurement" and a section heading
-(`tour.md`), "a cloned `build.py` is not data, it's a program" (`SECURITY.md`),
-and the symbolic-review and cost lines in `README.md`. Most rewrites are the
-better sentence, because dropping the foil forces the claim to be stated
-outright.
-
-**The test the sweep applied, recorded so it is checkable.** The banned form is
-a *contrast-definition*: a sentence characterizing the product, a component or
-the process by naming a **foil** — an alternative the subject is set against.
-Plain negation names no foil ("Live isn't running") and stays. (The row first
-carried a different test — whether removing the negated half left the subject
-undefined — which the Critic showed to be self-invalidating: "Ableton is the
-speaker" survives that deletion, so the test cleared the sentence the norm
-bans. Replaced in every carrier the same day.) Four categories were
-deliberately left standing: plain negations, prescriptive rules (an instruction
-may prohibit), the ratified limitations register (`## Non-goals`, SECURITY's
-out-of-scope list), and **verbatim quotation** — the tour's session transcript,
-the user's own words, and code quoted from `build.py`. Rewriting captured
-evidence to satisfy a prose norm would falsify the thing the tour exists to
-show; that boundary is worth more than uniformity.
-
-**What the Critic caught (0 blocking, 9 warnings, 11 notes).** Three fixes
-worth naming. The row's discriminating test was **self-invalidating**: it asked
-whether removing the negated half left the subject undefined, and "Ableton is
-the speaker" survives that deletion — so the test cleared the very sentence the
-row bans. Replaced in all four carriers with the foil test. **The carve-out
-count was dishonest**: the norm advertised two while the sweep applied four, so
-prescriptive rules and verbatim quotation were recorded explicitly as *pending
-owner ratification* rather than folded in silently — the same leave-the-veto-real
-pattern that made this session's ruling possible. **The owner ratified both the
-same day**, so the row now carries four owner-ratified carve-outs and nothing
-pending; a fifth is a ruling, not a judgment call. (One
-reviewer claim was wrong and is worth recording as such: the limitations
-register did **not** arrive with the rejected narrowing — it is in the owner's
-original 2026-08-11 wording as "Narrow exception".) And **four survivors** the
-Done-when had called clean, the worst being VISION's "Reach music Ableton was
-not built for … the DAW alone makes it actively hostile", which ranks against a
-named tool under `## Why` with no carve-out covering it.
-
-Docs-only. Suite green at 5005 passed / 2 skipped, before and after.
-
-## 2026-08-11 — Release process: the back-merge is a fast-forward, and `main` may be elsewhere
-
-<!-- prawduct: type=docs | scope=release-process-docs | release=v1.8.5 -->
-
-Reconstructed at the v1.8.5 cut from commit `f4f9ad2`, which landed on
-`develop` with no entry of its own — exactly the gap step 1 of
-`docs/release-process.md` warns about, found by running the audit it
-prescribes (`git log --oneline --no-merges origin/main..develop`).
-
-Two traps hit during the v1.8.4 cut, both fixed at the source that allowed
-them. **Step 9's back-merge is the one merge in the process that is
-deliberately not a merge commit**, and nothing said so — it sits two
-paragraphs under step 8, which *does* require `--no-ff`, against a repo-wide
-`--no-ff` habit, so the bare `git merge` read as an omission rather than a
-specification. Passing `--no-ff` there leaves `develop` permanently one commit
-ahead of `main` and makes step 10's `rev-list` count read 1 instead of 0 — a
-check that appears to fail while the trees are identical. Now stated outright,
-with the false alarm named so the next reader recognizes it.
-
-**Step 8 assumed `git checkout main` works.** Where `main` is checked out in
-another worktree it refuses outright, and that worktree must not be disturbed
-to satisfy a release. The plumbing path is now written down: verify the merged
-tree equals `develop`'s, build the two-parent commit with `commit-tree`, push
-it straight to the remote ref — the same merge commit step 8 describes,
-without the checkout.
-
-## 2026-08-11 — Launch-readiness docs pass: contradictions closed, framing recentred
-
-<!-- prawduct: type=docs | scope=docs-launch-readiness | release=v1.8.5 -->
-
-A critical review of the user-facing docs from the README outward, then the
-fixes, across four review rounds. No product behavior change. Five non-`.md`
-files: the two plugin manifests and `ci.yml`, all carrying stale or retired
-prose in strings and comments; `project-state.yaml` for the norm registry;
-and one new test — `test_marketplace_manifest_tool_count_matches_actual_registry`,
-which pins the tool count shown in the `/plugin install` dialog. That count was
-the only one of four such claims no guard read, because the sibling README
-guards match "N unified tools" and the manifest says "N Ableton Live tools";
-verified by mutating the manifest to 99 and watching the test fail.
-
-**Four contradictions.** `.claude-plugin/marketplace.json` told every installing
-user the plugin "Requires the `hallucinote` Python engine installed" — stale
-since the plugin absorbed the engine, and against the README's "self-contained".
-It is the first sentence a user reads, in the install dialog. `VISION.md`
-claimed audio recorded against a click flows back into the DB in the present
-tense, which `known-issues.md` contradicts; it now separates the symbolic
-round-trip (real today) from audio (a goal). VISION's "impossible in every other
-tool" invited an argument it would lose — TidalCycles, Sonic Pi, Lilypond and
-DAWproject all exist — and now claims the defensible combination instead.
-`CONTRIBUTING.md` taught a pip/venv setup while CI runs `uv --locked` and the
-plugin ships `uv --frozen`, and taught the deprecated `ok-broad-except` spelling
-that `project-preferences.md` marks legacy.
-
-**Omissions a prospective user hits before installing.** What it costs to run
-(Claude usage and the Ableton bill) appeared nowhere; both are now in README
-Status and the FAQ. No token figure is published because none is measured
-anywhere in the repo — the shape of the cost is stated instead, and #458 tracks
-measuring it. "The melody is yours" was the single most load-bearing product
-fact and lived only in `capability-truth.md`, an internal doc, while the README
-advertised "any genre, any shape". Also added: whether you end up with a normal
-Live set you can finish and release (yes — it was buried in `collaboration.md`),
-build determinism, and output ownership.
-
-**Editions and CI honesty.** "Any Live 12 edition" narrowed to the editions
-actually exercised (Standard, Suite); Intro and Lite are named as untested in
-`known-issues.md` with the two failure modes that will bite. `CONTRIBUTING.md`
-gained a section stating what CI covers: no Ableton, no macOS or Windows leg,
-one interpreter. #459 and #460 track the underlying decisions.
-
-**Framing.** The README had put Claude in the subject position of every creative
-verb — "You describe a song; Claude writes it", "You talk; Claude authors code"
-— which reads backwards to the audience most primed to distrust AI tooling. The
-user now holds the creative verbs; the tool builds, measures and reports. A
-"Who it's for" section covers the three registers (curiosity, reach, leverage)
-without describing anyone by their deficits, and the cheap-experiment loop that
-makes the tool fun is stated where it was previously missing.
-
-**Two norms came out of it, and the first one had to be narrowed the same day**
-(`project-preferences.md` → Documentation & prose + two Enforcement rows;
-`norm_registry_ratified` 27 → 29). As first written, **write what a thing IS,
-never what it isn't** was absolute — and the cumulative Critic caught it being
-violated inside its own ratifying bundle, twice in `VISION.md`. Both sites were
-rewritten. But the verify pass then made the sharper point: read absolutely,
-the row also outlaws ordinary factual distinctions the corpus legitimately
-needs — "a long agentic workflow, not a chat", "the song is reproducible; the
-act of composing it isn't" — and a norm the corpus violates on the day it
-ships is aspirational, not binding. So the row now names the two moves it
-actually targets (positioning against alternatives; rebutting an unraised
-objection) and states the test explicitly: a sentence about a competitor or a
-critic is banned, a sentence about how the thing works is fine. It was then
-narrowed a **second** time, in the same pass, when the next round pointed out
-that the test as worded condemned the VISION prior-art paragraph the first
-narrowing existed to permit: naming other tools as lineage is now explicitly
-allowed, and ranking yourself against them is the banned move. Worth recording
-plainly, because twice-narrowing a norm the day it ships is the shape of
-*amending a norm to match your own prose* — the reviewer weighed exactly that
-and let it stand only because each narrowing states a general discriminating
-test rather than exempting a specific paragraph. It remains vetoable. The
-second norm — the user holds the subject position on the creative verbs — was
-uncontested, and gained the ratification date and retroactivity clause it
-shipped without.
-
-Two artifacts were resynced while the corpus was open: `api-contract.md` and
-`project-preferences.md` § Package manager both described skills invoking
-`uv run --project <plugin-root> --frozen hallucinote <cmd>`, which is no longer
-what ships — every skill uses `"$PY" -m hallucinote.cli`, with `$PY` resolved
-from `ableton://server/info`. Both prose norms carry mechanism and audit home in the Enforcement index,
-because a norm outside that index is one the janitor's Norm Health sweep never
-walks.
-
-What prompted it: an intermediate draft of this very pass added a "What it
-isn't" section and Suno/is-this-cheating FAQ entries. They argued with a critic
-the reader had not met and planted the doubt they answered. They were removed
-rather than softened, and the fact underneath them — the notes come from
-parametric generators you can read — now states itself positively, as
-mechanism.
-
-Backlog filed from the review: #457 (a second worked example in an exposed
-genre), #458 (measure per-song usage), #459 (CI platform matrix), #460
-(Intro/Lite). The demo-video finding folded into existing #329 rather than
-duplicating it, with a comment recording the part its acceptance was missing:
-the delivered `.mp4` has to be embedded in the README to play inline.
-
-## 2026-08-11 — The prose pass: README rewritten, corpus scrubbed, generator fixed
-
-<!-- prawduct: type=docs | scope=docs-writing-quality | status=shipped | release=v1.8.4 -->
-
-Two docs clusters landed after v1.8.3 was cut, both about how the user-facing
-corpus reads. No product behavior changes.
-
-**README, owner-requested (three edits).** The "See it" line let the *prompt*
-read as the thing that took forty minutes; it now says the sentence kicked off a
-forty-minute *session*. The lifecycle diagram's analysis caption becomes
-"composition, mix, and audio measurements" — and because the `<desc>` element
-still carried the old "a question, not a verdict" framing verbatim, the stale
-wording would have survived precisely for screen-reader users who cannot see the
-caption. Both now agree, and the caption pill grew 280 → 320px to fit 40
-characters at 12.5px without crowding its edges. The prose went 1334 → 1008
-words (24%) by structural cuts rather than sentence-squeezing: "How it works"
-and "What you can do" were describing the same three capabilities, so they
-merged. Short of the requested 30% deliberately — the remaining candidates were
-install steps, troubleshooting causes and the example prompts, where further
-cuts would have removed information rather than repetition.
-
-**Corpus scrub against `brooks-writing-style.md`** — 15 user-facing docs, 24,646
-words. Most came back clean; the useful finding was structural, and it came from
-the guide's positive checklist rather than its anti-patterns. Two real
-point-first failures: `punk-fate.md` opened with paperwork about where
-`decisions/` and `annotations/` live before saying what the song *is*, and
-`docs/quickstart.md` defined itself by cross-reference before saying what you
-get. Three banned hype words (`unlocks` in `VISION.md` and
-`song-authoring-conventions.md`, `Leverages` in `polyrhythms.md`), one "not just
-X" reframe, and two run-ons split.
-
-**The generator was the root cause, so it was fixed at source.**
-`src/hallucinote/tools/templates/song/song.md.tmpl` carried the same
-paperwork-first ordering as punk-fate.md, plus a bare `/song-context` and a
-pointer at `.prawduct/artifacts/song-conventions.md` — an internal artifact no
-user workspace contains. Every future scaffolded song would have inherited all
-three defects. This is the one change outside `docs/` and `examples/`, and it is
-why the release touches `src/` at all.
-
-**What the scan cleared, with evidence:** no throat-clearing openers, no
-exclamations in prose, no triadic crescendos, no staccato-fragment drama, no doc
-ending in a summary-of-the-summary, and exactly one sentence appearing in two
-docs — a deliberately shared norm phrase, left alone. A words-per-example proxy
-flagged `song-workflow.md` and `faq.md` as show-don't-tell offenders; reading
-them says otherwise, and neither was rewritten.
-
-Suite: 5004 passed, 2 skipped (no count change — docs and one template).
-
-## 2026-08-11 — Chapter 2: the song goes back into the studio until it sounds punk
-
-<!-- prawduct: type=feature | scope=tour | status=shipped | release=v1.8.3 -->
-
-punk-fate passed every meter at the end of chapter 1 and still didn't sound
-like punk. Three re-cuts the same day, each measured, each with its rationale
-on disk as `decisions/08`–`11`:
-
-- **Feel.** The per-part feel of chapter 1 measured *mechanical* — all 623 bass
-  notes the identical distance off the grid. A `PerformanceProfile` per player
-  now realizes 1/f-correlated timing and velocity breathing over the finished
-  part; all four parts read `human`. Two dead ends are in the attempt ledger,
-  including a limb-split kit that measured *worse* than one stream — a drummer
-  is one performer, not two.
-- **Garage drums.** Ghost snares, hats that open under a leaning hand, and the
-  hat that simply isn't there — deterministic from each note's identity, so a
-  rebuild misses the same hats. The scatter surfaced a latent defect: two
-  generators writing one snare on one tick, silently deduplicated until
-  per-note deviation made it a 5 ms overlap Live can't hold. `_one_hit_at_a_time`
-  and `_no_same_pitch_overlap` fix it, with tests.
-- **Dirt and tone.** Two gain stages added, then the chapter's real lesson:
-  every chain had been chosen by preset *name* and never verified by
-  *parameter* — *Dual Amped Crunch* was two amps on `Blues`, *Guitar Dirt* was
-  1.6 % drive, and a 24 %-wet reverb was hiding inside the guitar rack,
-  declared nowhere. With real gain and a Glue Compressor → Limiter on the
-  master: −0.34 dBTP, 0 overshoots, guitar-stem spectral flatness 0.083 →
-  0.156. **A preset name is a claim, not a measurement.**
-- **The lead.** Track 4's Operator square read as *"beep beep beep bloop"* —
-  its spectral centroid sat at 2125 Hz while the band sat at 77–604 Hz. It's a
-  second guitar now; master flatness 0.192 → 0.247, the biggest jump of any
-  pass, with the other three stems moving by at most 0.0013.
-
-`docs/tour.md` grows a chapter 2 to tell it, and a freshness test recomputes
-every number the chapter quotes from the committed measurement JSONs — added
-because the chapter's "before" figures first shipped from a superseded
-analysis run.
-
-**Docs tidy, same shipment.** The chapter-2 work left the surrounding docs
-describing an older song, so: the docs-index row for the tour no longer counts
-the tour's parts (it said "one session, ten beats" throughout chapter 2's
-development, and the parity test next door only checks a row *exists*);
-`REQUIREMENTS.md` regenerated, since its built-in-device list predated three
-device passes; punk-fate.md's Concept describes the band that's actually
-playing, and its Provenance is a pass table instead of a chronological
-append-log; the tour is one document with one `#` heading instead of three;
-and the demo snapshot's return names lost Live's slot prefix, so building the
-flagship example no longer prints a UserWarning. Three new locks — heading
-structure, index-row shape claims, and stripped return names — each verified
-to fail on the regression it names.
-
-**The one non-tour change, and why it matters to everything above:** a bare
-`pytest` in this repo could not be trusted from a git worktree. `pyproject`'s
-`pythonpath` front-inserts this checkout's `src/` into the pytest process, but
-tests that shell out to `sys.executable -m hallucinote...` got a child resolving
-`hallucinote` through the editable-install `.pth` — the PRIMARY checkout, an
-older tree. Six `test_restamp_*` failures had been carried across sessions as
-"install skew, reinstall when Live is idle"; the real fix is three lines in the
-root `conftest.py` exporting the source dirs, and no reinstall. Every green
-number quoted in this entry is from a bare run that is now honest, and
-`test_subprocesses_resolve_this_checkout_not_the_installed_one` fails naming the
-wrong tree if the export is ever dropped.
-
-[DECISION: the tour's media **item** cap is now accounted per editing session
-rather than per document lifetime — 6 screenshots · 4 audio items = 16 files,
-against the unchanged 12 MB byte cap (currently 7.0 MB). Recorded as a dated
-amendment to `tour-walkthrough-design.md` §The concision rule, because chapter 2
-had shipped 16 files and reconciled them by editing the enforcing test's comment
-while still citing the artifact as its authority — a norm changed in code instead
-of in the norm. | user can veto/override: rejecting per-session accounting means
-dropping two of chapter 2's four media items, NOT re-relaxing the test.]
-
-Found and *not* fixed here, filed instead: `format_requirements_md` handles
-every `DeviceStatus` except `preset_query_unverified`, so 8 of punk-fate's 87
-devices appear in no section of the generated file (#454 — and since
-`regen_requirements` never passes `browser_dry_runs`, that drop is the default
-path, not an edge case). Pre-existing, and the load-bearing "no third-party
-plugins" line is unaffected — an engine fix doesn't belong in a docs branch cut
-for release. Also filed: #451 (the freshness lock still misses beat 12's
-build-derived counts and the two lens files) and #455 (the song evidence tree has
-no retention lifecycle while `docs/assets/` has two).
-
-## 2026-08-11 — The tour ships: punk-fate lands in examples/, and the evidence gets teeth
-
-<!-- prawduct: type=feature | chunks=B1,C1,D1 | scope=tour | status=shipped | release=v1.8.3 -->
-
-The TOUR plan's last three pieces, on `feat/tour-evidence`. The demo song
-punk-fate — authored end-to-end from a one-sentence prompt in a live session —
-lands as `examples/punk-fate/` (build.py, mix snapshot, 7 decisions, 2
-annotations, attempt ledger, both mix-analysis reports, shape tests in the
-default suite; headless build verified from a clean checkout). C1's evidence
-budget is spent under `docs/assets/`: full-song audio + waveform, the
-before/after mix A/B pair from the session's own renders, four screenshots
-(arrangement, session-during-render, drum-rack chains, and a fresh off-grid
-MIDI capture showing the snare leading the grid). D1 writes `docs/tour.md`
-(ten beats, one genuine artifact each), grafts the evidence into the README's
-See-it, and locks it all with `tests/preferences/test_tour_freshness.py` —
-doc→source verbatim snippets, asset existence, the 12 MB media byte cap, and
-mix numbers recomputed from the committed reports (adversarially verified
-red/green). Hero video: explicit descope — no screen recording exists and the
-design defers the demo video until the walkthrough is seamless.
-
-## 2026-08-11 — The documentation gets scrubbed for release, and the README learns to be read
-
-<!-- prawduct: type=chore | scope=release-readiness | status=shipped | release=v1.8.2 -->
-
-A full release-readiness pass over the public documentation surface, driven by a
-critical audit (gaps, staleness, audience mixing, onboarding friction) and a
-Critic round whose findings all landed.
-
-- **Landing page:** README overhauled around what-it-is / what-you-can-do /
-  how-to-use / learn-more — short sections, CI/license/platform badges, the
-  previously-orphaned `lifecycle.svg` embedded, the Max-for-Live split stated
-  once, detailed known issues split to `docs/known-issues.md`. The doc-parity
-  suite caught the rewrite dropping three test-pinned claims (the 14-phase
-  list, `/song-brief`, the 13-tool count) — restored, tests untouched. The
-  self-labeled hero placeholder ("replace before release", rendered) is gone:
-  the README ships a real composed two-pane capture from the from-scratch
-  punk-fate session — its own verbatim example prompt and `/song-brief`'s
-  creative fork beside the finished 96-bar arrangement (`docs/assets/hero.png`;
-  raw frames preserved for TOUR C1, locations in that plan's D1 note).
-- **The public CHANGELOG is a maintained surface again:** entries distilled for
-  1.6.1–1.8.1 (it had stranded at a "superseded" tombstone while 1.8.0
-  shipped), and `docs/release-process.md` gained step 6 + a fileset row + a
-  checklist row so the cut itself owns keeping it current.
-- **Commands users can actually run:** the `hallucinote init-workspace`-on-PATH
-  myth removed from README/quickstart (the ask-Claude flow is the path);
-  `collaboration.md` modernized off bare `python`/pre-unification module
-  invocations; a tree-wide stale-command sweep (snapshot-schema ×5,
-  browser-cache-schema, song-new-checklist, SECURITY.md); preflight hedged
-  everywhere it was offered unhedged. Quickstart step 1 stops presenting the
-  automated workspace setup as a manual procedure.
-- **Structure with teeth:** `docs/README.md` audience index (making music /
-  reference / maintainers) enforced by `tests/unit/test_docs_index_parity.py`;
-  `render-analyze` added to the skills reference (the one shipped skill it
-  missed); three broken anchors fixed; internal jargon scrubbed from VISION;
-  the dev-coexistence memo labeled; a new FAQ entry for "unknown skill:
-  hallucinote:*" (hit live during the hero session); the retired demo song's
-  pyproject/testpaths ghosts reconciled and `examples/` given a README. The
-  quickstart and FAQ now teach pull → bake → build (the `StaleSnapshotError`
-  guard — closes #313's docs half), and a style audit against the owner's
-  writing guide returned a clean bill with two touch-ups.
-
-Suite 4983 → 4986 (docs-index parity tests). Two Critic rounds, fully actioned:
-mid-branch 0 blocking / 3 warnings (fixed, verified by a verify-resolutions
-pass) / 5 notes; cumulative 0 blocking / 1 warning (fixed) / 6 notes (one filed
-as #449). Independent PR review: 0 blocking.
-
-## 2026-08-10 — The direction this project already had, written down where it binds
-
-<!-- prawduct: type=chore | scope=norm-ratification | status=shipped | release=v1.8.2 -->
-
-Twenty-seven norms were ratified into `## Direction` sections across six strategy
-artifacts, and the Enforcement table in `project-preferences.md` became the norm index it
-was always described as. Nothing here is a new decision: binding force comes from the
-owner having declared a direction, and every statement ratified was already written in
-this repo's prose. What changed is that a departure from one is now detectable instead of
-being laundered through documentation upkeep — the failure the norm spec exists to
-prevent, where work that diverges from a declared direction gets *documented as the new
-reality* and every reviewer correctly certifies it.
-
-Six candidates could not be ratified as written, and each was a real fork:
-
-- **The `internal` API classification survived the repo going public.** `api-contract.md`
-  had already argued that publishing does not convert these interfaces into public
-  commitments; that argument is now the norm, and `exposes_programmatic_interface` stays
-  `consumers: internal`. The alternative — flipping the characteristic — would have forced
-  an artifact re-derivation and an assumption audit for a trust posture that never changed.
-- **Arrangement projection is contained, not in transition.** Push projects; pull still
-  diffs positionally. The three backlog items that looked like tracking refs are all dead
-  (`#350` shipped, `#286` dropped, `#351` shipped), so an `in-transition` norm here would
-  have been born citing a dead id — the exact decay the registry detects. Recorded as
-  `Retroactivity: contain`, with the pull planner as the modeled boundary, because the
-  renumbering hazard is a write-path problem that does not transfer to reading.
-- **Three preferences statements were false as written** and are now scoped to what was
-  actually decided: `Async: Sync throughout` contradicted the MCP server's hard
-  availability norm (handlers are `async` or one blocking call freezes the server);
-  `stdlib only at runtime` contradicted the engine's own numpy/scipy/librosa stack, when
-  the real rule is stdlib-only *at import time*; and `pip`/`.venv` had drifted from the
-  `uv` toolchain that CI actually gates.
-- **The tool budget is ratified; the count is not.** "Thirteen tools" decays. The norm is
-  the band where tool-selection accuracy holds, with the count left in descriptive prose
-  where it can change without unmaking the decision.
-
-The waiver pragma documented in `project-preferences.md` was also a generation behind —
-21 sites still carry the reasonless legacy `ok-broad-except` spelling against 26 on the
-current `prawduct:allow … -- <reason>` form, filed as brookstalley/hallucinote#447 with
-scope-out language saying a blanket reason on all 21 fails the item rather than completing
-it.
-
-Alongside the ratification, `/prawduct:doctor` cleared three pieces of governance residue:
-the retired `views_enabled` flag had reappeared in `project-state.yaml` (a flag returns by
-someone copying an older state file, not by anyone deciding to reinstate it) along with
-220 lines of the dead `scope_rollups` block it fed; `release-notes.md` gained the archive
-notice that stops it reading as a current record; and `learnings.md` regained the
-`prawduct:descent-obligation` marker, without which `/prawduct:learnings` had been
-pointing all 84 rules' readers at a statement that was not there.
-
-**One correction worth recording because the repo had already learned it once.**
-`plan-backfill --apply` archived `plans/TOUR/build-plan.md` during this pass, and it should
-not have: chunks C1 and D1 are unbuilt, `docs/tour.md` does not exist, and
-`release-plan-v1.8.1.md` says "no plans archived, deliberately." This is the same defect
-the v1.8.0 cut hit, which is why `docs/release-process.md` § 3 already says the command
-"archives by SCOPE, not by completeness" and to check each plan against its own `## Status`.
-The archive was reverted. The lesson generalizes past this command: a documented manual
-check standing behind a mechanical sweep is a check the sweep trains you to skip.
-
-## 2026-08-10 — The backlog moves to GitHub Issues, and 225 titles learn a budget
-
-<!-- prawduct: type=chore | scope=backlog-migration | release=v1.8.1 -->
-
-The markdown backlog is now frozen history. All **225 items** live in this repo's
-GitHub Issues — 111 live, 114 archived as closed — reached through
-`prawduct-hook backlog <op> --repo brookstalley/hallucinote`. The one key that
-makes it so is `backlog_service_repo` in `project-state.yaml`; setting it is what
-makes `.prawduct/backlog.md` stop being read, which is why it was set only after
-the completeness gate passed.
-
-**The gate is the point, not the count.** `verify-migration --archive-scope all`
-exited 0 with `source_items: 225, aliased: 225` and all five lists empty
-(`missing`, `unaliasable`, `collisions`, `status_mismatch`, `duplicate_alias`).
-A raw issue count would not have been enough: the precedent this gate exists for
-(`samsung-frame-art-loader`) recorded a cutover with 7 of 9 items stranded and
-counts that looked plausible, because natively-filed issues carry a prawduct
-block but no `id:PFX` alias. Coverage of the source set against alias keying is
-the only comparison that holds.
-
-**192 of 225 titles did not conform** to the issue standard's §1 (182 over the
-72-char budget, 127 joining ≥2 claims) and the importer refuses a non-conforming
-corpus before the first write. So the migration carried a reviewed restructure
-plan: every title rewritten atomic and inside budget, `kind` assigned, and the
-111 live items given template body sections derived from their own structure
-(`**Verifiable signal:**` → Acceptance, boundary/NARROWED paragraphs → Scope-out).
-Nothing was paraphrased and every original is preserved verbatim in the issue's
-`original_title:` / `original_body:`.
-
-**Six owner-confirmed dispositions**, applied after the gate because they are
-deliberate divergence from the source and the gate cannot tell that apart from a
-stranded item: `MCP-6B4W` folded into `MCP-7J2Q` (one `run_on_main` timeout
-defect, not two — the `finally` releases the bout lock on the timeout path, which
-falsifies the premise `MCP-7J2Q` built on); `VEW-3M8F`, `INS-6K1T`, `SYN-7T3M`,
-`GEN-2T8M`, `MIG-3T7K` dropped. Two clusters were examined and deliberately NOT
-merged — `ENV-3M7K`/`ENV-4M2T`/`MIX-7K2D` are three mechanisms, and the `ING-*`
-family are intended legs of one design.
-
-**The freeze had to be propagated, not just declared** — the independent reviews
-found the file still carrying load after being called dead. **Eight tracked
-citations pointed into it.** Three were in `docs/` and are fixed here:
-`docs/collaboration.md` sent readers there for "the open items", and both
-`docs/release-process.md` and `docs/song-authoring-conventions.md` cited its
-header **rule 1** (the PRC-5W2N ship-stamp rule) as canonical. A live norm cannot
-live in a dead file, so the three load-bearing backlog rules — ship-stamp,
-verifiable-signal-required, and trust-but-verify-on-scrub — were **copied** to a
-**Backlog norms** section in `project-preferences.md`, which is now canonical, and
-those citations point there. Copied rather than moved because the corpus must stay
-verbatim; the banner names which copy wins so a later amendment cannot land in the
-dead one.
-
-A fourth, `tests/integration/test_live_smoke.md`, cited `backlog.md:11` — a line
-number that was already stale and now resolves to banner prose; repointed at the
-item id. **The remaining three are source citations and are deliberately NOT fixed
-here** — `cost-of-commit` prices those `.py` files `costs-a-round`, so buying a
-full review round for three comment/string edits is the wrong trade. They are
-filed as **#445** (including the sharp one: a *user-facing* MCP error string in
-`handlers/clip.py:358`, and a comment pointing at GEN-2T8M, an item this same
-cutover dropped) to ride the next code chunk. Filed rather than noted, because
-`.handoff-notes.md` is gitignored as of this bundle and would have made it a drop.
-
-The banner also stops overclaiming: the file is not read for any backlog
-operation, but it remains the migration's source corpus for `verify-migration` and
-rollback, so it must be preserved verbatim.
-
-Recorded alongside: `infrastructure_dependencies` no longer claims "No external
-services" (GitHub Issues is one — though not on the product's runtime path: a
-song builds, pushes and renders with GitHub unreachable), the cutover is now a
-`technical_decisions.operational` entry with its alternatives and its rollback
-cost, and its publish-exposure acceptance is linked to **PRC-6N2X**, which is the
-entry whoever flips this repo public will actually read.
-
-Also here: `.prawduct/.handoff-notes.md` is now gitignored alongside its siblings
-(`.session-handoff.md`, `.session-reflected`), which it was missing from — it is
-the same class of ephemeral session channel and should never have been
-committable. And the metadata-bar legend gained a `revisit:` row, documenting a
-field that was specified but undocumented; note it describes the format of a file
-that is now history, so its "raises an advisory once past" clock no longer fires
-from here — and **that expiry currently has no enforcer on the Issues backend
-either**, since the field has no write path there yet (the plugin's
-`probe_revisit_due` stands down post-cutover). Nothing is lost today: no item ever
-carried a clock, so the only `revisit:` in the file is the legend row itself.
-
-Carried across as disclosed debt, not silently fixed: **32 live items have no
-verifiable signal** and migrated with no Acceptance section (criteria were
-deliberately not invented), and **11 are flagged `non_atomic`** awaiting an owner
-split. Full audit record, including which plugin build ran the scrub:
-`.prawduct/artifacts/migration-scrub-decisions.md`.
-
-**Re-vendor: not required** — no `_FINGERPRINT_PATHS` file is touched.
-
-## 2026-08-10 — The release runbook learns two things the v1.8.0 cut taught it
-
-<!-- prawduct: type=docs | scope=release-process-docs | release=v1.8.1 -->
-
-`docs/release-process.md` was wrong in two places, both found by following it.
-
-**Step 9 pointed at a mechanism that no longer runs.** It said plans for shipped
-clusters are retained "until the next release's `regen-views` re-derives status" —
-but `regen-views` is inert and warns it will be removed, and step 3 archives plans
-instead. Rewritten to what the cut actually needs, including the two judgements
-`plan-backfill` cannot make for you:
-
-- **It archives by SCOPE, not by completeness.** At the v1.8.0 cut it wanted to
-  archive `TOUR` because `scope=tour` had shipped, while chunks C1 and D1 were
-  unbuilt — accepting it would have declared them done. Check each plan it names
-  against that plan's own `## Status` and restore any with open chunks.
-- **`active_build_plan` is cleared only when the plan it names just archived**, and
-  is left **empty**, never the literal `null` — the pointer reader treats
-  post-colon text as a path, so `null` resolves to `.prawduct/null` and mis-fires
-  the missing-build-plan advisory.
-
-**The Version-surfaces table carried a stale copy of a moving value.** Its "Today"
-column listed a literal `1.6.0` for the four lockstep product surfaces; it had sat
-through three cuts and read as authoritative. It now names the file to look in,
-which cannot go stale — one rule, one carrier.
-
-Shipped alongside the backlog migration deliberately: these corrections describe
-the procedure that cut this very release, and the release-plan artifact gap they
-did *not* yet cover (`check-releasability` wants a
-`release-plan-vX.Y.Z*.md` that no prior version had) is recorded in
-`.prawduct/artifacts/release-plan-v1.8.1.md` for a follow-up pass.
-
-Doc-only. No behaviour change. **Re-vendor: not required.**
-
-## 2026-08-08 — Seven push/sync correctness fixes, six of them reported as OK
-
-<!-- prawduct: type=bugfix | scope=push+arrangement+workspace+device-load | release=v1.8.0 -->
-
-Reconstructed at release time from commit bodies: this cluster reached `main` in
-`53c7014` with no change-log entry, so it was invisible to the release flow until
-an `origin/main..develop` audit found it. The unifying defect is not in any one
-fix — **six of the seven reported success while doing the wrong thing**, which is
-the class of failure that costs the most to find.
-
-- **The devices phase doubled every FX chain and said `23/23 ok`.** `push_cli
-  execute` never reconciled DB↔Live device links — `probe_and_link` does that
-  binding but runs only in its own subcommand — so the planner saw "no
-  `ableton_links` row" and concluded "not in Live" for a chain sitting right
-  there. Live 12.4 has no reorder API, so every emitted `load` tail-appended: on
-  `the-argument`, all eighteen post-instrument effects across nine tracks were
-  duplicated in one push, and the mix was rendered and *measured* through doubly
-  distorted guitars.
-- **An unreadable arrangement lane was treated as a benign warning.** `push
-  execute --only arrangement --probe` reported `97/97 ok` / exit 0 while Lead Gtr
-  lost all three placements and kept an orphan clip at beat 0 — the stem rendered
-  −180 dBFS. The integrity assert that should have caught it re-probed the same
-  lane, hit the same failure, and filed everything under `probe_failed`, which
-  corruption detection deliberately excludes: the one signal that could have
-  caught it was blinded by the failure it was meant to report. `lane_probe_failed`
-  is now a distinct, corrupting outcome.
-- **Arrangement silently no-opped on a first push and said OK.** The lane probe
-  ran before the phase loop, keyed by Live track index — but a first push
-  *creates* those tracks, so the map described the scaffold's lanes 1–4 while the
-  song's tracks landed at 5–13. Every track read as "probe failed" and the planner
-  correctly refused to touch an unknown lane. The probe is now a thunk resolved
-  inside the phase; and a phase carrying blocked reasons is `incomplete`, not
-  `skipped (idempotent)` — non-zero exit, reasons verbatim.
-- **A browser load changed two chains instead of one.** `browser.load_item` takes
-  no destination; Live aims it from view state, which has two halves, and the
-  handler moved only the Session selection. Selecting the master moves that
-  selection off the track list entirely, so the Detail pane stayed bound to the
-  previously focused track and a master Shifter+Limiter load appended both to
-  track 3 as well. The post-condition re-read only the chain it aimed at, so it
-  could not see the stray. Loads are now bracketed by a full-session device
-  census.
-- **A slug resolved to the nearest workspace, not the one holding it.** The
-  framework repo ships a demo workspace at `examples/`, so a session rooted there
-  — the normal setup — found exactly one marker below, took it as unambiguous,
-  and resolved *every* slug into the demo workspace. Renders wrote captures into
-  the wrong tree; analysis, which has no `output_dir` escape hatch, hard-failed
-  on songs that existed all along. Inference now asks which workspace HOLDS the
-  song and only tiebreaks on nearness.
-- **A locate was not settled before the transport rolled.** Live applies a locate
-  asynchronously, so when the `record_mode` settle happened to return fast,
-  playback started from the old position — an 8-beat arc at 96..104 became a
-  104-beat journey that blew a budget sized for the span, while the operator
-  heard the pass start in the wrong place.
-- **Docs:** `snapshot-schema.md` called master automation an unbuilt surface;
-  ENV-7G4K and ENV-9P4T had shipped the route before that line was written.
-  MAW-4K7P is a *fidelity* gap (lossless `.als` write), not an authorability one.
-
-## 2026-08-10 — Four scopes were invisible to the release flow, and the convention that hid them
-
-<!-- prawduct: type=bugfix | scope=release-bookkeeping | release=v1.8.0 -->
-
-**Whoever cuts the next release should read this before assuming the pending set
-is what it was.** Four entries just became visible that were not before.
-
-The change-log's own header taught a placeholder — tag in-flight work
-`release=unreleased` while it sits on develop, flip it to the real version at the
-cut (the VEW-9QH4 convention). `check-releasability` reads the **absence** of a
-`release=` key as the release-pending state, so it treats *any* value as
-already-released. The placeholder therefore did the exact opposite of what it was
-written to do: it dropped each tagged entry's whole scope out of the pending set,
-silently, where it would never have been picked up at a cut. The checker rejects
-the value outright (`bad-change-log-tag`), so this was visible the moment anything
-looked — nothing had looked.
-
-Four entries carried it: `song-lifecycle` (the `/song-brief` stage-0 work),
-`tour+push+workspace+db-converger`, and two `tour` entries. Tags removed; all four
-are release-pending again. The header now teaches the omission and says why the
-placeholder is not a smaller version of it — omitting the key satisfies the
-original concern just as well (no version is pre-bumped, nothing is mislabelled as
-shipped) without the failure mode.
-
-Also corrected while adjacent: `project-state.yaml`'s comment above
-`active_build_plan` still required a `build-plan-<scope>.md` filename because the
-scope→plan resolver globbed `artifacts/*.md` non-recursively and could not see a
-nested plan. Discovery is recursive now (`plan_index.iter_scoped_plan_candidates`),
-this repo keeps ~48 plans in `artifacts/plans/<ID>/build-plan.md`, and the
-surviving comment was telling the next plan author to do something the repo no
-longer does. Trimmed to the part still true — the per-ID directory is what keeps
-the generic filename uncontended while several plans are live at once.
-
-## 2026-08-10 — Stereo as a measured lens: correlation, mono-sum, and width that reads as a no-op
-
-<!-- prawduct: type=feature | chunks=A1,A2,A3 | scope=str-4c8n | status=shipped | release=v1.8.0 -->
-
-A `MixReport` that could not see whether a part was actually in stereo, and an
-automation verifier that called a working comb filter unrealized. Both were found
-the same way — by a device doing nothing while every symbolic and API-level check
-said it worked.
-
-**The incident.** A chorus flanger was added to `the-argument` to give a mono
-guitar chain stereo. `Spread` was 75 %, its `Dry/Wet` automation verified both
-recorded and playing, the playhead reading back the authored value exactly. The
-rendered stem was bit-exact mono: `L−R` at −180 dB. `Mod Phase` was 0.0°, so both
-channels' LFOs ran in lockstep — `Spread` spreads notch frequencies *within* a
-channel; `Mod Phase` is the L/R offset. Nothing in the report could have said so.
-
-**A1 — per-stem stereo metrics.** A new `audio/stereo.py` carries Pearson L/R
-correlation and mono-sum loss in dB, per stem and per section, in the same shape
-`masking` uses. Mono-native surfaces report `+1.0` / `0.00 dB` rather than null:
-bit-exact mono is a measurement, not a gap.
-
-**A2 — the verifier had one probe where it needed two.** `_verify_timbre` judged
-a device parameter by spectral centroid alone, so a comb filter — which changes
-the stereo image and leaves the brightness where it was — read as "not realized".
-It now accepts timbre OR image. Two real bugs surfaced under that fix: the
-silence gate summed to mono first, so a near-anti-phase window (the single signal
-shape the image probe most wants to see) took the "too quiet to characterise"
-branch at full stereo level; and the centroid was computed on the same mono sum,
-so anti-phase read as a 440→0 Hz timbre collapse. Both now measure per-channel.
-
-**A3 — declared width joined to measured width.** Width controls a song declares
-are collected through the MCP handler (mirroring `declared_reverb_sends`, so
-`analyze.py` stays DB-agnostic) and paired with what the audio did. This is what
-catches the second failure mode, which is quieter than the first: Drone's
-`Utility Stereo Width` at **165 %** — the most aggressive setting in the song —
-producing the *least* effect, correlation +0.898 and only −0.23 dB of mono-sum
-loss, because it was multiplying a side signal that wasn't there. Three instances
-of that one bug class were in a single song. Returns are collected and measured
-alongside tracks, so a width control on a reverb or delay bus gets a full
-declared-vs-measured row; the first cut walked tracks only, which made such a
-control *invisible* rather than skipped — a silent drop that reads to the caller
-as "nothing declared". Nothing about it was ever unmeasurable, only uncollected.
-
-A control left at unity is deliberately NOT collected. A pull writes a row for
-every parameter Live reports, not only the ones an author touched, so presence
-in the DB is not evidence of intent — without that filter every untouched
-Utility contributes a "declared 100 %" row, and a naturally wide stem carrying
-one presents as `declared 100 % / measured −3 dB`: a contradiction with an
-intent nobody expressed. The cost is that a width deliberately *held* at unity
-is indistinguishable from an untouched one and goes unlisted, which is the right
-way round — the lens surfaces contradictions with real intent, and a fabricated
-declaration manufactures them. The recognition scope (closed name set,
-top-level devices only, non-unity) is disclosed on every analysis rather than
-only when nothing is recognised: a partial list is the dangerous case, because
-it reads as a complete one.
-
-**A/B sees it too.** `compare.py` gains a third `_surface_deltas` family beside
-loudness and timbre, because a comparison that enumerates families by name was
-blind to exactly the change this lens exists to expose — reducing Brass from
-−3.84 dB to −2.86 dB of mono loss showed as no delta at all. Its floors ship
-`provisional: true`; the calibration debt is recorded on **AUD-TIMBRE-CALIB**,
-which now covers both families since one re-capture-jitter sweep answers both.
-
-**The lens emits no findings.** Measurement is neutral; all of the reading lives
-in `/mix-review`, which now carries guidance for both failure modes. The plan's
-original wording claimed findings at severity `info`; it ships none, which
-conforms more strictly than it was written.
-
-**Three things the third review round changed, all of them real.** The silence
-gate had moved to stereo energy for every envelope kind while the send-level
-metric still graded the mono sum, so a decorrelated return — a ping-pong delay,
-a stereo reverb — cleared the gate at full level and was then judged on two
-cancellation residues: a confident dB verdict built from noise, which is the
-failure class this work exists to remove. The centroid math had forked back into
-`automation.py`, undoing AUD-8T3K's recorded one-place consolidation; the stereo
-form now lives in `timbre.py` beside the mono one, sharing a single weighted-mean
-helper. And `QUIET_RMS` / `CORRELATION_ABS_THRESHOLD` were pairs of matching
-literals tied only by a comment — each is now one definition the other imports,
-because the invariant ("too quiet for one lens is too quiet for the other") is
-the kind a duplicate silently loses.
-
-**`probe` names the evidence.** A dual-probe verdict leaves `metric`/`before`/
-`after` as the centroid pair whichever probe fired, so an image-carried
-`realized: true` sits beside a barely-moved centroid. Reading those as the
-evidence asserts a brightness change the audio does not support — the record now
-carries a structured `probe` field (`"timbre"` / `"image"`) so the basis is
-machine-readable rather than recoverable only by string-matching the note.
-
-**Not settled here:** aesthetic stereo grading (placement, width, movement against
-declared spatial intent) stays with **STR-9P4M**. This work catches deliverability
-and no-op failures, which is a different question from taste.
-
-## 2026-08-07 — `/song-brief`: a stage may not emit an unresolved gap
-
-<!-- prawduct: type=feature | scope=song-lifecycle | status=shipped | release=v1.8.0 -->
-
-A new lifecycle **stage 0**, `/song-brief`, in front of `/song-new`, plus a
-**definition of done for every authoring stage**. The rule both serve: *a stage
-may not emit an unresolved gap.*
-
-**The defect.** The lifecycle had well-named stages and no exit criterion for any
-of them, so a stage could end with a load-bearing question still open — and,
-worse, written down as though it were answered. The demo song's `_outro`
-docstring said the closing octave drop "rides a Shifter device-parameter
-envelope". There was no Shifter and no envelope. The build ran clean, the push
-reported OK, `decisions/01` cited the drop as load-bearing, and the song ended
-flat while every document about it said otherwise. **A documented mechanism with
-no implementation is worse than an admitted gap, because every later reader takes
-it as done.**
-
-**Three states, and a forbidden fourth.** Every dimension a stage touches ends
-DECIDED (value *and* mechanism named), UNDECIDED (named, with an owner and a
-closing stage), or NOT-APPLICABLE (recorded by the agent's own judgement, never
-asked about). Only UNDECIDED blocks. **DESCRIBED-BUT-UNBUILT** is not a legal
-state — it is the defect above.
-
-**Why elicitation needed its own stage rather than a norm.** The cause was
-mechanical, not attitudinal: `/song-new`'s scaffold CLI takes tempo, meter and
-the section list as **required arguments** — exactly the values elicitation
-resolves. The agent could not run the stage without having already decided them,
-so it invented them, and the invented values became the song. Tool ordering
-forbade elicitation; laziness didn't.
-
-**The stage is bounded.** One consolidated turn of informed proposals carrying
-reasoning and a recommendation ("I'd propose 132 BPM, here's the arithmetic"),
-never a questionnaire, and never a second round — an unanswered item becomes an
-UNDECIDED row with an owner, not a follow-up question. Silence is a valid pass: a
-fully-directed prompt produces a brief with a resolution table and no questions.
-NOT-APPLICABLE is a first-class answer, so an ambient piece is never asked about
-drum style.
-
-Wired into eight lifecycle surfaces + eight skills, all deep-linking one
-canonical criteria table via `docs/song-workflow.md#stage-exit-criteria` (the
-`#definitions-of-done` subsection under it holds the per-stage rows).
-`tests/unit/test_song_lifecycle_doc_parity.py` (6 tests) locks that against the
-multi-site drift this bundle itself introduced — every surface names stage 0,
-every deep-link resolves, the table has exactly one home. Each assertion was
-verified red by planting its failure before shipping.
-
-**The CLAUDE.md amendment shipped in this bundle** (DOC-5H2T, closed). CLAUDE.md
-auto-loads every session and the skills do not, so while it still enumerated the
-pre-brief arc the stage was inert for any agent that never opened
-`/song-workflow`. The owner ratified both edits on 2026-08-07: the
-opening-elicitation bullet in the stop list, and the lifecycle sentence now
-leading with **elicit**, naming `/song-brief` first in the full map, and counting
-three checkpoints. CLAUDE.md is the first entry in the parity test's surface
-list, so it cannot fall behind again.
-
-Deferred with durable homes, not prose: **TST-4M9P** (the docstring test as code
-— the one mechanically-checkable rule, needs its own build cycle) and
-**TMP-7B3X** (the meter refusal belongs in the push layer, not the source of
-truth; **TMP-4J6Q** keeps the projection half).
-
-Suite: 4871 passed / 2 skipped (+6). No fingerprint flip — `server.py`'s
-instructions string and `resources/` are both outside `_FINGERPRINT_PATHS`, so
-**no re-vendor**.
-
-## 2026-08-07 — Six defects the demo song found by actually being rebuilt
-
-<!-- prawduct: type=bugfix | chunks=B1 | scope=tour+push+workspace+db-converger | status=shipped | release=v1.8.0 -->
-
-Building `examples/angle-of-the-light` end to end surfaced six framework defects.
-Every one was found by *reproducing from scratch* — pushing into an empty Live set,
-rendering, rebuilding — and not one by reading code. That is the finding worth
-keeping: a push into a set that already matches reports OK and proves nothing,
-which is exactly the claim the tour makes to its readers.
-
-**Preset names matched as substrings.** A captured `browser_path` leaf was resolved
-with `mode="substring"` although the leaf IS the browser item's own display name.
-`Kit-BritishVintage.adg` therefore also matched `MPE Kit-BritishVintage.adg`, and the
-strict loader refused the ambiguous pair. `exact` existed for precisely this shape and
-the sibling test already described the contract in prose; the code was contradicting
-its own documentation.
-
-**A stale device link survived a Live set swap.** Reconciliation asked only whether the
-link's PARENT still existed, never whether the device's own index did. Live's factory
-`B-Delay` makes this routine: an authored device loads at index 2 behind the stock one,
-and a fresh set puts index 2 out of range while the parent still matches by name. The
-planner then read the link as present, skipped the load, and every parameter write
-addressed an index nothing would ever create — a permanent halt, not a race.
-
-**`testpaths` excluded `examples/`.** The demo song's own tests never ran in CI, so its
-"builds headless with no Live" claim was asserted rather than checked.
-
-**The workspace marker was unreachable below the session root.** `find_workspace()`
-walked upward only, so `resolve_song_dir` fell through to a *silently successful*
-relative `songs/<slug>`. Renders wrote ~290 MB into a phantom directory and analysis
-then reported "the song isn't built" and advised a rebuild — for a song that was built,
-elsewhere. Fixed with bounded downward discovery that declines on ambiguity, plus error
-text that distinguishes the three failures. Deliberately NOT fixed by adding a root
-marker: that fixes one repo rather than the class, and converts "the framework repo
-contains a bounded workspace" into "the framework repo IS a workspace".
-
-**Mark-and-sweep deleted rows the build had just converged.** `build_session` tombstones
-any build-owned row the build did not touch, and sixteen mutators returned without
-registering their touch. `replace_breakpoints` registered none on ANY path, so a build
-that CHANGED an arc lost it too — producing an infinite create/delete/create loop that
-never converges. Fixed structurally with a `_touches` decorator applied outside
-`_atomic`, because the trap is a property of the return path and patching today's
-returns leaves the next one to re-open it.
-
-**Live's "do not retry" guidance was unreachable.** Every `read_timeout` equalled its
-`main_thread_timeout`, while `run_on_main` spends up to 2.0 s on admission before its
-bout timer starts — so the client always gave up first and the agent got a bare socket
-timeout instead of the one instruction that stops it queueing more work behind
-uncancellable Live operations. The implicit 15/15 default was never checked at all,
-because the test only iterated the explicit entries. Caller ceilings widened; the
-invariant is now asserted strictly.
-
-**The analyzer stopped writing the author's home directory into tracked files.**
-MixReport's `captures_dir` and `compare_to.baseline.ref` were machine-absolute,
-and `.gitignore` policy deliberately TRACKS those reports — so every analysis run
-committed an account name, while `tools/tour_transcript.py` was failing closed
-rather than publish the same strings. One part of the codebase was committing
-what another refused to emit. Both fields now persist as song-relative refs (the
-anchor a reader can rediscover from the artifact alone, and the one that survives
-a song living in a workspace outside the repo); returned values stay absolute,
-because a returned path is one the caller opens. No `schema_version` bump — the
-field name and type are unchanged, and `ensure_comparable` refuses across
-versions, so bumping would make every existing report un-diffable for nothing. An
-already-written absolute report still loads and still works as a `--compare`
-baseline. A repo-wide scan now asserts no tracked file matches the publish gate's
-FORBIDDEN set, importing that set rather than restating it — the drift between
-write side and publish side WAS the defect.
-
-`examples/angle-of-the-light` was RETIRED from the tree in the same batch. It was
-a scouting run: its real output was the six defects above, found by rebuilding it
-from scratch, not its audio. It is archived outside the repo with both masters and
-its decision records, and its ADRs remain in this branch's history. The next take
-is re-authored from a sparse prompt through discovery and elicitation, so it will
-be a different song by design — see `tour-walkthrough-design.md`, *A walkthrough,
-not a recipe*.
-
-Two more were pinned rather than fixed and are filed: push appends behind a matched
-parent's foreign devices while promising to load over them (no reorder API in Live 12.4,
-so the honest fix is a chain-tail rebuild), and `run_on_main` releases the bout lock on
-the timeout path, so admission stops refusing while Live is still committed.
-
-Suite 4830 -> 4865 passing across the batch; ruff and mypy clean.
-
-## 2026-08-06 — The tour's capture tooling, built against probes that kept saying no
-
-<!-- prawduct: type=feature | chunks=A2,A3,A4 | scope=tour | status=shipped | release=v1.8.0 -->
-
-Three chunks of Phase A tooling, and all three had the mechanism their plan specified
-falsified by the verify-api probe that plan required first. That is the whole story of
-this batch, and the reason the step is not ceremony.
-
-**A3 asked GitHub whether it renders an inline `<video>` from a repo path.** It does
-not, and the reason is stronger than "the relative src won't resolve": the sanitizer
-removes the **element**, absolute `raw.githubusercontent` src included, and
-`![clip](x.mp4)` degrades to a broken `<img>`. Only a poster still linking to the mp4
-survives. So the hero is a poster — which is what C1 now knows to capture, before
-spending the shoot rather than after.
-
-That verdict then propagated backwards into A3's own other deliverable. The `showwaves`
-video existed to make audio "skimmable inline rather than a download link"; once nothing
-renders inline, a waveform video is a megabytes-large download link showing a moving
-line. An 8 KB `showwavespic` still renders inline and shows the whole arrangement's
-dynamics, so it replaced the video. Killing a specified deliverable was only visible by
-re-reading *why* it was specified.
-
-**A2's mechanism did not exist at all.** Ableton Live publishes zero accessibility
-windows — `count of windows` is 0, `AXWindows` empty — and its own AppleScript
-dictionary blocks 120 seconds before failing with -1712. No AppleScript path yields a
-window id. `CGWindowListCopyWindowInfo` through `ctypes`, serialised via
-`CFPropertyListCreateData` for `plistlib`, does, and adds no dependency. A2's capture
-remains blocked on Screen Recording permission, which only the operator can grant; the
-tool now preflights it and names the host app, because the native failure reads as a bad
-window id.
-
-**A4** is theme-*proof* rather than theme-lucky: `prefers-color-scheme` follows the OS
-while GitHub's toggle is its own, so every label sits on an opaque card and a
-disagreement changes only the gaps. Verified by rendering all four combinations.
-
-The cumulative Critic returned 0 blocking, 9 warning, 9 note; fifteen were fixed in one
-commit. The most valuable found a failure no other guard could see: the capture
-manifest's `status`/`analyzer_not_terminal`/`terminal` flags were ignored, and an
-incomplete render yields a *short but valid* master, so bounds, duration and size checks
-all agree with each other and are wrong together. It also found the publication gate had
-no credential rule, and that A2/A3 left stale output in place on failure — the exact
-trap A1 closes.
-
-One mistake is worth recording because it generalises. A comment here claimed an
-out-of-range ffmpeg seek writes a zero-length file, and a guard was built on it. ffmpeg
-exits 0, with empty stderr, writing 428 bytes of valid mp3 header — sailing through that
-exact check. When a guard's premise is a claim about a tool's behaviour, the claim is a
-test, not a comment.
-
-## 2026-08-06 — Session transcripts become publishable, behind a gate that fails closed
-
-<!-- prawduct: type=feature | chunks=A1 | scope=tour | status=shipped | release=v1.8.0 -->
-
-`tools/tour_transcript.py` renders a real Claude Code session JSONL into a markdown
-excerpt fit to publish, so the tour quotes genuine agent output instead of a hand-written
-reconstruction — which is the first thing a skeptical reader catches — and can be
-regenerated after a behaviour change instead of rotting.
-
-The renderer is mostly a disclosure gate. A transcript carries absolute `/Users/<name>/…`
-paths in three encodings, hook output, and whole memory files injected as
-`<system-reminder>` blocks. So record types are an allowlist where an unknown type
-*raises* rather than being skipped, only `text` blocks survive, tool calls render as
-one-liners rather than full inputs, and the finished document is re-scanned for every
-forbidden pattern before a byte is written.
-
-Reality validated the fail-closed stance three separate times, each on a real session and
-none on the fixture: an unseen `queue-operation` record type, and two gates keyed on the
-*marker* rather than on the thing that leaks. Re-keying them onto the account segment
-closed a real hole in the other direction — `/Users/alice` with no trailing slash had
-been escaping redaction entirely.
-
-Three independent Critic rounds then found three leak paths in a module whose entire
-purpose is not leaking, including dash-encoded home paths, which the chunk's own
-`grep -c '/Users/'` acceptance check had certified clean. The generalisable rule, now a
-comment in the code because it outlives this work: **a gate that shares its patterns with
-the mechanism it guards cannot catch that mechanism's blind spot.** The fix was not a
-better pattern but a rule keyed on the redactor's *output shape*.
-
-## 2026-08-06 — Internal bug reports leave the public record; the backlog id becomes their provenance
-
-<!-- prawduct: type=chore | chunks=C3 | scope=pub-ready | status=shipped | release=v1.7.2 -->
-
-The first pass at "get the internal bug inbox out of the public repo" ignored the raw
-drop-zone and kept `incoming-bugs/archives/` tracked, because ~130 references from
-shipped source comments, tests and plans cited those files as provenance. The Critic
-measured the result and found it untracked **zero** files — and that the three freshly
-triaged reports had gone from local-only to public. It also drew the right line: whether
-64 internal reports get published is the owner's decision, not a chunk's.
-
-The owner chose to untrack them, which meant paying the repointing cost. 108 references
-across 24 files now carry a non-file provenance form: the **backlog id** where one
-exists (50 of the 64 reports map to one), and the report's own title restated inline for
-the other 14. A restatement beats a link nobody can follow.
-
-That inverts this repo's usual link-don't-summarize rule for exactly one class of file,
-so `project-preferences.md`'s triage norm was rewritten rather than left to contradict
-the tree — the backlog item is now the citable evidence, and nothing tracked may cite a
-path into the dropbox.
-
-Four references used an elided (`…`) path form invisible to a whole-name match, and one
-in shipped source wraps its filename across two lines — the reason an earlier sweep
-reported itself complete while leaving dangling pointers behind. Sweeps here match on
-the prefix, not the full path.
-
-## 2026-08-06 — The repo gets ready to be public
-
-<!-- prawduct: type=chore | chunks=C1,C2,C3,C4,C5,C6 | scope=pub-ready | status=shipped | release=v1.7.2 -->
-
-An audit ahead of making the repo public found the engineering substrate sound — 4614
-tests green, ruff/mypy/uv-lock clean, CI real and gating four things, no secrets, MIT
-LICENSE and CONTRIBUTING present, every README link resolving, develop and main in sync
-at v1.7.1. What it also found was six classes of exposure that only matter once
-strangers can read the tree.
-
-The sharpest was a reference disclosing a *private* sibling project's local filesystem
-path and file inventory, inside an archived design doc that cites that project ~20 times
-as the precedent for the 13-tool surface. Deleting the discussion would have gutted the
-doc; the project's repo URL had already been deliberately redacted, so the name was
-anonymized and only the pointer removed. Fifteen hardcoded `/Users/<name>/...` paths
-across six files went the same way.
-
-`SECURITY.md` states the trust model rather than implying one, and its central claim is
-uncomfortable on purpose: a song's `build.py` is executable Python, so building someone
-else's song runs their code with your privileges. That is the feature — it is what makes
-a song forkable and reproducible — so reports of the form "build.py runs arbitrary code"
-are working-as-designed. The line that *is* defended: song **data** must never reach
-execution without someone running `build.py`.
-
-`architecture.md` and `api-contract.md` were both *required* by recorded structural
-characteristics and both absent. They now name the four-runtime topology, why the
-process boundary into Live is forced rather than chosen, and the three tracked API
-decisions — fingerprint-not-semver versioning, the errors-teach model (the consumer is
-an LLM, so an error is the next turn's input), and a deprecation policy that refuses to
-build compatibility shims for consumers that do not exist.
-
-The `incoming-bugs/` decision inverted under investigation. Untracking it wholesale
-would have dangled ~130 references from shipped source comments, tests and plans that
-cite `archives/` as provenance — so only the raw drop-zone is ignored. That dig also
-turned up 11 refs in shipped source and tests still naming pre-archive paths, silently
-stale since those files were archived. *(Superseded the same day — the owner chose to
-untrack the whole tree and pay the repointing cost; see the entry above.)*
-
-Deliberately not done: the hero image is still a placeholder, deferred to a dedicated
-pass with a new demo song showing the full create → push → arrange flow. And the
-`project-state.yaml` / `learnings.md` size-compaction advisories were declined with
-reasoning rather than half-executed — `learnings.md` is already 70 rules averaging 695
-bytes, and compacting further means deleting rules.
-
-**Re-vendor: required.** This release changes no behavior at all — the only edits under
-`src/` and `tests/` repoint doc comments from `incoming-bugs/` paths to backlog ids. But
-one of those repointed comments is a docstring in
-`hallucinote_mcp/.../handlers/_arrangement_latch.py`, and the handshake fingerprint
-hashes file *content* under `handlers/`, so it flipped anyway: `53201e72fa4d` →
-`aeb1af696f59`. Marketplace consumers must re-run `/ableton-mcp-install` and fully quit
-+ reopen Live, or every bridge call fails the version handshake. A zero-behavior release
-forcing a re-vendor is the fingerprint design working as specified, not a defect — the
-cost is real, and worth knowing before editing prose inside a fingerprint path.
-
-## 2026-08-03 — Capture takes get a rolling window (renders no longer grow without bound)
-
-<!-- prawduct: type=feature | chunks=1,2,3,4 | scope=aud-2d6t | status=shipped | release=v1.7.1 -->
-
-Nothing in the tree ever deleted a capture. Every `ableton_render` wrote a take to
-`songs/<slug>/captures/<ts>/` — a 48 kHz stereo 32-bit-float WAV per track, return and
-master, ~23 MB per surface-minute — and every take was kept forever. A reported
-real-world song had takes reaching ~4 GB each.
-
-The audio format is not the lever and was left alone: float32 is what lets the master
-overshoot analysis measure above 0 dBFS at all (`audio/attribution.py`). Retention is
-the lever, and it is safe because captures are **write-once, read-once**: the render
-writes them, `ableton_analysis` reads them once and emits a self-contained MixReport to
-`songs/<slug>/analysis/<ts>.json`, and baseline comparison resolves against those JSONs
-(`audio.compare.resolve_baseline` keys on `db_seq`) — never re-opening a WAV. The
-MixReport trail is the audit log of mix evolution and is never swept; what a sweep costs
-is re-analyzing one specific take with different parameters.
-
-New `hallucinote.takes` owns the window, split plan-then-execute the way the sync layer
-splits `PushPlan` from execution: `plan_sweep` classifies every take while writing
-nothing, `execute_sweep` removes what the plan named and collects per-take failures
-rather than letting one locked directory strand the rest. Two guards never sweep — a
-`.pinned` take (which also does not consume a keep slot, so pinning a reference can't
-silently evict a working take) and a take whose `status.json` still reads
-`state="running"`. It lives at the package top level, not under `hallucinote.audio`,
-because that package eagerly imports the numpy/librosa stack and the MCP server is
-stdlib-only at startup — the same constraint that placed `paths.py`.
-
-The sweep runs automatically in `server.py` before an `ableton_render(start)` is
-forwarded, keeping the newest 2 takes. Render start is the one moment no take is in
-flight (one render at a time), so it cannot race a capture. Scope is always the song's
-own captures root, never the parent of a caller-supplied `output_dir`, and the incoming
-dir is protected explicitly; the whole thing is best-effort, so disk hygiene can never
-cost a capture. `HALLUCINOTE_CAPTURE_KEEP` sets the window, `HALLUCINOTE_CAPTURE_SWEEP=0`
-turns it off.
-
-`hallucinote captures list | prune | pin | unpin` is the operator surface. `prune`
-requires an explicit `--song` or `--all` — reading is safe and defaults to everything,
-but deleting gigabytes is not what a forgotten argument should do — and `--dry-run`
-previews. `recency_key` was hoisted out of the analysis handler's `_capture_recency_key`
-into `takes` so the sweep's ordering and the analysis selector's "newest take" are one
-definition; had they drifted, a sweep could have deleted the take the next analysis
-would have chosen.
-
-`/render-analyze` also carries a **when-to-pin policy**, recorded here because it is
-shipped agent behavior a maintainer would otherwise find only in a commit body: pin on
-expressed intent to keep a take (not on a nickname or a compliment), and say so when you
-do. A pin is permanent *and* free of a keep slot — `plan_sweep` appends pinned takes to
-`kept` before the budget decrement — so pinning on weak signals would re-create the
-unbounded growth this window exists to bound.
-
-Departs from backlog AUD-2D6T's proposed shape (a manual `tools/audio-prune`): a manual
-tool relies on the operator remembering, which is the regime that produced the 4 GB
-takes. The CLI is kept, but the sweep is automatic. Retention policy (auto-sweep, keep
-2) chosen by the user 2026-08-03. Server-side only — `server.py` and
-`server_side/analysis.py` are outside `_FINGERPRINT_PATHS`, so no Live re-vendor.
-
-**Verified against real data**, not only fixtures: on this repo's own
-`songs/missing/captures/` (one 406.3 MB take), `captures list` reported it,
-`prune --keep 0 --dry-run` named it and removed nothing, `pin` followed by a real
-`prune --keep 0` left it untouched ("nothing to prune (1 take(s) kept)"), and
-`unpin` restored it — so the pin guard was exercised against a take that would
-otherwise have been deleted. The AUTOMATIC render-path sweep is unit-tested
-against a faked `client.send` but needs a live render to confirm end-to-end; it
-is queued in `.prawduct/operator-verification.md`.
-
-## 2026-07-20 — Provenance tests no longer assert ambient git state (first red PR-CI run)
-
-<!-- prawduct: type=bugfix | scope=highroi-sweep | status=shipped | release=v1.7.1 -->
-
-`test_provenance_metadata_captures_standard_signals` asserted `"branch" in meta`
-against whatever checkout the suite happened to run from. `actions/checkout` checks a
-`pull_request` out at the **detached merge commit**, so `git symbolic-ref --short HEAD`
-exits non-zero and `provenance_metadata()` correctly drops `branch` — the helper is
-documented best-effort. The test, not the code, held the false premise that a git
-checkout is always on a branch. It went unseen from 2026-05-21 (PR #74) because CI's
-`push:` runs on develop check out a real branch ref; PR #213 was the first
-`pull_request:` run to exercise it.
-
-All four provenance tests now build a throwaway one-commit repo and `chdir` into it, so
-the branch name is a *known* value rather than an ambient one — which makes them
-stronger, not weaker: `test_build_session_auto_captures_metadata` previously settled for
-`"git_sha" in meta or "branch" in meta` and now pins auto-capture to the real probe by
-asserting the controlled branch name. Added the missing halves of the documented
-contract as regression tests: detached HEAD drops `branch` while keeping `git_sha`, and
-a non-git cwd drops both while keeping `hostname`. Reproduced against a real detached
-worktree (old test fails, new passes) rather than trusting the local attached checkout.
-Suite 4523 → 4526.
-
-## 2026-07-20 — Repo hygiene sweep: gitignore contract, stale branches, untracked reports
-
-<!-- prawduct: type=process | scope=highroi-sweep | status=shipped | release=v1.7.1 -->
-
-Local and remote git hygiene. `.gitignore` reconciled with the prawduct session-file
-contract via `prawduct-hook update-gitignore`: adds `.critic-active`,
-`.critic-partials/`, and `.session-base-tree` (session state that was landing as
-untracked noise), and un-ignores `.prawduct/artifacts/build-plan.md`, which is
-tracked-by-contract. Four backlog items written during the 2026-07-07 re-vendor/restart
-analysis (MCP-6D3V, INS-8F2R, INS-5J9C, INS-7Q4Y) and three 2026-07-11 incoming-bug
-reports were sitting uncommitted on disk — both now landed, the reports pending triage
-per the usual triage→archive loop. On the remote: `fix/syn-9f4k-empty-rack-fail-loud`
-deleted (merged via PR #200) and the stale tracking ref for
-`fix/quickwin-cluster-mcp1v8k-pshphaseorder` pruned (squash-merged as PR #205), leaving
-origin at `main` + `develop` + the active branch. Dropped a stash from the deleted
-`fix/snp-8r4k-live-chunks` branch, verified subsumed (the `mix → devices → routing`
-phase reorder it held is present in HEAD).
-
-## 2026-07-04 — Pull-durability loop-close: contract UX + /song-snapshot empty-diff bake (BAK-7D2V Chunks 2–3)
-
-<!-- prawduct: type=feature | chunks=B,C | scope=highroi-sweep | status=shipped | release=v1.7.1 -->
-
-Closes the pull-durability item (Chunk 1's replay guard shipped in v1.7.0 / PR #210).
-**Chunk 2 — pull-side contract UX:** `pull_cli apply/execute` now print a durability
-notice on stderr after a mix-layer pull ("N change(s) staged in the regenerable DB
-only; on a stamped snapshot the next `build.py` will REFUSE rather than revert — bake
-with `/song-snapshot`"). The notice, the `/ableton-pull` skill, and `docs/song-workflow.md`
-all state the refusal as conditional on a `captured_at` stamp: a legacy unstamped
-snapshot gives replay no ordering evidence, so it warns and still reverts.
-It fires on the same EVENT KINDS the guard arms on, by reusing the guard's own
-`_REPLAY_ASSERTED_EVENT_KINDS` via new `capture.count_request_replay_asserted_events`
-(scoped to the just-applied pull's `request_id`) — no parallel domain whitelist to
-drift. (Kind parity, not outcome parity: what the guard then DOES with those events
-depends on the snapshot's stamp — refuse when stamped, warn-and-revert when not.) Quiet on zero-change applies, build.py-owned domains, and dry-runs. The
-`/ableton-pull` skill is reframed (BAK-3M9T Chunk D): names the bake as the closing
-move and the refuse-not-revert behavior. **Chunk 3 — loop-close:** `/song-snapshot`
-closes the pull-then-hand-revert corner, where the guard is armed by pull EVENTS but a
-fresh capture shows no content diff. On an empty diff it now BAKES the refresh it just
-captured (`capture merge` over `captured_session.json`), which disarms the guard and
-carries a fresh `captured_at`. It deliberately does NOT merely re-stamp: an empty
-`capture diff` does not prove the snapshot is current, because the diff never compares
-device sidechain sources, drum-pad mappings, or per-chain authored props — all of which
-replay re-asserts. A pull touching only those fields diffs clean, so a re-stamp would
-disarm the guard over stale values and let the next build silently revert the pulled
-work (found by Critic review before merge). `capture_cli restamp` (+
-`capture.restamp_captured_at`) survives as an explicit operator override on an
-ALREADY-stamped snapshot, warning that it asserts freshness it cannot verify. It now
-REFUSES (exit 2) a snapshot with no usable `captured_at`: replay reads an unusable
-stamp as "no ordering evidence" and warns before reverting, so back-stamping one
-would trade that last signal for a silent pass. `--force-replay` remains the
-conscious-discard path, and re-warns every build rather than disarming permanently.
-`/song-pick-instruments` snapshots already carry `captured_at` (via `compile_snapshot`);
-`docs/song-workflow.md` names the enforced pull→bake→build contract. **Live operator-
-verification** (dial → pull → build refuses → snapshot → survives → force-replay reverts,
-plus a pull the diff is blind to) is queued, not gated. Tests: notice fire/silence +
-helper discrimination + restamp disarm/idempotence + the diff's replay-asserted blind
-spot and merge's coverage of it + a doc-drift lock on the skill's empty-diff commands.
-
-## 2026-07-04 — Change-log tag canonicalization + unreleased vocab (VEW-7T2C, VEW-9QH4)
-
-<!-- prawduct: type=process | chunks=A | scope=highroi-sweep | status=shipped | release=v1.7.1 -->
-
-The lifecycle tooling (`TAG_LINE_RE` / stamp-merged / regen-views in the plugin's
-`lib/views.py`) now sees the whole log. Swept 34 historical tag lines from the
-pre-canonical space-delimited form (`chunks=… status=…`) to the canonical
-pipe-delimited `prawduct:` form: added the `prawduct:` prefix,
-converted key separators to ` | `, and fixed `chunks=A|B|C` values (pipe collides
-with the key delimiter → truncated chunk lists) to comma form. Relocated 3
-foot-positioned tag lines (v0.9.0–v1.1.0 entries) to the entry head so the parser
-reads them as metadata. Resolved 10 `release=unreleased status=shipped` entries to
-the release that FIRST contained each commit — 7 to `release=v0.9.5`, 3 to
-`release=v0.9.2`. **Corrected during PR review:** the first pass resolved all 10 to
-`v1.5.0` on the rule "ancestor of v1.5.0 but not of v1.4.0", which is not the same
-question as *which release shipped it*. This repo ran two concurrent version tracks
-— the v0.9.x series is chronologically LATER than v1.2.0–v1.4.0 (v0.9.5 is
-2026-06-12; v1.4.0 is 2026-05-28) and the two only converged at v1.5.0, whose tag
-subject is "version-track unification". So a commit can sit outside v1.4.0 while
-already having shipped in v0.9.2/v0.9.5. Use `git tag --contains <sha> | sort -V |
-head -1`, never an ancestor test against one later tag. Re-verified per scope
-(friction-basket/AUD-4W7K/AUD-3F8M → v0.9.5; install-hardening/tools-don't-narrow/
-audio-verification → v0.9.2); this also keeps these entries consistent with
-un-flipped siblings from the same window (e.g. INS-7V2D → v0.9.3) instead of
-splitting one release window across two `release-notes.md` sections.
-Documented the `release=unreleased`→flip-at-release vocab in the change-log
-header (VEW-9QH4). Result: **every entry but 2** parses as tagged (75 of 77 at this
-branch's tip; the count moves as entries land); the 2 remaining are
-genuinely tag-less pre-v1.4.0 entries (never carried a tag — left untouched rather
-than fabricate chunk IDs). Verified against the live parser for both visibility and
-per-entry chunk-id integrity. **Framework-coupled deferral:** the parser itself lives
-in the plugin (not this repo) — no tooling change here. No post-v1.7.0 unreleased
-commits exist (develop == main at v1.7.0), so the "missing entries" audit is
-trivially satisfied.
-
-## 2026-07-04 — CI: the four gates run off-laptop; lint/type debt to zero (INF-2C4X)
-
-<!-- prawduct: type=infrastructure | chunks=INF-2C4X | scope=ci,lint,types,tests | status=shipped | release=v1.7.0 -->
-
-Closes audit rec #4 — "green" no longer means "someone remembered to run it locally."
-`.github/workflows/ci.yml` (push/PR to develop+main, ubuntu-latest, setup-uv pinned 0.11.8):
-`uv lock --check` → `uv sync --all-packages --all-extras --locked` → `ruff check .` → `mypy` →
-full **no-path** `python -m pytest` (the path-scoped form silently skips `hallucinote_mcp/tests`
-— the standing learning, now encoded in CI). ruff (`E4,E7,E9,F,W,PLE`, no formatter): 170
-findings → 0, re-export surfaces preserved via explicit aliases + commented per-file-ignores.
-mypy (both packages, 201 files, default strictness): 92 → 0 — ~40 genuine fixes, narrow
-commented override clusters for the Optional-narrowing debt (enumerated in pyproject as
-tightening targets), per-module `ignore_missing_imports` only for genuinely stub-less packages.
-The uv.lock re-lock + release-process lock-check/back-merge steps landed earlier on develop
-(6f2b0ba). Shipped via PR #212. Known-accepted: single 3.12 runner (3.10 floor covered
-statically by mypy); first linux run of the audio half is unverified until the first push
-(`HALLUCINOTE_SKIP_AUDIO=1` documented in the workflow header).
-
-**Re-vendor: required** — six `_FINGERPRINT_PATHS` files carry behavior-neutral lint/type edits
-(imports/comments/annotations; no wire-shape change) — the fingerprint flips at the next release.
-
-## 2026-07-04 — sync-boundary contract + ordering DAG + controlled unknown-kind halt (SYN-8Q3F, partial)
-
-<!-- prawduct: type=refactor | chunks=SYN-8Q3F | scope=sync,artifacts,tests | status=shipped | release=v1.7.0 -->
-
-Audit rec #8 — the push boundary gets an explicit contract and a complexity budget instead of
-prose and point patches. Shipped via PR #211: **(a)** `sync-boundary-contract.md` — all **14**
-push phases (code-derived; the prose said "thirteen") with ASSUME / RE-PROBE / failure-policy +
-file:line refs, enforced by a coverage test; contract violations recorded honestly (V2, V3, V6,
-V8 open — backlog-triage candidates in build-plan Chunk 06), not normalized. **(b)** phase
-ordering: `_PHASE_DEPS` + `validate_phase_order` at plan time (unknown dep / dep-after-dependent
-/ cycles raise before any request row); the tuple stays the single execution-order source, order
-pinned byte-identical against a literal historical tuple. **(c)** the unknown-result-kind halt
-class closed structurally: apply-layer contract-drift ValueErrors become a controlled phase halt
-(atomic errors file with teaching hint, terminal state file, request closed `partial` in a
-`finally`, EXIT_PARTIAL) — the class that was point-patched twice can't be a raw traceback
-again. **(e)** the two diff engines' float semantics DECIDED as intentionally asymmetric (push
-1e-6: false-EQUAL = wrong mix; pull 1e-3: false-DIFFER = DB churn) and pinned by cross-engine
-tests calling both real comparison functions, known channel boundaries documented. Deferred:
-**(d)** the `capture.py` split (Chunk 05 — was blocked on BAK-7D2V's parallel capture.py work,
-now unblocked) + Chunk 06 violation triage. Two independent Critic reviews (0 blocking).
-
-**Re-vendor: not required** — engine-side only; no `_FINGERPRINT_PATHS` file changed.
-
-## 2026-07-04 — event-seed hardening: atomic write+emit, stable-ID event log, replay smoke test (EVT-6H9R)
-
-<!-- prawduct: type=feature | chunks=EVT-6H9R | scope=db,tests | status=shipped | release=v1.7.0 -->
-
-Audit rec #9 — "harden the seed while it's cheap." Shipped via PR #208, three legs:
-**(1) atomic write+emit** — `@_atomic` on all 59 state-writing mutators wraps state-write +
-`_emit()` in the existing re-entrant `transaction()` (nested mutators join via SAVEPOINT; only
-the outermost commits); `transaction()` now opens `BEGIN IMMEDIATE` at depth 0 (closes a
-Critic-reproduced WAL stale-snapshot-upgrade fail-fast under the MCP-server+build.py two-writer
-topology) and unwinds its depth counter in a `finally` (a failed COMMIT can no longer strand the
-connection in savepoint limbo). Crash-injection tests prove no state-row-without-event.
-**(2) stable-ID event log** — `events.song_id/clip_id/request_id` FKs (ON DELETE SET NULL)
-dropped via a guarded, idempotent, transactional table-recreate migration in `init_db`; the
-audit log no longer loses lineage to a cascade. The PSH-3K9D dangling-clip guard (which existed
-only to dodge the FK) is gone; `delete_clip` now stamps `clip_id` on CLIP_DELETED.
-**(3) replay smoke test** — a representative mutator-built song's event log folds into a fresh
-DB and must converge with materialized state (12 tables); FOLDED ∪ NOT_YET_FOLDED must cover
-every event-kind constant, every FOLDED kind must be exercised, and `_emit` now validates `kind`
-against the constants-derived frozenset (inline-string kinds can't ship). The notes-payload gaps
-blocking full replay are pinned as a test + documented per-kind — the real EVT-4K8H blockers.
-Independent Critic: PASS; both WARNINGs + both NOTEs landed.
-
-**Re-vendor: not required** — engine-side only (`db/`); no `_FINGERPRINT_PATHS` file changed.
-
-## 2026-07-04 — ceremony sweep: 4-obligation close-out, compacted governance mass, 30-day scrub (PRC-5W2N)
-
-<!-- prawduct: type=process | chunks=PRC-5W2N | scope=process,docs,skills | status=shipped | release=v1.7.0 -->
-
-Audit rec #10 — the bookkeeping tax, cut. Shipped via PR #209 (sub-items b/d landed earlier on
-develop: one changelog surface at 6f2b0ba, main→develop back-merge at 50a66ae + now a mandatory
-release step): **(a)** `reflections.md` 724KB → 143KB, 112 pre-June entries archived byte-exact
-to the (gitignored, per-machine) `reflections-archive-2026H1.md`, 3 new distilled rules into
-`learnings.md`; **(c)** ship stamping batched — backlog-close + change-log + state-record = ONE
-commit (backlog header rule 1); **(e)** compose-pass bookkeeping: ~12 obligations across four
-stores → **4 obligations, one close-out protocol** in `docs/song-authoring-conventions.md`;
-`/compose-part`, `/compose-review`, `/mix-review` link to it instead of restating; all CLAUDE.md
-norms preserved (Critic caught + fixed the one drop: kept moves still file `resolution: kept`
-attempt entries so `related:` correction chains close); **(f)** `project-state.yaml` 50.2KB →
-40.0KB, dead-plan narrative relocated, EMPTY-not-null footnote intact; **(g)** backlog staleness
-suspicion threshold 60d → **30d** (velocity + the BLG-7K2Q 4/8-already-shipped precedent).
-
-**Re-vendor: not required** — no engine/MCP code changed.
-
-## 2026-07-04 — pull-durability guard: replay refuses to silently revert pulled live edits (BAK-7D2V)
-
-<!-- prawduct: type=feature | chunks=BAK-7D2V | scope=capture,sync,docs,tests | status=shipped | release=v1.7.0 -->
-
-Closes the audit's #1 finding: `/ableton-pull` bakes live edits into the regenerable DB only,
-and the next `build.py`'s `replay_capture(captured_session.json)` silently re-asserted the
-stale snapshot over them — both writers are `actor='sync'`, so actor precedence never saw the
-conflict. The only defense was an unenforced "remember to re-capture" ritual; it is now
-structural.
-
-- **Snapshots carry `captured_at`** — stamped by `compile_snapshot` (both `/song-snapshot` and
-  `capture_cli execute`) in the events-table timestamp shape; the song scaffold stamps its
-  synthetic snapshot too. `capture_cli migrate` deliberately never back-stamps a legacy file
-  (that would defeat the guard).
-- **`replay_capture` refuses** (`StaleSnapshotError`, before any mutation) when the DB holds
-  events from a `requests.kind='pull'` request, of a kind replay re-asserts (mix layer only —
-  staged clip-notes/tempo/tuning pulls never trip it), NEWER than `captured_at`. The message
-  names the offending rows, the durable fix (re-capture), and the override.
-- **Override:** `replay_capture(..., allow_stale_snapshot=True)`; scaffolded `build.py` exposes
-  it as `--force-replay`. Forcing is per-run consent — the guard re-arms until a re-capture.
-- **Legacy (unstamped) snapshots warn instead of refusing** — no ordering evidence exists, and a
-  permanent false alarm would teach users to force habitually; the warning funnels to a
-  stamping re-capture.
-- Full-fix design (enforced staging + one durable bake; write-through and actor-separation
-  alternatives rejected) at `.prawduct/artifacts/plans/BAK-7D2V/design.md`; corrects
-  `authorship-model.md`'s "code vs snapshot is not a new conflict" claim.
-- **Critic fixes:** pulled **nested-rack-chain deletions** now arm the guard
-  (`device_chain_deleted` added — the cascade kills nested devices event-less, so the chain
-  event is the sole signal; full pull-mutator→event-kind audit table in the design);
-  `captured_at` shape check is a **fullmatch** so a timezone-offset stamp (up to +14h ahead
-  lexicographically) takes the legacy/warn path instead of silently defeating the comparison;
-  refusal/warn messages spell the complete re-capture recipe (`capture_cli execute` writes
-  `captured_session.refresh.json`, NOT the canonical file); Live operator verification queued
-  in `.prawduct/operator-verification.md`.
-
-**Re-vendor: not required** — engine-side (`capture.py`, scaffold, docs); no
-`_FINGERPRINT_PATHS` file changed.
-
-## 2026-06-24 — v1.6.1: standing timbre metrics (brightness · noisiness) in the mix report (AUD-8T3K)
-
-<!-- prawduct: type=feature | chunks=AUD-8T3K | scope=analysis,docs,tests | status=shipped | release=v1.6.1 -->
-
-Standing **timbre** per surface and per section in the mix report, so a directive like "make X
-brighter / noisier / grittier" is now verifiable against a number, not only by ear.
-
-- **AUD-8T3K** — new `audio/timbre.py` `measure_timbre()` → spectral **centroid · flatness ·
-  rolloff**, taken as the median over silence-gated frames (the gate makes the median fair for
-  sparse / percussive material, so a noisy single frame can't dominate). Flatness is computed
-  over **Bark bands** — raw FFT bins crush to ~0 for pitched material — and the Bark grid was
-  extracted to a behavior-preserving `audio/bark.py`; the centroid helper was lifted out of
-  `automation.py` and de-duplicated. `TimbreMetrics` rides per-stem **and** per-section
-  `StemMetrics` (NaN→null), surfaced through `compare.py` with thresholds flagged
-  `provisional: true`; section centroid is registered as the DR-3 `spectral_centroid` energy
-  correlate, so brightness ranks against declared energy. `SCHEMA_VERSION` stays `"1"`
-  (additive fields; the differ degrades gracefully against a pre-timbre baseline). Follow-up
-  **AUD-TIMBRE-CALIB** filed for the re-capture-jitter study that will drop the `provisional`
-  flag.
-- **Docs** — corrected the post-1.5.0 version-lockstep narrative in `docs/release-process.md`.
-
-**Re-vendor: not required** — no `_FINGERPRINT_PATHS` file changed since v1.6.0 (engine-side
-analysis + docs only). The auto-updated server and the existing vendored Remote Script still
-compute the same fingerprint; marketplace consumers need take no action.
-
-## 2026-06-23 — v1.6.0 catch-up: clusters shipped to develop since v1.5.0 without an individual change-log entry
-
-<!-- prawduct: type=feature | chunks=MICROTUNE,MCP-9R3T,MCP-5N8K,MCP-7F2K,MCP-7P3R,MCP-2K9F,MCP-8H4N,PSH-3K9D,PSH-8K3D,SYN-7N4K,IDX-5W2P,SYN-4R7P,SYN-9F4K,SYN-RENDER-RELINK,SYN-SCAFFOLD-MISLINK,SYN-RACK-PRESET-RELINK,ARR-ORPHAN,REC-4Z8Q,DOC-7K3M,DEC-CAP,master-true-peak,FK-clip-guard | scope=tuning,mcp-bridge,mcp-render,sync-push,sync-pull,db,analysis,methodology,docs,tests | status=shipped | release=v1.6.0 -->
-
-A consolidated entry for work that merged to `develop` between v1.5.0 (2026-06-17) and this
-release but never got its own change-log entry — reconstructed from commit history at release
-time so the v1.6.0 notes don't silently omit it. The six clusters that *do* have full detail
-(ARR-PROJ, ARR-CMPHALT, SYN-2D9K, RND-2R9K, PSH-3H8M, MCP-1V8K/PSH-PHASEORDER) keep their own
-entries below. One line per otherwise-unentered cluster:
-
-**MCP bridge — async + reliability**
-- **MCP-9R3T / MCP-5N8K** — `render` and `analyze` became async `start`/`status` actions; the synchronous `render` was retired; `/render-analyze` runs render+analyze out of the agent's context; start+poll is taught (PRs #182, #183, #185, #186).
-- **MCP-7F2K / MCP-7P3R** — handshake-fingerprint relocation, an arrangement-recovery path, and a transport-teaching correction (PR #183).
-- **MCP-2K9F / MCP-8H4N** — reliability papercuts: probe-set no-op exposure + version-mismatch self-diagnosis (PR #181).
-- arrangement clip `list` now carries `note_count` + `muted`, with a read signpost from `ableton_arrangement`.
-
-**Tuning — a new feature**
-- **MICROTUNE (TUN-4Q7W)** — alternate tunings as an isolated bolt-on: an integer-MIDI degree mapper into unchanged generators, a worked 19-EDO example, a gated lens caveat + drift-warn + push re-load instruction, the verify-api close, and the `/tuning-pull` command (Chunks 1–4).
-
-**Sync round-trip reliability**
-- **PSH-8K3D / SYN-7N4K / IDX-5W2P** — swell rebuild-reliability cluster (PR #180).
-- **PSH-3K9D** — push devices phase diff-reconciles (skips already-current params) + a mid-phase progress heartbeat.
-- **SYN-4R7P** — probe-and-link reconciles stale `arrangement_clip` links by position (PR #191).
-- **SYN-9F4K** — push devices phase fails loud on an empty rack (preset-didn't-load) instead of writing into nothing (PR #200).
-- **SYN-RENDER-RELINK** — probe-and-link / pull / capture all normalize the analyzer's render-rename suffix so a render no longer breaks relink.
-- **SYN-SCAFFOLD-MISLINK** — drop set-swap-mislinked track links onto a fresh default scaffold.
-- **SYN-RACK-PRESET-RELINK** — honor `.adg`/`.adv` as a standalone preset load source + a normalized-value pan retry; `device_chain_props` registered ack-only in `apply_push_results`.
-- **ARR-ORPHAN** — `replace_notes` is a true total-replace on arrangement clips (full-extent clear before set) (PR #202).
-- **FK-clip-guard** — `unlink_db_from_ableton` guarded against a dangling `events.clip_id` foreign key.
-
-**Analysis / lenses**
-- **master-true-peak** — delivered (post-fader) master true-peak in `MixReport` (PR #195).
-- **REC-4Z8Q** — recurrence matcher now matches zero-interval (repeated-pitch) motifs; **DOC-7K3M** closed in-code read-side doc gaps.
-
-**Methodology / framework**
-- **DEC-CAP** — decision capture wired into the iterate loop (`/compose-part` close + `/compose-review` / `/mix-review` backstops).
-- repo hygiene — untracked an accidental worktree gitlink + gitignored `.claude/worktrees/`.
-
-**Re-vendor: required** — 14 files under `_FINGERPRINT_PATHS` changed since v1.5.0 (`actions/`, `handlers/`, `schema.py`, `wire.py`). Marketplace consumers must re-run `/ableton-mcp-install` and fully quit + reopen Ableton Live.
-
-## 2026-06-23 — Device loads survive Arranger focus; push rejects bad phase names before any Live probe (MCP-1V8K, PSH-PHASEORDER)
-
-<!-- prawduct: type=fix | chunks=MCP-1V8K,PSH-PHASEORDER | scope=mcp-device,sync-push,tests | status=shipped | release=v1.6.0 -->
-
-Two quick-win bugfixes triaged from the incoming-bug batch. (The other two fresh "ready"
-items — BLD-RESET, RND-3W7P — were verified already-fixed in code and closed, not rebuilt.)
-
-- **MCP-1V8K** — `ableton_device(load)` silently no-opped when Live's focused view was
-  Arranger (the state every render leaves behind), bricking the push device phase,
-  `/song-pick-instruments`, and any interactive re-voice with a misleading "did not append"
-  error. `load_handler` now focuses Session before `browser.load_item` (the single affected
-  callsite — the nested-rack `Chain.insert_device` path is unaffected), and the silent-noop
-  teaching error now names the Arranger-view cause. Live-gated: `device.py` is in
-  `_FINGERPRINT_PATHS`, so it needs a re-vendor + handshake — operator-verification queued.
-- **PSH-PHASEORDER** — a typo'd `--only`/`--start-at`/`--stop-after` paid the full coherence
-  + arrangement Live probe (and could be masked by a stale-link coherence refusal) before
-  being rejected. Extracted a pure `validate_phase_targets()` from `_filter_phases`; the push
-  CLI runs it before any Live round-trip, so a bad phase name fails fast (exit 2) with the
-  valid-phase list and zero Live contact. `_filter_phases` delegates to the same function —
-  one rule. 4419 tests green.
-
-## 2026-06-23 — Device-phase no longer halts on orphaned device_parameters (SYN-2D9K)
-
-<!-- prawduct: type=fix | chunks=SYN-2D9K | scope=sync-push,capture,tests | status=shipped | release=v1.6.0 -->
-
-**Orphaned `device_parameters` from a device-class swap no longer HALT the push.**
-Swapping a track's instrument to a different device *class* between captures (e.g.
-`alien`'s Operator→Analog) left the prior class's params orphaned in the DB; `create_device`
-reuses the `device_id` (no CASCADE), replay's upsert never prunes, and a soft `--reset`
-preserves the device tables — so 92 orphans survived every rebuild and HALTed the devices
-phase with a misleading value-range hint.
-
-- **Ch1** — per-device param-SET reconcile in `_replay_devices`, mirroring the existing
-  pull-path reconcile: drop DB params absent from the snapshot's `params_dialed` via
-  `remove_device_parameter` (no new mutator, no schema change). Tri-state mirrors the
-  sidechain idiom: absent key = preserve; present (even empty) = authoritative/clear.
-- **Ch2** (defense-in-depth) — the device-phase orphan error is now taught engine-side at
-  the `push_execute` failure-record site (pure `_orphan_param_hint`, no MCP fingerprint flip).
-- **Safety** — verified no framework `build.py` path calls `set_device_parameter` (only
-  capture/pull do), so `params_dialed` is authoritative and the reconcile is data-loss-safe;
-  the cumulative Critic independently re-confirmed this. PR #204. 2991 engine tests green.
-
-## 2026-06-23 — Arrangement-integrity comparator stops false-halting a faithful push (ARR-CMPHALT)
-
-<!-- prawduct: type=fix | chunks=ARR-CMPHALT | scope=arrangement-verify,tests | status=shipped | release=v1.6.0 -->
-
-**The ARR-PROJ integrity assert no longer HARD-HALTs `execute --only arrangement` on a
-faithful materialization.** Two pure-module defects in `arrangement_compare.py`:
-
-- **Ch1** — same-pitch overlap-trim was unmodeled. Live's `set_notes` truncates an earlier
-  note when a same-pitch note starts before it ends; the comparator compared the DB's
-  untrimmed durations against Live's trimmed read-back. `_clamp_same_pitch_overlaps`
-  normalizes both note sets before grouping — only *shortens* durations, so a real
-  drop/orphan is still caught.
-- **Ch2** — `_bucket`'s `round()` was unstable at half-eps boundaries, splitting one onset
-  across `missing` + `extra`. Replaced exact-bucket-key set ops with key pairing + boundary
-  reconcile (composes with the wildness-stack collapse; a drifted twin reads as one
-  mismatch, not missing+extra).
-- **Safety** — the cumulative Critic adversarially proved the loosened detector still
-  catches real bulk-drop / orphan / dur-vel-drift (the cardinal risk of loosening a
-  detector). PR #203. 2985 engine tests green.
-
-## 2026-06-22 — Arrangement materialization is now a projection of the DB (ARR-PROJ)
-
-<!-- prawduct: type=feat | chunks=ARR-PROJ | scope=sync-push,arrangement-verify,cli,skills,docs,tests | status=shipped | release=v1.6.0 -->
-
-**Two foundational bugs retired by construction, not patched.** Thirteen months of
-arrangement whack-a-mole (stacking on re-materialize — ARR-9X4T; a silently-dropped
-track's notes — ARR-7H2N; the SYN-4R7P delete-by-hand recovery dance) traced to two
-design choices, not N bugs: `duplicate_to_arrangement`'s B-24 overlap-split, and a
-persistent *positional* `ableton_link` that Live renumbers out from under us. The fix
-reframes the arrangement as a **projection of the DB** — clear, then recreate — so both
-failure modes become impossible by construction rather than guarded against.
-
-- **Projection rebuild planner** (`sync/push/arrangement.py`): per track, clear its
-  arrangement clips (descending per-clip `delete`) then create+fill each placement from
-  the DB on a FRESH clip (`create_midi_clip` + `set_notes`), all-or-nothing per track
-  (probe-failure skips rather than stacks). `duplicate_to_arrangement` is retained ONLY
-  for envelope-bearing placements (the one Live constraint that needs it); audio uses the
-  existing path. Re-materialize onto an occupied timeline clears-then-rebuilds — the
-  ARR-9X4T stacking witness can no longer be produced.
-- **Integrity comparator** (`sync/arrangement_compare.py` + `arrangement_verify.py`): one
-  canonical DB-collapsed-set vs Live-arrangement-set comparator with three normalizations
-  (distinct-(pitch, ε-bucketed start) collapse — Live collapses same-(pitch,start) while
-  build.py legitimately stacks; float tolerance; note-content compare via the note API in
-  a fresh callback, never inline). Two consumers: a **push-time assert** wired after the
-  arrangement phase that HALTs (PARTIAL) on genuine corruption instead of reporting OK,
-  and a **`hallucinote verify-arrangement --song <slug>`** audit CLI (non-zero exit on any
-  divergence). Surfaces a `probe_failed` count as a benign warning so an all-probe-failed
-  verify is no longer indistinguishable from a clean pass.
-- **Reconcile subsystem removed** (`sync/push/probe.py`, net −392 lines): with rebuild as
-  the sole path, the SYN-4R7P positional-link reconcile (drop/keep/rebind-by-position) had
-  nothing left to protect — it only ever guarded the old `replace_notes`-refresh branch
-  that Chunk 2 replaced. Deleted outright; the `arrangement_clip` link is still written
-  fresh each push for the scoped PSH-6W2J refresh.
-- **Docs/skill** (`skills/ableton-push/SKILL.md`): the delete-then-re-duplicate recovery
-  dance is retired in favor of the idempotent clear+rebuild path; `verify-arrangement`
-  surfaced; the two 2026-06-21 incoming-bug reports archived RESOLVED.
-
-Five chunks (Chunk 6 bulk-clear-wire DROPPED — planner-deletes suffice, zero MCP
-fingerprint change). Live spike (Chunk 1) confirmed the model end-to-end on a real set
-(faithful, idempotent, drop-free). 4396 passed, 0 failed. Cumulative Critic clean (0
-blocking; two integrity-layer correctness warnings — silent-pass-on-probe-failure and a
-coincident-start false-halt — fixed at root). The full-path live e2e
-(`push execute --only arrangement --probe --song alien` + `verify-arrangement` + render)
-is queued in operator-verification.md (deferred, user-directed). Closes ARR-9X4T,
-ARR-7H2N, SYN-4R7P.
-
-## 2026-06-21 — perform_batch transport-stall watchdog + loop/punch reset (PSH-3H8M)
-
-<!-- prawduct: type=fix | chunks=PSH-3H8M | scope=mcp-perform,tests | status=shipped | release=v1.6.0 -->
-
-**Hang on a frozen transport, mitigated.** `perform_batch` could hang when the
-transport won't advance (manual stop, a loop region trapping the playhead, residual
-state from an interrupted prior perform). The span-proportional wall-clock ceiling
-(already live) means it no longer hangs *forever*, but for a long (8–11 min) perform
-that ceiling is ~16–33 min away — so a stalled transport still read as a black-box
-hang whose only exit was `kill -9`. This closes the residual:
-
-- **Fast non-advancement watchdog** (`_PERFORM_STALL_TIMEOUT_S = 15s`): the record
-  loop polls `current_song_time`; if it doesn't advance for 15 s it aborts with a
-  structured error naming the stuck beat, instead of waiting out the ceiling. Seeded
-  at `-inf` so the spin-up tick can't false-trip, and any real advance resets the
-  clock — a slow-but-advancing high-`slowdown_factor` pass never aborts.
-- **Pre-perform loop/punch reset**: `_arm_and_seek` saves then clears
-  `loop`/`punch_in`/`punch_out` (only flags actually set → no churn) and the `finally`
-  restores them, so a residual loop region can't trap the playhead and the user's set
-  isn't mutated.
-
-5 new unit tests (fast abort + named beat, no-false-positive while advancing,
-loop/punch clear-then-restore + ordering, clean-set no-churn, restore-on-abort). Live
-stall repro + loop-trap queued in operator-verification.md. **Still-open residual:**
-a `run_on_main`-blocked 0%-CPU sub-case needs a timeout on `run_on_main` itself (the
-watchdog runs between callbacks, so it can't fire while blocked inside one) — high
-blast radius, Live-only tunable; tracked on PSH-3H8M.
-
-## 2026-06-21 — Render no longer leaves RETURN-track names dirty (RND-2R9K)
-
-<!-- prawduct: type=fix | chunks=RND-2R9K | scope=mcp-render,tests | status=shipped | release=v1.6.0 -->
-
-**Residual name hygiene, fixed.** `ableton_render`'s analyzer auto-load made Live
-natively append ` | HallucinoteAnalyzer` to every RETURN track's name (a
-`browser.load_item` side effect Live applies to returns but not tracks/master), so
-a render left the user's set dirty. The functional half — the suffix defeating
-probe-and-link's return matcher — was already fixed defensively by SYN-RENDER-RELINK
-(`normalize_live_return_name` strips it at the read boundaries); this closes the
-residual so a render leaves the set byte-for-byte. The analyzer sweep
-(`hallucinote_mcp/analyzer/setup.py`) now restores each return's pre-load bare name
-after the load — `_return_name_restoration` strips Live's slot prefix + the analyzer
-suffix (the value a fresh push would set, per the W3-H/W4-C contract), runs read-only
-when the name is clean (no churn; self-heals a pre-fix-dirtied set), and is scoped to
-returns. The strip logic is a forced twin of `hallucinote.return_naming` (this package
-is engine-independent / runs Live-side, so it can't import the engine — a parity
-test locks the twin against drift). 8 new unit tests; full suite 4349 passed. Live
-round-trip (real rename; single- vs double-prefix on restore) queued in
-operator-verification.md.
-
-## 2026-06-17 — Durable nested-param overrides on a preset_query device (SNP-2H9F)
-
-<!-- prawduct: type=feat | chunks=SNP-2H9F | scope=capture,db-schema,db-mutations,db-queries,sync-push,docs,tests | status=shipped | release=v1.5.0 -->
-
-**Silent durability loss, fixed.** A by-ear param tweak NESTED inside a rack loaded
-via `preset_query` reverted on every from-scratch rebuild: a preset device has only
-its top-level row in the DB (the preset instantiates the nested tree at push time),
-so the nested delta had no durable home, and capture's full `chains` dump dropped
-`preset_query` + the preset's un-parameterizable timbre (a Wavetable waveform is not
-a `DeviceParameter`) and bloated the snapshot. There was no clean snapshot shape for
-"load X from its portable preset, then override nested param P".
-
-New `param_overrides` representation on a device entry, end-to-end (NODE-ADDR Chunk B
-follow-on; folds into the same uniform-addressing release):
-
-- **Schema** — `device_param_overrides` table keyed `(device_id, path_json, name)`,
-  auto-migrating onto existing song DBs via `init_db`'s `CREATE TABLE IF NOT EXISTS`
-  (mirrors `drum_pad_mappings`); `DEVICE_PARAM_OVERRIDES_REPLACED` event registered
-  under the `device` row-kind so a pulled override protects the preset device from
-  the build sweep.
-- **Mutator + query** — `replace_device_param_overrides` (atomic, idempotent,
-  validating) + `get_device_param_overrides`.
-- **Replay** — `_replay_devices` lands overrides keeping `preset_query`; `chains` +
-  `param_overrides` on one device is a `ValueError` (contradictory representations).
-- **Push** — `_emit_param_override_writes` re-asserts each override via a
-  node-addressed `set_parameter` at its NodeAddr path after the preset loads — no
-  `create_device_chain`, so the preset's waveform/samples survive and nothing
-  duplicates. Shared `_param_value_kv`/`_param_value_fields` helpers so an override
-  dials identically to a top-level `params_dialed`.
-- **Capture** — `preserve_preset_overrides` carries `preset_query` forward and
-  rewrites the fresh `chains` dump into a flat `param_overrides` list; a
-  drum-rack-via-preset with authored per-chain props keeps its `chains` dump + warns
-  (a documented fast-follow).
-
-Verifiable signal met: a preset device's depth-2 override round-trips
-capture→replay→DB→push (fake-probe). 34 new tests; full suite 4037 passed.
-Docs: `docs/snapshot-schema.md`. Plan: `NODE-ADDR/snp-2h9f-slice.md`.
-**Deferred fast-follows** (tracked on SNP-2H9F): pull-symmetry (confirmed
-non-corrupting), drum-rack-chain-props, bounded preset-cache if over-capture bloats.
-
-## 2026-06-17 — Note edits now propagate to arrangement clips (PSH-6W2J)
-
-<!-- prawduct: type=fix | chunks=PSH-6W2J | scope=sync-push,queries,tests | status=shipped | release=v1.5.0 -->
-
-**Silent correctness bug.** An arrangement clip is a distinct Live copy of a
-session clip, made once by `duplicate_to_arrangement`. A later note edit pushed to
-the session clip never reached the copy — yet push reported success, the DB and
-session clip were correct, and `/mix-review` ran clean against the *stale*
-arrangement audio. The only way to notice was probing arrangement-clip note counts
-directly. Root cause: `plan_push_arrangement` was idempotent on the **existence** of
-the `arrangement_clip` link (skip-if-linked), never on note **content** — and
-`push_notes` only ever touched the session clip.
-
-Fix (report direction 1 — propagate, don't re-duplicate): an already-linked
-placement now emits a `replace_notes(location='arrangement')` refresh instead of
-being skipped. The MCP handler already accepted `location='arrangement'` with
-`clip_index = arrangement_clip_index`, so the copy's notes are rewritten in place —
-idempotent on the *placement* (no doubled clips), but notes stay in sync. Both push
-paths are covered:
-
-- **Full `execute`** — `sync/push/arrangement.py::plan_push_arrangement`: the
-  already-linked branch emits a refresh; new-duplicate vs refresh are tracked
-  separately so the "agent must clear existing arrangement clips" warn fires only
-  for genuine new placements. A re-push of a built song refreshes every
-  arrangement-copy's notes unconditionally — the **heal path** for any
-  already-stale arrangement.
-- **Scoped `push-notes`** — `sync/push_notes.py`: after the session clip push,
-  appends `plan_push_arrangement_clip_notes(clip_id)` refresh calls for the clip's
-  linked placements; rides the existing `changed_only` fingerprint (unchanged
-  session clip ⇒ unchanged copy ⇒ no refresh).
-
-New: `queries.get_arrangement_for_clip`; `push.plan_push_arrangement_clip_notes`;
-ack-only key kind `arrangement_clip_notes` in `apply_push_results`. Unlinked
-placements (not yet materialized) and audio sources (no notes; CLP-AUD2) are skipped;
-when a linked placement can't be refreshed (unresolved track link / audio), the
-idempotency note names the gap rather than claiming a clean refresh.
-
-**Contract correction (tests-are-contracts note):** the prior
-`test_plan_push_arrangement_skips_already_linked_placements` asserted
-`plan.calls == []` for a re-push — that *encoded* the bug (W10-A's idempotent-skip
-was too aggressive, suppressing propagation). Rewritten to assert exactly one
-arrangement refresh (no `duplicate_to_arrangement`). Not a weakened test: a contract
-found to be wrong, corrected to match the fixed behavior.
-
-Resolves the report archived under
-`backlog PSH-6W2J`.
-
-## 2026-06-17 — Songs-workspace bootstrap (`hallucinote init-workspace`) + two doc-only decisions
-
-<!-- prawduct: type=feat | chunks=WS-BOOTSTRAP | scope=cli,tools,skills,docs,backlog,artifacts,tests | status=shipped | release=v1.5.0 -->
-
-Delivers the **author side** of the project-root contract. The reader
-(`hallucinote.workspace`) already discovered a `hallucinote.toml` marker, but
-nothing *wrote* one — so a song scaffolded outside a workspace silently scattered
-into `./songs/<slug>` (a documented prerequisite with zero authoring tooling and a
-silent-degrade failure mode).
-
-- **`hallucinote init-workspace`** (`src/hallucinote/tools/init_workspace.py` +
-  `cli.py` subcommand) writes the `hallucinote.toml` marker atomically
-  (`os.replace`), seeds an **idempotent** `.gitignore` managed block (BEGIN/END
-  sentinels — re-runs are no-ops), and `git init`s. Refuses to clobber an existing
-  workspace without `--force`; `--check` reports detection without writing;
-  `--no-gitignore` opts out of the managed block. `git init` failure degrades
-  gracefully — the marker is the essential artifact. The written marker keys
-  (`layout`/`songs_root`/`slug`) round-trip cleanly through the existing reader's
-  `_workspace_from_marker`.
-- **`/getting-started` + `/song-new`** now `--check` for a workspace and offer to
-  create one instead of silently scattering a song into `./songs/<slug>`.
-- Closes the **fresh-workspace half** of the filed gitignore bug
-  (`backlog WS-BOOTSTRAP/WSP-3R7K`)
-  at the natural moment (workspace creation): the managed block covers the
-  regenerable-artifact set.
-
-Two doc-only decisions ride along (no code):
-
-- **MCP-7F2K** fingerprint over-trigger — approach decided (c→a) in
-  `.prawduct/artifacts/mcp-fingerprint-design.md`; backlog moved research→ready.
-  Root cause: server-side-only handlers (`handlers/analysis.py`,
-  `runs_server_side=True`, never executes in Live) are hashed into the version
-  fingerprint, prompting needless re-vendor.
-- **AUD-8K2N** — split `docs/capability-truth.md` Mix into *authoring* (any edition)
-  vs *measured review* (Max-for-Live only); the anti-hallucination spine had listed
-  the M4L-gated review as "✓ full" for Standard users. Build declined by design.
-
-24 unit tests for init-workspace (`tests/unit/tools/test_init_workspace.py`),
-including CLI-level `--no-gitignore` coverage. Full suite green this session.
-
-## 2026-06-16 — Analyzer-infra robustness: master device-param re-push + captures-dir recency (sun-zone-done mix pass)
-
-<!-- prawduct: type=fix | chunks=master-device-analyzer-aware,captures-dir-recency | scope=mcp-handlers,sync-push,analysis,tests | status=shipped | release=v1.5.0 -->
-
-**Re-vendor REQUIRED by the current fingerprint** — `handlers/analysis.py` is in
-`_FINGERPRINT_PATHS`, so the version handshake flags drift and prompts
-`/ableton-mcp-install`. But the analysis change is SERVER-INTERNAL (captures-dir
-selection; the wire contract is unchanged), so this re-vendor is an over-trigger —
-exactly the case MCP-7F2K now tracks. To pick up the fix in a running dev server:
-relaunch dev-mode / `/mcp`, then re-vendor to clear the handshake. The master-side
-fix lives in the engine (`src/hallucinote/`), outside the fingerprint.
-
-Two framework bugs surfaced dogfooding the sun-zone-done mix pass:
-
-- **Master device-param re-push wasn't analyzer-aware** (`sync/push`). Re-pushing a
-  master device parameter (e.g. the master Limiter's Ceiling) targeted the
-  auto-loaded HallucinoteAnalyzer and hard-halted the devices phase. The push probe
-  re-binds track/return device links every push (filtering the analyzer before
-  position-matching, BUG1A), but the master was excluded entirely and never even
-  probed into `live_devices_by_parent` — so a master device link froze at first-load
-  and mis-targeted once a render's analyzer load/reposition shifted the chain.
-  DEV-6M2K newly made master device chains pushable; the probe's master-exclusion
-  was a pre-DEV-6M2K assumption that was never updated. Fix:
-  `_probe_live_devices_via_mcp` now probes the master chain (`master=True`, keyed
-  `("master", 0)`) and `_match_devices_for_linked_parents` reconciles the master with
-  the same analyzer-filtered position match — the link self-heals against analyzer
-  drift. Side-benefit: the push-preflight stale-set detector now covers the master
-  surface too (closes the "still-open piece" in `analyzer_staleness.py`).
-- **Captures-dir picked by dir NAME, not capture time** (`handlers/analysis`).
-  `_latest_captures_dir` used `max()` over dir names assuming ISO-8601 naming, so a
-  hand-named focused-capture dir (`v4-…`, lexically above `2026…`) shadowed the
-  newest render → analysis read the wrong (tiny, single-section) audio. Now keys on
-  the manifest's recorded `captured_at`.
-
-Full suite 3971 passed / 2 skipped @ HEAD. Cumulative Critic 0 blocking (base
-develop); 1 warning (master stale-set label `master #0` → `master:`) resolved via
-verify-resolutions chain. Resolved bug report archived under
-bug report "Master device-parameter re-push isn't analyzer-aware — the stale master
-device link targets the HallucinoteAnalyzer and hard-halts the push" (resolved
-2026-06-16 on branch `fix/analyzer-infra-robustness-sunzone`).
-Filed MCP-7F2K (fingerprint over-triggers re-vendor for server-internal changes).
-
-## 2026-06-16 — Uniform node addressing (NODE-ADDR / DEV-9K7N) + release-prep: self-contained plugin, onboarding, M4L handling
-
-<!-- prawduct: type=feat | chunks=NODE-ADDR-B,NODE-ADDR-C,NODE-ADDR-D,NODE-ADDR-E,NODE-ADDR-F,PLUGIN-SELF-CONTAINED,ONBOARD-M4L | scope=node-features,mcp-handlers,capture,sync-pull,db-mutations,skills,docs,readme,pyproject,cli,hooks,project-state | status=shipped | release=v1.5.0 -->
-
-**Re-vendor REQUIRED** — the wire shape changed (`_FINGERPRINT_PATHS` touched): uniform
-`node` addressing, the new `chain` terminal, and `set_chain_property`. Operator-verified
-live on 2026-06-15 (user re-vendored; no-clone install path verified end to end).
-
-Three threads land together as the pre-1.0 release-prep bundle:
-
-- **NODE-ADDR (DEV-9K7N) — uniform node addressing.** One `NodeAddr` (terminals
-  track|return|master|device|chain) reaches every node; operations stay honest via the
-  tri-state node-feature matrix (`SUPPORTED` / `NOT_IMPLEMENTED` / `UNSUPPORTED_IN_LIVE`,
-  published as `ableton://reference/node-feature-matrix`). Chunk B: read-side acquisition
-  (capture execute + depth-N pull + `default_value` capture filter). Chunk C: per-DrumChain
-  authorship (`choke_group` / `out_note` via the `chain` terminal). Chunk D: macro authorship
-  honesty (value-via-params; macro-names/variations re-scoped). Chunk E: zones →
-  `UNSUPPORTED_IN_LIVE`. Chunk F: per-chain mixer state (mute/solo/volume/pan).
-- **PLUGIN-SELF-CONTAINED.** The engine ships INSIDE the plugin's uv env (uv workspace +
-  `uv sync --all-packages`); no PyPI, no separate clone. New unified `hallucinote` console-CLI
-  (`src/hallucinote/cli.py`) so skills sequence one command; skills run it via the server's
-  own interpreter (`"$PY" -m hallucinote.cli`, $PY = `ableton://server/info`'s `python`) — the
-  same env the bridge runs in, on a read-only plugin root. Bash hooks ported to Python
-  (`uv run --no-project python`) for Windows. Decision recorded in project-state
-  (supersedes INS-7V2D's PyPI-out assumption).
-- **ONBOARD-M4L.** `/getting-started` orientation skill; render teaches when the Max-for-Live
-  analyzer is absent (`AnalyzerNotInstalledError`); compose/push/pull/compose-review qualified
-  as edition-agnostic vs. the Suite-only audio-analysis path; install ASKS the edition (D1 —
-  edition isn't reliably detectable).
-
-Plus a README rewrite (no-clone install, breadth examples), the three-leg authorship model
-(`.prawduct/artifacts/authorship-model.md`), and doc coherence cleanup.
-
-Full suite 3965 passed / 2 skipped @ HEAD. Cumulative Critic 0 blocking (base develop); 2
-warnings + 2 notes resolved in HEAD + a real py3.10/3.11 f-string defect the green-on-3.12
-suite had masked. Plans: `.prawduct/artifacts/plans/{NODE-ADDR,PLUGIN-SELF-CONTAINED,ONBOARD-M4L}/`.
-**Follow-ups before develop→main/marketplace:** install-skill `python -m hallucinote_mcp.cli`
-→ server-python migration; Windows-hook + read-only-root operator-verify; deferred
-`[live]`/PyPI extra scrub.
-
-## 2026-06-14 — Per-song attempt ledger (ATL-7K3M): `kind: attempt` + `/song-attempts`
-
-<!-- prawduct: type=feat | chunks=ATL-7K3M-ch1,ATL-7K3M-ch2 | scope=db-schema,markdown-refs,song-context,skills,docs,claude-md | status=shipped | release=v1.5.0 -->
-
-**No re-vendor** — no `_FINGERPRINT_PATHS` touched (no MCP handler reads `markdown_refs`).
-A per-song ledger of *what was tried and how it turned out*, incl. reverted dead ends —
-augments `decisions/` (kept rationale) + `annotations/` (intent) with the experiment trail
-so a later pass doesn't re-try a known dead end. Pull-only, musical-craft only.
-
-- **ch1 (code):** new `kind: attempt` on the `markdown_refs` corpus with `outcome`
-  (worked|partial|failed) + `resolution` (kept|reverted|superseded); the
-  try→outcome→correction chain rides the existing `related` links. `markdown_refs` joins the
-  disposable-projection rebuild (the new kind CHECK is a domain change ALTER can't express;
-  reindex rebuilds rows from disk → no authored data lost; schema canary stays green).
-  `find_markdown_refs` gains an `outcome` filter; `song_context` gains `--kind attempt` +
-  `--outcome`; `song-new` scaffolds `attempts/`. 16 new tests.
-- **ch2 (doc):** new `/song-attempts` pull skill; a LOG-ATTEMPTS capture step in
-  `/compose-review` + `/mix-review` (distinct from the intent learn-back); discoverability
-  spine (`/song-workflow` + `docs/song-workflow.md`, `song-conventions.md` schema + worked
-  example, `docs/song-authoring-conventions.md`, CLAUDE.md norm).
-
-Full suite 3752 passed / 2 skipped. Cumulative Critic 0 blocking / 0 warning (5 notes, 2
-acted on); verify-resolutions chain clean. Requirements:
-`.prawduct/artifacts/song-attempt-ledger.md`; plan: `.prawduct/artifacts/plans/ATL-7K3M/build-plan.md`.
-
-## 2026-06-14 — Song-workflow discoverability: `/song-workflow` spine + review-checkpoint wiring
-
-<!-- prawduct: type=docs | chunks=song-workflow-spine,discoverability-wiring | scope=skills,docs,mcp-primer,claude-md | status=shipped | release=v0.9.8 -->
-
-**No re-vendor** — the MCP `server.py` PRIMER string is outside `_FINGERPRINT_PATHS`
-(effective on the next `/mcp` respawn). Fixes the problem that agents don't discover
-`/compose-review` and `/mix-review` exist.
-
-- **New `/song-workflow` skill** — a thin, always-in-context lifecycle map; its
-  description names both review checkpoints so they surface even in a flat skill list.
-  Plus `docs/song-workflow.md`, the depth doc: the full lifecycle, the five expertise
-  layers, and links into the research corpus (link, never summarize).
-- **Layer 0 wiring (always loaded):** the MCP PRIMER's flat 7-skill list — which
-  omitted both review skills *and* `/ableton-push` — is now the lifecycle arc + a
-  pointer to `/song-workflow`; CLAUDE.md's skill-chain names the full arc incl. both
-  checkpoints.
-- **Layer 2 wiring (in-flow handoffs):** `/compose-part` → `/compose-review` (the
-  critical broken link — compose-part tells agents not to stop), `/song-pick-instruments`
-  → compose, `/ableton-push` → `/mix-review`. Index back-references added in
-  `docs/skills.md` (a "Start here" row) and the README "Learn more" table.
-
-## 2026-06-14 — Critic-debt refactor batch: SYN-6T2W + ENV-5R2J (DEV-1F9X deferred)
-
-<!-- prawduct: type=refactor | chunks=SYN-6T2W,ENV-5R2J | scope=sync-pull,db-mutations,sync-push,tests | status=shipped | release=v0.9.8 -->
-
-**Re-vendor: not required** — engine-only (no `actions/`/`handlers/` touched). Behavior-preserving
-dedup of two Critic-flagged duplications; full suite green (3736 passed, +1 drift-guard).
-
-- **SYN-6T2W — shared linked-parent/device iterators for the `plan_pull_*` family.** The four
-  `plan_pull_*` planners each re-walked linked tracks (master-skipped) + returns → top-level chain
-  → devices. Extracted `_iter_linked_parents` and the layered `_iter_linked_top_level_devices`;
-  per-planner warning text, rack filtering, and `any_emitted`/`any_top_level_device` bookkeeping
-  stay in the callers via an `unlinked_warn` callback. Behavior preserved (225 pull tests unchanged).
-- **ENV-5R2J — single host-kind vocabulary + planner drift-guard.** The host track-kind set
-  `{midi,audio,master,group}` was hardcoded as a literal in `create_envelope`'s eligibility gate
-  while the canonical `TRACK_KINDS` already existed; point the gate at `TRACK_KINDS` (same set) and
-  add a completeness test pinning the planner's `_route_for_host_kind` to it — a new track kind with
-  no route now fails the test, not silently routes to `unroutable` at push. Eligibility and routing
-  stay separate policies; only the vocabulary is shared (no layering inversion — `sync→db` is the
-  existing direction).
-- **DEV-1F9X DEFERRED (not built).** The plugin-discriminator duplication is CROSS-PACKAGE
-  (`hallucinote` ↔ `hallucinote_mcp`); a shared module would either pull the heavy engine into the
-  MCP's stdlib-only-at-startup hot path or needs the W11-A `hallucinote-core` package that doesn't
-  exist yet. A lock-test already pins the two copies, so there's no live drift. Kept on the backlog,
-  gated on W11-A.
-
-## 2026-06-14 — DEEP-RACK-ADDR (depth-N device addressing) + PULL-DRIFT-DETECT (usable drift detection)
-
-<!-- prawduct: type=feature | chunks=DEEP-RACK-ADDR-1,DEEP-RACK-ADDR-2,DEEP-RACK-ADDR-3,DEEP-RACK-ADDR-4,PULL-DRIFT-DETECT | scope=mcp-actions,mcp-handlers,capture,sync-push,sync-pull,db-queries,skills,docs | status=shipped | release=v0.9.8 -->
-
-**Re-vendor: REQUIRED** (DEEP-RACK-ADDR chunks 1 & 3 touch `actions/`+`handlers/`, flipping the
-MCP fingerprint — re-run `/ableton-mcp-install` + restart Live). PULL-DRIFT-DETECT and the
-capture/push/queries halves are engine-only (no flip, effective immediately). Live-side checks
-(read/set/automate at depth, durability round-trip, the "Voices" parameter-vs-property probe) are
-queued in `.prawduct/operator-verification.md` (DEEP-RACK-ADDR block).
-
-- **DEEP-RACK-ADDR — rack devices nested 2+ levels deep are now fully addressable** (resolves the
-  Severity-H bug: deep params were unreadable, unsettable, un-automatable, and — the killer —
-  NON-DURABLE, since capture stored them and push silently dropped them, so a `build.py` rebuild
-  reverted any deep fix). One canonical `device_path` (`[{chain_index, device_position}…]`, 1-based,
-  any depth) replaces six reinvented depth ceilings.
-  - **Chunk 1 (wire):** `_resolve_device_path` — the single positional descent every device surface
-    speaks; `set_parameter`/`get_parameters`/`load` (with `chain_index`) gained optional
-    `device_path`; `get_device_chains` recurses the whole tree reporting `is_rack` + `device_path`
-    per device. `set_parameter_in_rack`/`load_in_rack` RETIRED (zero production callers; folded in).
-  - **Chunk 2 (durability — the unblocker):** capture replay recurses to arbitrary depth (the
-    `_depth>0` raise deleted); `Q.get_device_nesting_path` (pure-DB positional path); push emits
-    `set_parameter` + `device_path` for nested dialed params (NOT loaded — they arrive with the rack
-    preset). Pinned by a capture→DB→push depth-2 round-trip (the swell guitar case).
-  - **Chunk 3 (automation):** nested `device_parameter` envelopes route to PERFORM (the gesture
-    surface rides nested params via `device_path`; the session-clip route can't — Live 12.4
-    `Clip.create_automation_envelope` is top-level only, an honest teaching skip).
-  - **Chunk 4 (Voices, ask #4):** the "Voices IS a DeviceParameter" branch is covered by Chunks 1-2;
-    the "is a LOM property" branch is probe-gated (operator-verification), not built speculatively.
-- **PULL-DRIFT-DETECT — `pull device-parameters` is a usable drift detector again** (resolved the
-  Severity-M bug: on an in-sync song the dry-run reported ~2530 false "mutations" — and a real apply
-  WROTE 2452 preset defaults into the DB — while a version-skewed probe silently reported 0).
-  - **Scope to the tracked set:** the apply diffs only DB-tracked (dialed) params; Live-only params
-    are preset defaults the pull can't distinguish from dials, so they're SKIPPED, not added
-    (capturing new dialed params is `/song-snapshot`'s full-recapture job).
-  - **Round-trip-aware comparison:** compare by the param's authoritative form (normalized within
-    `_FLOAT_EPS` for continuous, display string for display-only) — kills the false "updated" on
-    unchanged values.
-  - **Fail loud on unreadable probes:** `ApplyResult.unreadable` counts failed/empty probes;
-    `pull_cli execute`/`apply` exit non-zero when >0; `/snapshot-bake-recent-changes` +
-    `/ableton-pull` check it first so "couldn't read" never reads as "in sync".
-
-## 2026-06-14 — swell-dogfood incoming-bug cluster (params authoring, analyzer-aware push, render/analyze poll)
-
-<!-- prawduct: type=feature | chunks=BUG4-params-dialed,BUG1A-analyzer-match,BUG3-timeout-doc,BUG1B-strip,BUG3-status-json | scope=capture,sync-push,snapshot,render,analysis,skills | status=shipped | release=v0.9.8 -->
-
-**Re-vendor: REQUIRED** (the `strip` action + status.json heartbeat touch `handlers/`/`actions/`,
-flipping the MCP fingerprint — re-run `/ableton-mcp-install` + restart Live). Bugs 4/1A/3-doc are
-no-flip and effective immediately. Four bugs from the 2026-06-14 swell mix dogfood; Bug 2
-(install `--plugins-dir`) was already fixed by INS-3W8P (v0.9.7) → no code.
-
-- **BUG4 — static device-param authoring (`params_dialed`).** Documented `params_dialed` as the
-  home for static device params in `docs/snapshot-schema.md` — sparse, the per-entry shape, and the
-  display-value workflow: a continuous param authored as a display string (`{"value":"180 Hz"}`)
-  already flows through to the live setter's curve inversion (DPP-7H2K), so authors never hand-invert
-  a log knob. `replay_capture` now warns on the bare-numeric-no-`normalized` trap.
-- **BUG1A — analyzer-aware push device-matching.** `probe_and_link` excludes the trailing
-  HallucinoteAnalyzer before position-matching, so a newly authored device at the analyzer's slot no
-  longer false-drifts + skips its link (which forced manual analyzer deletion before a re-push). Engine-only.
-- **BUG1B — bulk `ableton_render(action='strip')`.** The inverse of `ensure_loaded`: removes the
-  analyzer from every track/return/master in one call (idempotent), for a clean deterministic push /
-  save instead of ~29 hand-deletes.
-- **BUG3 — render/analyze 60 s false-failure.** `render` + `analyze` handlers write a `status.json`
-  heartbeat (`{state: running|done|error}`) so a poller sees a robust completion signal; mix-review
-  documents the expected 60 s wrapper timeout + the poll. Interim toward MCP-4T6Y (full async render),
-  which stays open.
-
-## 2026-06-14 — master device snapshot authorship + relative reverb verdict band
-
-<!-- prawduct: type=feature | chunks=SNP-4K7M,AUD-3T6L | scope=sync,snapshot,audio | status=shipped | release=v0.9.8 -->
-
-- **SNP-4K7M — master-track device snapshot authorship.** The push side shipped
-  (DEV-6M2K loads master devices) but the capture/replay middle was missing, so a
-  song author couldn't declare or round-trip a master Limiter — "sound design is
-  authorship" was violated at the master. `replay_capture` now materializes a master
-  device chain (`create_device_chain(parent_track_id=master_id)` — the mutator is
-  kind-agnostic), and `compile_snapshot` / `migrate_snapshot` /
-  `snapshot_needs_migration` / `capture_plan` all join the master to the SNP-8R4K
-  analyzer strip (the code TODO that read "joins when SNP-4K7M lands"). `song.master`
-  carries an optional `devices` array; documented in `docs/snapshot-schema.md`. Master
-  AUTOMATION envelopes remain a separate open surface (MAW-4K7P).
-- **AUD-3T6L — relative reverb RT60 verdict band.** Live's Reverb RT60 is a nonlinear
-  function of Decay Time + Room Size + diffusion, so the realized RT60 legitimately
-  diverges from the nominal knob by an amount that scales with magnitude. The fixed
-  ±0.15 s absolute band false-positived on clean long-decay captures (sun-zone A-Plate
-  3.37 vs 3.0). New `reverb_tolerance_s(declared) = max(floor 0.15 s, 0.20 × declared)`;
-  `REVERB_TOLERANCE_S` → `REVERB_TOLERANCE_FLOOR_S` (still the measurement-accuracy
-  bound). mix-review frames an out-of-band reverb as a producer's note (% longer/shorter
-  than intent), not a pass/fail verdict.
-
-## 2026-06-13 — device sidechain SOURCE pull-capture (round-trip completion) + extract coverage
-
-<!-- prawduct: type=feature | chunks=SDC-7K3M-pull,DEV-4X2N | scope=sync-pull,analysis | status=shipped | release=v0.9.7 -->
-
-Completes the device-sidechain round-trip whose PUSH half shipped in v0.9.6: a
-sidechain SOURCE is now captured FROM a live set back into the DB, so a manual
-re-route in Ableton survives the next push instead of being silently dropped.
-
-- **SDC-7K3M pull-capture (author).** New `device-sidechain` pull domain
-  (`plan_pull_device_sidechain`) + `_apply_device_sidechain_source`, resolving
-  Live `get_input_routing` `current_type` → a song-track FK by name match →
-  `set_device_sidechain`. Conservative V1 policy: distinct-track captured;
-  self / none / ambiguous / non-track-input no-op; idempotent; link-gated. The
-  no-auto-clear limitation is documented (a removed sidechain isn't pulled). 13
-  dedicated tests. Engine-only — the MCP getter already existed, so no wire-shape
-  fingerprint flip / re-vendor. Live round-trip verification is operator-gated.
-- **DEV-4X2N coverage.** Regression test pinning the extract's documented
-  top-level-only chain exclusion (seeds a nested rack, asserts the inner device
-  is excluded) — bidirectional with the push-side guarantee.
-
-## 2026-06-13 — song round-trip reliability (push ordering, clip-link cascade, unit-aware params)
-
-<!-- prawduct: type=bugfix | chunks=RTE-2P9X,SYN-3C8K,DPP-7H2K,SKL-8N3V | scope=sync-push,db,mcp-bridge,skills | status=shipped | release=v0.9.7 -->
-
-Round-trip reliability fixes traced to swell-dogfood findings.
-
-- **RTE-2P9X.** Push `routing` phase now runs AFTER `devices`, so an
-  instrument-bearing track's bus routing resolves on a fresh (from-empty) push
-  instead of targeting a track Live hasn't built yet.
-- **SYN-3C8K.** Cascade stale clip-link drops + classify scaffold on reuse, so a
-  set-swap re-push no longer carries dead clip links into the rebuilt set.
-- **DPP-7H2K.** Unit-aware `value_display` + `value_real` echo + bare-name
-  parameter routing docs; calibrated live against real EQ Eight + Compressor
-  curves (the value-display inversion validated against actual Live formatting).
-- **SKL-8N3V.** `/song-new` postlude pins `ensure_loaded` with no params (locks
-  the documented call shape).
-
-## 2026-06-12 — PSH-2R7K / PSH-5T9D: push `execute` phase-targeting + mid-run progress
-
-<!-- prawduct: type=feature | chunks=PSH-2R7K,PSH-5T9D | scope=sync-push,cli | status=shipped | release=v0.9.7 -->
-
-Two swell-dogfood findings, engine-only (no MCP fingerprint change).
-
-- **PSH-2R7K — `execute` is no longer all-or-nothing.** New `--only` / `--start-at`
-  (`--from`) / `--stop-after` / `--resume` slice the phase sequence, so recovering from
-  a halt is one command instead of a full replay (including the ~8–11 min realtime
-  perform). Filtering is by phase NAME (order-agnostic, composes with a future phase
-  reorder) and validated against the canonical list before the audit row is created (a
-  typo teaches the valid phases, no dangling row). `--resume` reads
-  `.last-push-state.json`'s `phase_halted`; a `scope` field marks scoped runs so they're
-  never mistaken for a full push.
-- **PSH-5T9D — mid-run progress.** `.last-push-state.json` is flushed after every phase
-  (pollable mid-run, adds `current_phase`), and per-phase start/finish lines stream to
-  stderr (stdout stays the final summary), with a heads-up for the multi-minute perform
-  phase so it isn't mistaken for a hang.
-
-## 2026-06-13 — INS-3W8P: install/preflight resolve the running server, not the invoking interpreter
-
-<!-- prawduct: type=bugfix | chunks=INS-3W8P | scope=plugin-distribution,mcp-bridge | status=shipped | release=v0.9.7 -->
-
-The install resolved `hallucinote_mcp` via the invoking interpreter (`package_root` from
-`__file__`), so in a coexistence setup (installed plugin + editable clone, incl. the
-README's `pip install -e`) it vendored the WRONG source and preflight computed
-`matches_mcp_server` against the wrong copy — reporting a match while the real server
-refused (cost multiple Live-restart cycles 2026-06-13).
-
-- New `ableton://server/info` resource (static, Live-independent) →
-  `{version, base_version, fingerprint, package_root}`. `resources/` is outside
-  `_FINGERPRINT_PATHS`, so the handshake fingerprint is unchanged.
-- `preflight --server-version` relabels `package` as the invoking interpreter and adds a
-  `server` block + `coexistence_divergence`; the install skill reads `server/info` and
-  `install-remote-script --from-package-root --require-server-version` vendors the
-  SERVER's copy (or refuses a wrong source). A transitional run against an old
-  (pre-`server/info`) server falls back correctly.
-
-## 2026-06-13 — SNP-8R4K: the analyzer is measurement infrastructure, excluded at every model boundary
-
-<!-- prawduct: type=feature | chunks=SNP-8R4K-01,SNP-8R4K-02,SNP-8R4K-03,SNP-8R4K-04 | scope=capture,sync-push,sync-pull,render | status=shipped | release=v0.9.7 -->
-
-Ends the capture-pollution → push-as-own-device → duplicate-accumulation cycle and the
-off-by-one authored-position drift the HallucinoteAnalyzer caused when treated as
-authored content.
-
-- **Chunk 1 — exclude by identity.** `analyzer_identity.py` (`ANALYZER_DEVICE_NAME` +
-  `is_analyzer_device`, drift-guarded against the MCP constant) consumed at every
-  Live↔model boundary: capture drops the analyzer + dense-renumbers survivors; pull's
-  chain-diff and push's device-emit filter it too. Auto-migrates the model.
-- **Chunk 2 — clean-at-rest.** `SNAPSHOT_SCHEMA_VERSION` + a pure `migrate_snapshot` + a
-  `capture_cli migrate` subcommand clean the committed `captured_session.json` file
-  (strip + densify + stamp); replay warns (read-only) when a snapshot needs it.
-- **Chunk 3 — render re-asserts the terminal tap.** The analyzer is repositioned
-  strictly-last at render start (delete + re-add only when not already last — no needless
-  M4L reload), with per-surface `terminal` status + an `analyzer_not_terminal` roll-up in
-  the render manifest so a reading agent never trusts an under-tapped stem.
-- **Chunk 4 — push-preflight stale-set detection.** A pure detector flags a saved set
-  whose authored devices were loaded after the analyzer (non-terminal tap), with
-  non-fatal rebuild guidance.
-
-Live firing of chunks 3–4 is deferred to operator-verification.
-
-## 2026-06-13 — v0.9.6: device sidechain round-trip + playback-param model + perform hardening
-
-<!-- prawduct: type=feature | chunks=SDC-7K3M,SMP-7K2D-01,SMP-7K2D-02,AUD-2N6K,ENV-8K2R,ENV-2T9K,MEL-1A7K-line | scope=db,sync-push,audio-analysis,mcp-bridge | status=shipped | release=v0.9.6 -->
-
-A consolidation release. The headline is **device sidechain SOURCE now survives the
-DB round-trip** — previously sidechains only lived in the saved `.als` and were
-silently dropped on any device-chain rebuild.
-
-- **SDC-7K3M — device sidechain source round-trip (author + push).**
-  `devices.sidechain_source_track_id` (semantic FK, survives renames) +
-  `sidechain_source_channel`; `set_device_sidechain()` mutator; a new push phase
-  `device_sidechain` (after `devices`) that resolves the source FK to the Live
-  display_name and emits `ableton_device(set_input_routing)`. Symmetric with
-  RTE-1K9T track routing; registered as a non-build actor touch so a captured
-  source isn't tombstoned on rebuild. Pull-capture half + Live round-trip
-  verification are the open remainder (tracked on SDC-7K3M).
-- **SMP-7K2D chunks 1-2 — sample-instrument + reverse playback-param model.**
-  `devices.audio_file` (a sampler's assigned sample as DB source-of-truth) +
-  `clips.reverse` (the missing CLP-AUD1 playback-param sibling), on the principle
-  that reverse/window/gain/pitch are declared playback parameters on one immutable
-  asset, never an author-declared derived file. Push materialization (chunks 3-4)
-  is Live-gated and pending.
-- **AUD-2N6K — MixReport schema gaps closed.** Masking / bed_masking entries carry
-  resolved `masker_surface_name` / `maskee_surface_name` beside the raw ids;
-  `per_section` carries the DB `section_id`. Additive — no `schema_version` bump.
-- **ENV-8K2R + ENV-2T9K — perform-handler hardening + tempo-reduction fidelity.**
-  Settle-verified async disarms, gesture-endpoint pinning, planner/apply/client
-  robustness, and perform fidelity via tempo-reduction-during-record.
-- **MEL-1A7K — faithful top-voice line extraction + single-source reduction.**
-
-The push pipeline grows from thirteen to **fourteen phases** (adds
-`device_sidechain` after `devices`).
-
-## 2026-06-12 — RTE-1K9T: track routing + the PRE-MAIN submaster bus
-
-<!-- prawduct: type=feature | chunks=RTE-1K9T-01,RTE-1K9T-02,RTE-1K9T-03,RTE-1K9T-04,RTE-1K9T-05,RTE-1K9T-06 | scope=mcp-bridge,db,sync-push,sync-pull,docs | status=shipped | release=v0.9.5 -->
-
-First-class track signal routing end-to-end (MCP → DB → push → pull) and the
-convention it unlocks: a plain audio **PRE-MAIN** bus you route everything
-through for master-like automation and sub-mixing — the no-`.als` path to an
-automatable "master" that Live's clip-less master/group/return strips can't
-provide. The push pipeline grows from twelve to thirteen phases.
-
-- **MCP** (chunks 01–02): `ableton_track` gains `set/get_output_routing`,
-  `set/get_input_routing`, `set/get_monitoring_state` on a shared
-  capability-probing helper (`handlers/_routing.py`) — by-`display_name`,
-  source-dependent, teaching errors that list the real targets, set handlers
-  echo the requested name (same-callback readback is unreliable).
-- **DB** (chunk 03): routing on `tracks` as seven nullable columns written
-  through `set_track_routing` (one `TRACK_ROUTING_SET` event). The target is a
-  **semantic reference** (`kind` + FK to `tracks.id`), never Live's display_name,
-  so a submaster link survives renames + re-pushes. CHECK asymmetry (D6): output
-  + monitor schema-constrained; the open input domain is mutator-validated.
-- **Push** (chunk 04): a `routing` phase after `mix`, before `devices`; dangling
-  targets alert + skip, never silently drop. No fingerprint gating (D7).
-- **Pull** (chunk 05): a manual reroute ingests back through the mutator;
-  `DB-NULL ≡ Live-default` avoids churning every default into explicit state (D8).
-- **Convention + docs** (chunk 06): the PRE-MAIN bus documented for song authors
-  (`song-authoring-conventions.md`) and for agents driving Live
-  (`ableton://guides/conventions`); a doc-drift-locked worked example.
-
-Per-chunk Critic across the build, a whole-plan `final` review (2 real
-silent-drop bugs caught + fixed — tombstone-protection registration for the new
-event kind, master-subject routing reject), and a cumulative + verify-resolutions
-chain (3 warnings resolved: a pull silent-override of a manual input revert, a
-self/master target validation gap, a stale plan comment). Group-track support
-(TRK-2H6K) stays deferred — group *creation* is LOM-blocked. One operator
-Live-smoke is enqueued (`operator-verification.md`): push materialization +
-manual-reroute round-trip in a real set, plus a probe of Live's non-track input
-default (V1 pull persists only track→track input until that's pinned).
-
-## 2026-06-12 — DEV-6M2K: re-enable master device load across the stack
-
-<!-- prawduct: type=bugfix | chunks=DEV-6M2K | scope=mcp-bridge,sync-push | status=shipped | release=v0.9.5 -->
-
-Un-gates master-strip device loading. DEV-2M9K shipped the verdict "Live 12.4
-has no LOM path to load a device onto the master" (`song.view.selected_track =
-master` silently no-ops) and gated three surfaces; that premise is **refuted on
-Live 12.4.2** — the master selection *sticks*, so `select master →
-browser.load_item → delete_device` works end-to-end (live-proven; research spike
-in `.prawduct/artifacts/research-spike-automation-ingest.md`).
-
-The fix is pure subtraction — master now flows through the same generic path as
-track/return:
-- `handlers/device.py`: drop `load_handler`'s master refusal (the existing
-  silent-noop post-condition catches a hypothetical mis-load).
-- `analyzer/setup.py`: drop the master detect-only `RuntimeError` — the master
-  analyzer auto-loads like any surface.
-- `sync/push/devices.py`: drop the SYN-2M9P configure-only skip — an unlinked
-  master device emits `device.load(master=True)`, links via the `device:<id>`
-  key, and the SYN-9F2L convergence re-plan writes its params. No more
-  PARTIAL-by-master halt.
-- `server.py`: the `ableton_render` tool description no longer says master is
-  place-by-hand.
-
-Tests are corrected, not weakened — the test *double* (`FakeSongView`) encoded
-the refuted premise and now models Live 12.4.2; the `test_syn_2m9p_master_load.py`
-→ `test_dev_6m2k_master_load.py` rewrite adds multi-hop execute-path coverage.
-Live corroboration of the integrated paths (native non-M4L device, full
-master-chain push, fresh-set render auto-load) is enqueued in
-`.prawduct/operator-verification.md`; DEV-6M2K stays open until that lands, and
-the DEV-2M9K / SYN-2M9P / TPL-2D8K re-triage finalizes then.
-
-## 2026-06-12 — ENV-9P4T: performed automation at mix scale
-
-<!-- prawduct: type=feature | chunks=ENV-9P4T-01,ENV-9P4T-02 | scope=mcp-bridge,sync-push,db | status=shipped | release=v0.9.5 -->
-
-Extends ENV-7G4K's performed automation toward real mixes: write automation at
-greater **performance** (one transport pass for all arcs) and broader **reach**
-(any track, not just master/group/return). Harvesting hand-edited arrangement
-automation is explicitly deferred. **Chunk 01 — single-pass batched recording:**
-the single-arc `perform` action becomes `perform_batch` (no back-compat) — all
-changed perform-routed arcs record in ONE transport pass over the union span with
-**per-parameter gesture windowing** (`_PreparedArc` pending→open→closed; each
-arc's `begin_gesture`/`end_gesture` opens at its span entry and closes at its
-exit, so a short arc never stamps a flat value across the song). The planner emits
-one batched call (union-span cost estimate + an operator `alert()` enumerating
-every overwritten span + a duplicate-target preflight); `apply_push_results` gates
-each arc independently on its own `automation_state`; the wire read-timeout is
-unbounded for `perform_batch` at the shared `client.send` chokepoint (the single
-source both recv routes use). **Chunk 02 — plain/audio-track perform targets:**
-`classify_envelope_route` gains infer-from-span — a track-hosted mixer/device
-envelope COVERED by a single session clip routes per-clip (session_clip for midi,
-refused/CLP-AUD2 for audio), UNCOVERED (incl. the song-spanning send across tacet
-gaps) routes perform; the `create_envelope` mutator admits audio hosts; perform
-addressing was already kind-agnostic (no change). The superseded v1.1
-"partition-by-hand" teaching is removed (this is that capability). **Chunk 03 —
-fidelity: conscious descope.** The verify-api probe proved the framed adaptive-
-tick-density approach unrealizable: the realtime loop is scheduling-bound at
-~2.5 Hz (not sleep-bound — adaptive ticking can't help), a 0.5-beat dip authored
-to 0.1 records to 0.589, and the perform target's `DeviceParameter` exposes only
-`begin/end_gesture` (no direct-write surface — live-confirmed). The achievable
-lever (tempo-reduction-during-record) is spun out as **ENV-2T9K**; perform-handler
-hardening carryovers as **ENV-8K2R**. **Live-verified this session** (no `.als`
-needed — seek-and-read suffices): chunk 01 windowing (return reads manual 0.85
-before its span, live ramp 0.499 at mid-span; `updates_written` bounds the
-gesture); chunk 02 plain-MIDI vol+pan + audio-track vol all `automation_state==1`
-in one pass with faithful mid-span reads. Cumulative Critic (develop base) caught
-three stale audio-refusal authoring docs (BLOCKING — fixed to the shipped
-behavior) and a chunk-02 verify-api gap (probe then run + recorded); a
-`verify-resolutions` chain record extends the cumulative to HEAD (CRT-4J8W).
-Suite 3061 passed / 311 skipped. (Change-log entry added directly to develop
-post-merge — the feature-branch commit carrying it was not pushed before the
-squash; REL-6C3W-class gap, repaired here.)
-
-## 2026-06-11 — CLR-A: compose-loop reliability (swell friction wave A)
-
-<!-- prawduct: type=bugfix | chunks=CLR-A-01,CLR-A-02,CLR-A-03,CLR-A-04,CLR-A-05 | scope=compose-loop-reliability | status=shipped | release=v0.9.5 -->
-
-Triaged from the 2026-06-10 swell first-compose friction log: one silent
-correctness bug plus reliability/teaching holes that tax every song's
-bootstrap-and-compose loop. **SYN-9F2L (01):** a snapshot-authored device
-parameter (`params_dialed`) loaded at push but its dial never landed and the
-next push fingerprint-skipped the devices phase — a permanent silent drop. Root
-cause: `set_parameter` calls were planned only for already-linked devices, so a
-device loaded in the same execute pass got its link after parameter planning and
-was never dialed. Fixed via the same-pass devices convergence re-plan (the
-parameter writes now emit for newly-loaded devices too); the wire write prefers
-the display `value` string over the center-zero-ambiguous `normalized`; and a
-no-writable-form params_dialed write now surfaces on a new severity-scoped
-`PushPlan.alert()` channel (operator-actionable, drained into the benign
-`warnings` channel) instead of `plan.notes`, which `push_execute` never drained.
-**SYN-6B4Q (02):** first push of a freshly-scaffolded song no longer halts
-false-PARTIAL at `cues` past the (empty) arrangement extent — handler
-`cue_create_batch` gains `on_out_of_range='refuse'|'skip'`, the planner
-partitions cues against the composed extent (past-composed-with-arrangement →
-hard `PushPlan.errors` channel halting the phase; skeleton → defer+warn), and
-deferred cues surface via the benign `ExecuteResult.warnings` channel (exit 0).
-**INV-3K8W (03):** `preset_query` strict-mode errors now teach the actual fix —
-a `/`-containing pattern points at `path_prefix`; a `path_prefix` repeating
-`root` says to drop the leading segment (0-match / not-found branches only, zero
-behavioral change for valid queries; `inventory.find` inherits both). **SYN-5C3J
-+ MCP-4T6Y (04):** an engine↔Remote-Script version-mismatch refusal now prints
-the exact worktree+PYTHONPATH pin recovery (+ error-recovery guide section)
-instead of the misleading generic "fix build.py" footer; the MCP server's
-read-timeout becomes a `(tool,action)`-keyed policy — `ensure_loaded` gets a
-bounded 180s (was timing out at the 15s default on a 25-surface set), render
-stays unbounded, everything else the 15s default. **DEV-5R8Q + INS-2Q7F +
-SKL-8N3V (05):** documented the delete-descending/reload-in-order chain-rebuild
-pattern in `conventions.md` and DECIDED against a `rebuild_chain` convenience (it
-is not a pure-planner emission — it needs Remote-Script orchestration to sequence
-delete+reload); `/song-new` postlude now calls `ensure_loaded` with no params;
-INS-2Q7F recorded obsolete-on-arrival (the install-hardening refactor already
-replaced the hand-authored rsync with a Python `copytree`+`fnmatch` exclude).
-Cumulative Critic (develop base) caught SYN-9F2L's warning still discarded on the
-execute path — resolved by the `alert()` channel above and verified end-to-end;
-a `verify-resolutions` chain record extends the cumulative to HEAD (CRT-4J8W).
-Suite 3340 passed / 2 skipped.
-
-## 2026-06-11 — ENV-7G4K: performed automation (master/group/return)
-
-<!-- prawduct: type=feature | chunks=ENV-7G4K-01,ENV-7G4K-02,ENV-7G4K-03,ENV-7G4K-04 | scope=mcp-bridge,db,sync-push | status=shipped | release=v0.9.5 -->
-
-AUD-1M4V stage 0b: the automation surface session clips can't reach —
-master/group mixer (volume, pan), group sends, return mixer, master- and
-return-chain device parameters — becomes authorable via gesture-recorded
-**performed automation**. **Bridge:** `ableton_automation(action='perform')`
-plays the transport through the arc's span in record while stepping the
-parameter (runs_on_worker, `live_state_lock`, settle-poll on `record_mode`,
-per-step `finally` restore incl. `re_enable_automation`, beat-space interp
-with linear/hold/fast/slow). Probe-verified end-to-end first (probes 4/4b/
-10/12/13: group-host recording + same-span re-record overwrite both
-CONFIRMED). **Engine:** `return_mixer_volume`/`return_mixer_pan` kinds +
-`performed_automation` state table; W10-F's dual-layer master/group refusal
-replaced by routing eligibility — `classify_envelope_route` is the single
-partition source (clip_scoped / session_clip / perform / refused_audio /
-unroutable); audio hosts keep their ENV-8H1T refusal; the false "route to a
-sub-bus" master teaching deleted. **Push:** twelfth phase
-`performed_automation` (after envelopes) — fingerprint-gated (unchanged arcs
-skip + are listed), per-arc tempo-map-aware wall-clock estimates in the plan
-(Visible Costs), apply records state + `AUTOMATION_PERFORMED` event gated on
-`automation_state == 1` (unverified writes retry next push). **Evidence:**
-S-7 wire smoke PASS on real Live 12.4.1 — 5 arc families, skip-all re-push,
-targeted re-perform; `.als` dump verdict: all 5 arcs faithful (~3 Hz step
-rate). Docs/gaps guide updated from "can't" to "performed via push". Scope
-notes: return→return sends not in wave-1 vocab; nested-rack device params
-unreachable on either route; pull/read of arrangement automation has no LOM
-surface.
-
-## 2026-06-10 — CLP-AUD1: audio-clip DB model (wave 1)
-
-<!-- prawduct: type=feature | chunks=CLP-AUD1-01,CLP-AUD1-02 | scope=clip-audio | status=shipped | release=v0.9.5 -->
-
-AUD-1M4V stage 0a: clips gain a `kind` discriminator (`'midi'` default |
-`'audio'`) plus the user-locked wave-1 audio field set — `audio_file`
-(song-relative POSIX or absolute, stored as-given), `audio_gain` (0–1 linear),
-`pitch_coarse`/`pitch_fine`, `warping`, `warp_mode` (Live enum ints, named via
-`WARP_MODES`), `start_marker`/`end_marker` (beats when warped, seconds when
-not) — via canonical `schema.sql` definitions + `_ADDED_COLUMNS` migration.
-New event-emitting `create_audio_clip` mutator (audio-host-track guard,
-audio_file required, idempotent rebuild). **Kind-guards at every
-MIDI-assuming surface:** `kind` immutable everywhere (MIDI<->audio is
-delete+create — `create_clip`/`create_audio_clip` both refuse a foreign-kind
-slot; `update_clip` refuses `kind`); `update_clip` whitelist gains the audio
-fields, refused on MIDI rows (and `audio_file` can't be cleared);
-`insert_notes`/`replace_clip_notes` refuse audio targets (notes live on MIDI
-clips); push planner refuses `kind='audio'` loudly — warn naming CLP-AUD2, no
-MIDI create emitted — with a matching kind-aware warn in the arrangement
-planner; pull exempts audio-clip rows (session-slot diff, arrangement-
-placement removal, note probes) so authored-but-unsynced state can't be
-clobbered. New pure `hallucinote.paths.resolve_audio_path(song_dir, ref)`
-(top-level home keeps it importable without the numpy-bound
-`hallucinote.audio` package). Docs: `docs/terminology.md` clips section gains
-the kind/audio-field semantics. Push/pull of audio clips is CLP-AUD2; envelope
-hosting ENV-8H1T; take lanes AUD-9R3V; warp markers deferred (lock 3).
-
-## 2026-06-10 — AUD-1M4V discovery: `ableton_probe` tool + audio-as-first-class requirements
-
-<!-- prawduct: type=feature | chunks=AUD-1M4V-discovery | scope=mcp-bridge,discovery | status=shipped | release=v0.9.4 -->
-
-The AUD-1M4V umbrella's discovery cycle. **Code:** a permanent 13th bridge tool,
-`ableton_probe` — constrained LOM introspection (`describe`/`get`/`set`/`call` with
-`then` chaining and `{"$path": …}` LOM-object args) over a regex path grammar (no
-eval); makes capability probing a wire call instead of throwaway Remote Script code
-plus a Live restart per iteration. Adds the `any` ParamType for polymorphic params.
-55 new unit tests incl. wire-path regression coverage. **Evidence:** the full LOM
-probe suite executed against real Live 12.4.1 (`docs/research/audio-first-class/
-lom-probe-results.md` + raw JSONL): audio clip creation native since 12.2 (browser
-workaround obsolete), mixer envelopes on audio session clips confirmed end-to-end,
-scripted master/return automation via `record_mode` + `begin/end_gesture` ramps
-playback-verified, recording via `fire(record_length)` confirmed incl. take lanes +
-comping substitute. **Research corpus:** adversarially verified producer practice,
-primary-source mastering norms, two LOM research passes (same dir). **Artifact:**
-`.prawduct/artifacts/plans/AUD-1M4V/discovery.md` — producer-led requirements
-(R1–R5) traced to mechanisms + staged plan. **Backlog:** AUD-1M4V → design;
-CLP-AUD2 redefined; ENV-8H1T reduced; ENV-4M2T partially superseded; new ENV-7G4K
-(performed automation, stage 0b parallel) + AUD-9R3V (recording workflow).
-
-## 2026-06-10 — DOC-5W8B: REQUIREMENTS.md auto-regen after device-changing push
-
-<!-- prawduct: chunks=FRICTION-03 | status=shipped | release=v0.9.5 | scope=friction-basket -->
-
-`push_cli execute --song <slug>` now regenerates `songs/<slug>/REQUIREMENTS.md`
-whenever the devices phase applied at least one call — including pushes that
-halted at a later phase (the doc tracks current set state, not push success).
-`compat.regen_requirements(song_slug)` is the extracted callable seam; the
-`write-requirements` CLI command is a thin wrapper. `--db`-only pushes print a
-stale-notice with the manual command instead of guessing the song dir; regen
-failures degrade to a stderr notice (waivered broad catch) so the push's exit
-code is never masked. `docs/collaboration.md` handoff checklist updated.
-
-## 2026-06-10 — WFL-7Q2N: session-ID auto-discovery in push/pull CLIs
-
-<!-- prawduct: chunks=FRICTION-02 | status=shipped | release=v0.9.5 | scope=friction-basket -->
-
-`session_id` may now be omitted on every session-taking `push_cli` /
-`pull_cli` subcommand. `sync/session_resolve.resolve_session_id` resolves
-it from the DB the command already opened: explicit id wins; one session →
-used; several → most recent, echoed on stderr with alternatives; apply
-commands treat a plan file's embedded `session_id` as authoritative (and
-refuse a conflicting explicit id); multi-song DBs refuse to guess; zero
-sessions → bootstrap guidance. New `db.queries.list_ableton_sessions`
-(newest-first). Render takes no session id — out of scope by inspection.
-Also: fixed a latent Hypothesis flake (per-example 200ms deadline under
-xdist load) by setting `deadline=None` in both profiles.
-
-## 2026-06-10 — PSH-4E2W: push failure prints halt cause + next step
-
-<!-- prawduct: chunks=FRICTION-01 | status=shipped | release=v0.9.5 | scope=friction-basket -->
-
-`push_cli execute` failures previously printed only the errors-file path plus
-bare "top error patterns", forcing a read of `.last-push-errors.json` on every
-halt. `_group_errors` now carries a representative `tool`/`action` and the
-first non-null responder `hint` per pattern, and `format_summary` renders a
-"Halt cause" block: `tool.action: error (N calls)` + a `next:` line
-(responder hint first; hint-less `device.load` failures point at
-REQUIREMENTS.md; connection-class halts at the Live-running checklist;
-otherwise the generic fix→rebuild→re-execute loop). Summary redaction is now
-test-pinned (large payloads can never leak past the 60-char grouping prefix).
-`skills/ableton-push/SKILL.md` + `push-execute-design.md` updated to match.
-
-## 2026-06-10 — AUD-4W7K chunk 2: db_seq provenance + seq resolver + surfacing sweep
-
-<!-- prawduct: chunks=AUD-4W7K-02 | status=shipped | release=v0.9.5 | scope=aud-4w7k -->
-
-The seq keying layer: the MCP server reads the song's latest audit-log seq
-at render-forward time (`server._attach_render_db_seq` — the render handler
-runs in Live's hallucinote-less env, so the read lives server-side, a
-deviation from the plan's handler-side wording) and the handler writes it
-as `manifest.db_seq`; `CaptureSet` and `MixReport` carry it (old manifests
-load as None). `compare.resolve_baseline(analysis_dir, seq)` finds the
-matching report (latest tie-break, teaching error otherwise);
-`analyze_mix(compare_to=<seq>, analysis_dir=...)` and
-`ableton_analysis(analyze, compare_to=<seq>)` complete the loop, with the
-baseline validated before the DSP passes. Surfacing sweep: render-handler
-"deferred" paragraph, analyze action description/tips, `/mix-review` A/B
-recipe, spike decision-record updates. AUD-4W7K complete pending merge.
-
-## 2026-06-10 — AUD-4W7K chunk 1: compare_to baseline diffs via explicit path
-
-<!-- prawduct: chunks=AUD-4W7K-01 | status=shipped | release=v0.9.5 | scope=aud-4w7k -->
-
-`MixReport.compare_to` is no longer a reserved skeleton: `audio/compare.py`
-diffs two serialized reports — per-surface loudness deltas keyed by
-track_id (added/removed surfaces explicit), overshoot count, significance
-floors calibrated on the six real sun-zone-done analysis JSONs (0.5 dB
-default; 1.0 dB for the timing-sensitive lufs_s_median). Deltas are neutral
-evidence — no finding kinds derive from them. `analyze_mix(compare_to=<path>)`
-loads the baseline fail-fast and populates the field. The v3→v4 real-pair
-diff tells the known story exactly (true peak 1.52→−0.96 dBTP, 8
-overshoots→0). Seq keying lands next chunk.
-
-## 2026-06-10 — AUD-3F8M chunk 2: mixer_pan verified via master L−R balance
-
-<!-- prawduct: chunks=AUD-3F8M-02 | status=shipped | release=v0.9.5 | scope=aud-3f8m -->
-
-`mixer_pan` joins `mixer_volume` on the master-bus verification path:
-constant-power pan gains × the stem's static fader gain (threaded from
-`analyze_mix`'s existing `stem_gains`) predict the expected L−R balance
-shift (`master_balance_db`); same detectability floor / model-breakdown /
-direction+0.3× semantics as volume. Real-capture evidence: sun-zone-done's
-break pan sweep (±0.95) verifies 4/4 measurable change-points REALIZED.
-Contract text updated everywhere the old "mixer kinds are unverifiable"
-claim lived (tool description, envelope collector, `/mix-review` skill,
-module docs). AUD-3F8M complete pending merge.
-
-## 2026-06-10 — AUD-3F8M chunk 1: mixer_volume verified via master-bus windowing
-
-<!-- prawduct: chunks=AUD-3F8M-01 | status=shipped | release=v0.9.5 | scope=aud-3f8m -->
-
-`mixer_volume` envelopes are no longer skipped as post-fader-invisible:
-`audio/automation.py` windows the MASTER (post-fader sum) around each
-breakpoint and checks the level step against a prediction built from the
-declared fader values (`levels.live_fader_gain` calibration) + the measured
-pre-fader stem power (uncorrelated power model). Predicted step < 0.75 dB →
-honest `measurable=False` (stem too diluted/silent); model breakdown
-(stem-at-gain exceeding limited master power) is also an honest skip, never
-a false verdict; realized = declared direction + ≥0.3× predicted (lenient
-for the house master limiter). `master_audio` is a required kwarg through
-`analyze_mix`. Spike + real-capture evidence in the AUD-3F8M plan Status
-(sun-zone-done's one mixer_volume envelope is a subtle trim — honestly
-gated at all 12 change points). `mixer_pan` lands next chunk.
-
-## 2026-06-04 — INS-7V2D follow-up: MCP cold-start startup timeout fix (`MCP_TIMEOUT`)
-
-<!-- prawduct: type=bugfix | chunks=INS-7V2D-cold-start-timeout | scope=plugin-distribution | status=shipped | release=v0.9.4 -->
-
-The plugin-bundled `hallucinote-mcp` server timed out on a genuinely-cold first start: the spawn
-runs a full `uv` build (numpy/scipy/librosa/llvmlite, ~70 MiB) and the connection timed out at
-**30000ms** despite `plugin.json` declaring `"timeout": 60000`. **Root cause:** the per-server
-`plugin.json` `timeout` governs *tool execution*, not the *startup* handshake — startup is
-governed by the `MCP_TIMEOUT` env var (default 30000ms), which the v0.9.3 design never raised, so
-the intended 60s safety net never existed for startup. (This supersedes the v0.9.3 entry's
-"cold-cache-within-60s" residual framing.) **Fix:** a tested, atomic, idempotent config op raises
-`env.MCP_TIMEOUT` in `settings.json` to a **180000ms (3 min) floor** (`STARTUP_TIMEOUT_FLOOR_MS`),
-never downgrading a higher existing value; `/ableton-mcp-install` writes it into
-`~/.claude/settings.json` for end users, and this dev repo carries it via committed
-`.claude/settings.json`. The SessionStart pre-warm hook also emits a clean `additionalContext`
-heads-up so Claude can guide a `/mcp` reconnect when a cold build loses the spawn race; every
-non-success hook branch now routes to **stderr** so warm sessions inject nothing into Claude's
-context. **Live-verified (this session):** the operator ran `uv cache clean` (genuinely cold uv
-cache) and restarted (`--plugin-dir .`); the cold build completed and the `hallucinote-mcp` tools
-connected **on first launch — no `/mcp` reconnect needed**, confirming the 30 000 ms
-startup-timeout failure does not recur under the 3-min floor (operator-verification check #1; the
-race→reconnect fallback, statusMessage display, and uninstall reversal remain unverified). 22 new
-unit tests pin the config-op and hook semantics.
-
-## 2026-06-04 — INS-7V2D: plugin-bundled MCP server via uv (version-locked)
-
-<!-- prawduct: chunks=INS-7V2D | status=shipped | release=v0.9.3 | scope=plugin-distribution -->
-
-The Claude Code plugin now **bundles the `hallucinote-mcp` server** and launches it via
-`uv run --frozen --all-packages --project ${CLAUDE_PLUGIN_ROOT}` from a committed `uv.lock`
-into `${CLAUDE_PLUGIN_DATA}/venv` — version-coupling the running bridge to the plugin *by
-source* (editable workspace members in the lock), so the bridge can never drift from the
-engine it shipped with. A SessionStart pre-warm hook (`hooks/prewarm-mcp-env.sh`) rebuilds
-the DATA venv only on lock change and never fails the session; **verified firing live** in a
-clean-room `--plugin-dir .` restart (sentinel `uv.lock` byte-matches the repo, `MCP env
-ready.` at startup). The old install-skill PATH-override config-writing path (`configure-mcp`
-/ `plan_mcp_config` / `merge_server_entry`) is retired — the plugin provides the server
-PATH-independently; install now adds a `uv`-presence preflight and only confirms `/mcp`.
-Docs (README/quickstart/collaboration), an engine-pin record (`docs/engine-pin.md`), and
-operator-verification updated. 8 commits, full suite 3043 passed / 2 skipped; cumulative
-Critic clean; independent PR review 0 blocking. (PR #150 → develop; promoted to main here.)
-Residual live checks honestly enqueued in `operator-verification.md`: cold-cache-within-60s
-on a clean machine + the plugin-update rebuild cycle.
-
-## 2026-06-04 — Backlog low-cost sweep: ~13 items fixed in parallel (file-disjoint clusters)
-
-<!-- prawduct: chunks=backlog-low-cost-sweep | status=shipped | release=v0.9.2 | scope=backlog-low-cost-sweep -->
-
-A parallel sweep of the low-cost / no-Live tier of the backlog, executed as seven
-file-disjoint clusters (verify-against-current-code, then surgical fix + narrow
-tests) since the backlog's file references had drifted (`sync/push.py` was split
-into `sync/push/` + `sync/pull/`). 9 commits, +~1840/-92, full suite 3033 passed
-across 3 consecutive `-n auto --dist loadgroup` runs.
-
-- **SYN-2M9P** — `plan_push_devices` no longer emits an impossible
-  `device.load(master=True)` for an unlinked master device (Live 12.4 has no LOM
-  master-load path). It skips the load with a place-by-hand note; `set_parameter`
-  still fires on a hand-placed+linked master device. Removes the reliably-PARTIAL
-  push (devices-phase halt stranding envelopes/arrangement/cues) for any song
-  authoring a master-strip chain. Mirrors DEV-2M9K's "configure-only" contract.
-- **SYN-8H2W** — markdown frontmatter inline-list items containing `,` / `[` / `]`
-  now survive the serialize→parse round-trip (quote-aware split + conditional item
-  quoting; loud raise on the unrepresentable both-quote-chars case).
-- **SYN-1T4K** — `_TRANSACTION_DEPTH` moved to a `threading.local`-backed map; the
-  single-thread nesting contract is byte-identical.
-- **SYN-3D7M / SYN-9K5T** — session-clip `delete_clip → arrangement_clips` cascade
-  is now counted + reported in `out.details`; a populated entry missing BOTH name
-  and length now warns (parity with the arrangement path) instead of silent no-op.
-- **SYN-2K8T** — the one raw `arrangement_clips JOIN clips` read factored into
-  `Q.get_arrangement_placements_with_clip_length` (read-helper discipline).
-- **DEV-6T2W** — the `inventory_handler` device-walk is now bounded by a node-visit
-  budget (`max_nodes`, default 200000) vs the 15s main-thread ceiling; returns
-  `truncated=True` (never-silently-truncate) and the misleading "raise read_timeout"
-  tip was corrected to "subdivide via `path_prefix`".
-- **GEN-5K2D** — new exact-rational `generators.primitives.polyrhythm()` via
-  `fractions.Fraction` (composed ratios land exact; float→edge at the mutator only).
-- **INS-4H8M** — analyzer `HallucinoteAnalyzer.amxd` raw-byte sha256 fingerprint +
-  a preflight `analyzer` drift block; `/ableton-mcp-install` Step 3d branches on
-  `matches` to skip the redundant overwrite prompt (parity with the Remote Script
-  verify). Verified on the real machine.
-- **TST-7H2M** — `@settings(deadline=None)` on the two compute-bound `@given`
-  correlation/DFA tests (the parallel-xdist flake class; assertions unchanged).
-- **TST-4M9D** — FastMCP single-tool lookup centralized in a `get_registered_tool`
-  helper that prefers the public `get_tool()` accessor (was reaching into `_tools`).
-- **DOC-3P7K / AUD-9D3P / MET-9D4H** — deep reference docs reprefixed to
-  `/hallucinote:*` + songs-repo paths (post-split); the audio dep-adoption recorded
-  in `project-state.yaml` (the stack uses numpy/scipy/librosa as CORE deps — the
-  "stdlib-only" decision was superseded, not reversed); Requirements-Confidence
-  header convention documented.
-- **TST-7K3H** — verified already-fixed-and-tested (the W6-A note-expression
-  validate-before-gap precedence + its three tests predate the stale item).
-
-Deferred with rationale (NOT silently dropped): **DEV-1F9X** (plugin-discriminator
-dedup) stays open — correctly gated on the unshipped W11-A `hallucinote-core`
-extraction so the move happens once, not twice. Also filed **TPL-2D8K** (a project
-`.als` template with the master-bus chain pre-placed — the user-requested workaround
-for "LOM can't add master devices"). Cumulative Critic: 0 blocking, 2 warnings
-(stale evidence + this change-log entry — both resolved here), 2 notes (markdown
-write-boundary hardened; backlog reconciled).
-
-## 2026-06-04 — Install hardening: every install mutation in tested, atomic Python
-
-<!-- prawduct: chunks=install-hardening | status=shipped | release=v0.9.2 | scope=install-hardening -->
-
-Moved every `/ableton-mcp-install` + `/ableton-mcp-uninstall` filesystem and
-MCP-config mutation out of hand-authored skill shell into tested, atomic,
-cross-platform Python in the stdlib-only `hallucinote_mcp` package, exposed via CLI
-subcommands. Triggered by a zsh-glob abort (`--exclude=*.pyc`) that left a
-half-installed Control Surface (the `rm` ran, the copy didn't).
-
-- **`install_ops.py`** — `vendor_remote_script` (stage → verify → swap with rollback;
-  the half-install is now structurally impossible), `verify_remote_script`
-  (source-derived completeness + held excludes, drift-proof — no hardcoded file
-  list), `install_analyzer` (atomic file swap + overwrite-guard),
-  `remove_remote_script`/`remove_analyzer`. The rsync anchoring (package-root
-  `server.py` out, `remote_script/server.py` kept) is reproduced as a pure-Python
-  `copytree` ignore predicate — no shell, no glob expansion.
-- **`mcp_config.py`** — `plan_mcp_config` (pure 5-row truth table keyed on `on_path`
-  + `already_registered`, NOT plugin-detection — closes the venv-not-on-PATH gap with
-  a user-scope absolute-path override that dominates a plugin entry by precedence),
-  `merge_server_entry` (preserves siblings), `write_config_atomic`, `delete_entry`.
-- **CLI** — `install-remote-script`, `install-analyzer`, `uninstall-remote-script`,
-  `uninstall-analyzer`, `configure-mcp`, `remove-mcp-config`.
-- **Skills** — `/ableton-mcp-install` + `/ableton-mcp-uninstall` rewritten to
-  orchestration-only (preflight → confirm → CLI → hand-off); zero hand-authored
-  mutation shell. The consistency test's exclude-STRING drift checks consolidated
-  into behavioral tests in `test_install_ops.py` + a "skills invoke the CLI, no
-  mutation shell in command blocks" contract (contract moved, not weakened).
-- **Bug fix** — `existing_mcp_config_files`/`malformed_mcp_config_files` coerce a str
-  `cwd` to `Path` (the CLI passes `--cwd` as a str; was an `AttributeError`),
-  surfaced by the round-trip integration test.
-
-+42 tests (excludes, atomicity incl. rollback + backup-preservation, the config
-truth table, hermetic install→uninstall round-trip). Full `hallucinote_mcp` suite
-938 passed. Cumulative Critic: 0 blocking. INS-4H8M (analyzer fingerprinting) is
-adjacent but unresolved — left open.
-
-## 2026-06-03 — Tools-don't-narrow-the-art (gate verdicts / generator altitude / review workflow) + helpers DRY
-
-<!-- prawduct: chunks=LNT-1V9K,GEN-1S4K,REV-2W8K,helpers,chunk0 | status=shipped | release=v0.9.2 | scope=tools-dont-narrow-the-art+helpers-dry -->
-
-One thesis across four pieces: a build-time lens/helper is a **ruler, not a stamp** —
-it measures and asks; it never vetoes a deliberate choice or makes the musical decision.
-
-- **A1 (LNT-1V9K) gate verdicts.** `theory/lint.py`'s `harmonic-stasis` — the only
-  `severity="blocking"` verdict in the codebase — split into `harmonic-stasis` WARNING
-  (still named in `stasis_sections`) + a new `harmonic-absence` INFO (the case that
-  false-blocked a bass-less section). Removed the build raise in `sun-zone-done/build.py`;
-  the realization regression moved to the song's own test. New `gate-verdict-policy.md`
-  enumerates BLOCKING = technical/structural errors only.
-- **A2 (GEN-1S4K) generator altitude.** `generator-altitude-policy.md` — no
-  section/genre-archetype builders in the package (song-local only); package idioms are
-  single-part conveniences over exposed primitives; the interplay vocabulary is a
-  friction-driven primitive layer (ARR-3R8F), not a fusion-section builder.
-- **A3 (REV-2W8K) structured review.** `review-workflow-model.md` (one axis per turn, 5
-  archetypes) + a per-song `review_workflow` annotation (sun-zone-done = C Subtractive) +
-  `/compose-review` and `/mix-review` wired to read the archetype and edit one axis per turn.
-- **Helpers DRY.** Hoisted duplicated song-build bookkeeping into the library —
-  `Q.tracks_by_name`/`returns_by_name` (queries) and `arrange_section`/`run_build`
-  (new `hallucinote/authoring.py`). All four songs migrated to the helper functions;
-  the `/song-new` scaffold uses `run_build`. Existing composed songs' build() lifecycle
-  migration deferred (SNG-4H2D).
-- **Chunk 0.** sun-zone-done back-half Pass-A close-out (prior stale-doc Critic warning
-  resolved) + backlog true-up (6 merged items archived, scene-provision dedup).
-
-Full suite 2881 passed. Cumulative Critic + independent PR review both clean (0 blocking).
-
-## 2026-06-02 — Audio verification correctness: reverb RT60 + automation realization
-
-<!-- prawduct: chunks=AUD-6R2M,AUD-4S8T,AUD-8H2M | status=shipped | release=v0.9.2 | scope=audio-verification -->
-
-Branch `fix/reverb-rt60-decay-tail` (off `develop`). Made the audio analyzer's
-verification surfaces trustworthy on real multi-track songs. (Shipped in v0.9.2;
-tagged `release=unreleased` at author time pending a release cut, flipped to the
-real version by VEW-9QH4 — first resolved to v1.5.0, corrected to v0.9.2 in PR
-review once the two concurrent version tracks were untangled. Live re-render
-validation of the real reverb tail + the Amp-flip is deferred to the user.)
-
-- **Reverb RT60 — per-return decay-tail (AUD-6R2M).** Replaced the multi-source
-  single-dry deconvolution (which returned 252–370 s on real 5–6-send returns)
-  with a dry-source-free measurement: RT60 once **per return** from the return's
-  own captured ring-out via Schroeder backward integration. `ReverbVerification`
-  reshaped per-return with honesty fields; refuses to fabricate a number
-  (`sufficient_tail=False`/NaN) when no ring-out exists. On the real sun-zone
-  capture: 11 garbage per-send values → 2 honest per-return skips.
-- **Source-side ring-out capture (AUD-4S8T).** A measure-first check showed the
-  real capture has no ring-out (master plays to within 35 ms of the file end).
-  `render.py` now records `ring_out_beats` (default 8) past the arrangement end
-  so the reverb decays into a captured tail — Python-only, **no `.amxd` change**
-  (the device records to whatever stop-beat it's handed). Loop forced off +
-  restored; manifest records the actual rounded ring-out.
-- **Automation realization verification (AUD-8H2M).** New `audio/automation.py`
-  windows each declared envelope breakpoint and reports realized-vs-declared: a
-  device-parameter timbre flip (Amp Type) as a directional spectral-centroid
-  shift, a dynamic send as a level step. `mixer_volume`/`pan` are reported
-  unverifiable (post-fader, invisible to the pre-fader stem) — master-bus
-  windowing is a follow-up.
-
-Two cumulative `/critic` passes (0 BLOCKING each); all warnings/notes resolved.
-Full suite 2840 passed / 0 failed (18 `songs/missing` corpus-parse failures are a
-pre-existing, user-acknowledged-out-of-scope gap in a different song, deselected).
-
-## 2026-05-30 — Arrangement model + sun-zone-done flagship (Chunks 1–5)
-
-<!-- prawduct: chunks=arrangement-1-5 | status=shipped | release=v1.4.0 | scope=arrangement-model -->
-
-The `feature/sun-zone-done-flagship` branch. A new song-structure subsystem
-(`hallucinote.arrangement`) plus its first full demonstration: sun-zone-done
-rebuilt from a 7-section/64-bar skeleton into a **9-section / 80-bar narrative
-arc** authored entirely on the model. (Release tag matches the current
-in-progress release; confirm/regroup at merge into `develop`. Live verification
-of the song is deferred — see `songs/sun-zone-done/sun-zone-done.md`.)
-
-- **The module (Chunk 1, prior commit `2f971bf`):** `arrangement.py`
-  (`Motif` / `Arrangement` with `section`/`plan`/`materialize`/`energy_curve`,
-  `PlacedSection`, `vary()` delta ruler) + the six canonical motivic variation
-  ops + `shift` in `generators/variations.py`. All **rulers** — they carry
-  identity / presence / references / arithmetic and emit the same DB rows through
-  the mutators; the composer makes every musical decision. Design foundation in
-  `.prawduct/artifacts/arrangement-model.md`.
-- **Section map + energy curve (Chunk 2):** the full arc with genre-flip energy
-  **discontinuities** (never smoothed) and recurrence as one-identity-plus-a-delta
-  via `vary()` (verse2 organ +12; chorus2 lead −12 power-octave). Rhythm gtr stays
-  a monolithic 320-beat clip + Amp envelope, driven by the same `plan()`.
-- **Polyrhythm intro (Chunk 3):** a hand-authored 3:4:5:7 Em7 cross-rhythm
-  shimmer that builds to unbearable then drops — registered as the
-  `polyrhythm-cloud` motif.
-- **Metal energy + steel pans (Chunk 4):** a crash per 4-bar phrase + rising
-  snare fills so long metal stretches breathe; a new `06 Steel` Island-Pans track
-  entering in the later reggae sections (verse2 as a `vary()` add-delta + outro).
-- **Convention-break + integration + outro (Chunk 5):** the Amp **timbre**
-  decoupled from groove **time-feel** and inverted in the break; the integration
-  **quotes** the polyrhythm motif on the organ (recapitulation — the two worlds
-  fused); the outro fragment+diminishes the `no-time-stab` motif into double-time
-  Phrygian bursts → DubDelay.
-- **Framework robustness:** `reggae_one_drop` / `metal_gallop` now degrade
-  gracefully on kits missing the optional open-hat / crash pads
-  (`kit.try_pitch_of`) — Ableton's Hot Rod Kit ships closed hats only, which was
-  crashing the real build.
-
-Cumulative `/critic`: 3 warnings + 1 note, no BLOCKING — all resolved. Full suite
-**2515 passing** (+18 song shape/intent tests, +2 generator degradation tests).
-
-## 2026-05-29 — Bulk note-authoring: scoped push + /compose-part + inline guardrail (B1–B4)
-
-<!-- prawduct: chunks=bulk-notes-B1-B4 | status=shipped | release=v1.4.0 | scope=bulk-note-authoring -->
-
-The `feature/bulk-note-authoring` branch. **Notes are authored as code, never as
-data-in-context**: the LLM writes the smallest correct generator expression, a
-build expands it through mutators (events fall out), and a scoped push
-materializes only what changed to Live — bytes never enter the agent's context.
-External validation: Anthropic's Nov-2025 "code execution with MCP" is exactly
-this pattern; the hard mechanism (`push_cli execute`) already existed, so the
-real work was retiring the inline paths and wrapping the loop in a usable skill.
-
-- **B1 — scoped push** (`sync/push_notes.py` + `push-notes` CLI subcommand):
-  materialize only targeted (`--clip`) or **content-changed** (`--changed`)
-  clips' notes, in-process, with a counts-only summary (notes never tokenized;
-  mirrors `_summarize_args`/`_LARGE_LIST_KEYS`). Change detection is
-  **content-fingerprint** based, not event-watermark — a whole-DB rebuild that
-  didn't alter a clip won't re-push it. Modify/delete/total-replace ride this for
-  free (the unit of change is the clip's full note array). 15 tests.
-- **B1b — opt-in clip-prune** (`push.plan_clip_prune` + `prune` CLI): structural
-  deletion of Live session slots with no matching DB clip, dry-run by default,
-  deletes only on `--apply`. Core safety: a DB-backed slot is NEVER pruned;
-  whole-track-orphan refused per-track. Pure planner kept offline-testable. 7 tests.
-- **B2 — `/compose-part` skill**: the interactive author→build→scoped-push loop
-  driven to a FINISHED audible part (creative-deliverable DoD) — read intent →
-  author notes as code in `build.py` (`hallucinote.generators`, feel baked in,
-  probe kits) → `python build.py` → `push-notes --changed`. Adds a discoverable
-  **Authoring API** index to `docs/song-authoring-conventions.md` (progressive
-  disclosure), guarded by a bidirectional drift test.
-- **B3 — `/pattern-compose` retired (supersede)**: deleted, not migrated — its
-  inline-`ableton_clip(notes=)` + direct-to-Live DB-bypass were exactly the
-  anti-patterns this work removes, and its named patterns already exist as
-  `generators` helpers. Live refs repointed to `/compose-part`.
-- **B4 — inline-notes guardrail** (`handlers/clip.py`): soft cap (32) on
-  `create` + `replace_notes`; above it, a non-blocking teaching `warning` points
-  at the author-as-code loop. Parity-locked across both actions; agent-facing
-  mirror in `ableton://guides/conventions`. Non-blocking — trivial edits stay
-  frictionless.
-
-Suite: 2319 passing (from 2289 at branch start). Per-chunk Critic review across
-B1/B1b (1 cumulative), B2/B3, and B4 — all clean at completion.
-
-## 2026-05-29 — Masking analyzer + intent architecture + timing feel (C1–C7)
-
-<!-- prawduct: chunks=masking-C1-C7 | status=shipped | release=v1.4.0 | scope=masking-analyzer -->
-
-The `feature/masking-analyzer` branch: the section-scoped, intent-aware audio
-analyses no commercial meter can produce — measurement DSP that stays neutral,
-with intent-grading pushed entirely to one holistic interpreter (`/mix-review`).
-
-- **C1 — inter-stem masking DSP** (`audio/masking.py`): STFT → Bark critical
-  bands → Schroeder spreading → per-tile masked-fraction. Pairwise
-  (`MaskingPair`) + cumulative-bed (`BedMasking`, catches distributed low-mid
-  buildup pairwise misses). Pure, DB-agnostic, scale-invariant, energy-gated.
-  No severity — neutral evidence.
-- **C3 — mix-level reconstruction** (`audio/levels.py`): captured stems are
-  pre-fader (M4L parallel tap), so masking (a relative-level measure) needs the
-  static fader gain reapplied. Fader curve **calibrated against real Live 12**
-  (swept volume, read display_value): [0.40,1.00] is exactly 40·(v−0.85),
-  sub-0.40 a measured table.
-- **C4 — mix-intent + feel/groove tag vocabulary**: controlled tags
-  (`focal`/`blend-group`/`submerged`/`density`; `feel`/`groove`/`push`/`drag`/
-  `swing`) on markdown frontmatter — no schema change.
-- **C5 — `markdown_refs` recall-on-read reindex**: `/song-context` was silently
-  empty because the corpus was only reindexed by a manual CLI; now reindexed on
-  read (single-song-scoped).
-- **C6 — `/mix-review` holistic interpreter** (the moat): recall intent →
-  read the whole `MixReport` → interpret across metrics vs declared intent →
-  two-register response (execute if directed, ask one question if volunteered)
-  → learn revealed intent back as a markdown annotation. The single read-side
-  surface over all analyses.
-- **C2 — retire the dead DB `annotations` table + `ableton_annotation` MCP
-  surface**: 0 rows across 14 DBs; the disposable DB made it a data-loss trap.
-  Intent's single authored home is the git-tracked markdown corpus. 13→12 MCP
-  tools, 12→11 resources; `/decisions` repointed to requests-only.
-- **C7 — per-part timing-deviation analyzer** (`audio/timing.py`): the read-side
-  counterpart to the `feel` generator. Recovers push/drag (signed drift),
-  tightness (drift stdev), and swing (median off-beat-8th phase) from captured
-  audio onsets per part, per section. Neutral measurement, tightness-based
-  confidence so transient-poor / cross-rhythm parts self-flag as low-trust.
-
-Architecture decision (see `intent-architecture.md`): every DSP module stays a
-pure measurement producer feeding `MixReport`; intent lives in markdown (WHAT =
-`build.py`, WHY = markdown, WHY-CHANGED = decisions); the disposable DB is never
-the authored home. Validated end-to-end on real Live audio (sun-zone-done).
-Full suite 2248 → 2251.
-
-## 2026-05-28 — Section-windowed audio analysis: `MixReport.per_section`
-
-<!-- prawduct: chunks=section-windowing | status=shipped | release=v1.4.0 | scope=audio-analysis-mvp -->
-
-First post-MVP item off the audio-analysis roadmap (spike §9 deferred
-#1). The same loudness metrics, scoped to each named section instead of
-only the full-song aggregate — answers "is the chorus actually louder
-than the verse?" and "did the bass-cut help in the section it was
-supposed to?"
-
-**Windowing source: the `sections` table, not `cue_points`.** The
-backlog said "cue_points," but the named sectional structure with
-half-open `[start_bar, end_bar)` spans lives in the `sections` table
-(populated via `M.create_section`); `cue_points` are point markers with
-no spans and can't scope a window. Decision recorded here.
-
-- New module `src/hallucinote/audio/section.py`: `SectionWindow`
-  (name + half-open beat window) and pure geometry —
-  `intersect_window` maps a beat window onto clamped sample bounds via
-  the capture's constant-tempo linear beat→sample map; `slice_audio`
-  returns the overlapping slice. No-overlap / degenerate-span /
-  empty-audio all yield `covered=False` (no divide-by-zero).
-- `analyze_mix(..., sections=...)` runs a fourth pass producing
-  `MixReport.per_section: list[SectionMetrics]` — per-surface loudness
-  (master + stems + returns) scoped to each window, mirroring the
-  top-level report shape. A section entirely outside the captured
-  transport window — or overlapping it by less than the 400 ms BS.1770
-  block minimum — is recorded in `skipped_analyses` (kind
-  `section_windowed`) rather than crashing `measure_loudness` or emitting
-  empty metrics; no sections declared → one teaching skip naming
-  `create_section`.
-- `master_overshoot` findings now tag their `db_reference` with the
-  section the overshoot lands in (`"section:chorus1 (beat:...)"`) — the
-  read-side tie between headline attribution and sectional structure.
-  (Also fixed the long-standing `bar:` mislabel — the value was always
-  in beats.)
-- Handler `_collect_sections` reads the `sections` table + the
-  `time_signature_map` and converts each bar bound to song-absolute
-  beats via the canonical `push._position_bar_to_beats` (walks the meter
-  map exactly — the only constant-tempo assumption is the downstream
-  beat→sample step). `analyze_mix` stays DB-agnostic, same pattern as
-  `declared_reverb_sends`. Summary gains `section_count`.
-- Stale `ableton_analysis` action tips fixed: the "MVP DB has no schema
-  for declared RT60 sends yet" line was stale since PR #99.
-
-Tests +18 (2168 → 2186): `test_section.py` (windowing geometry + edge
-clamping), `test_analyze.py` (per-section populated, loud>quiet, skip
-for out-of-capture section, skip for sub-400 ms overlap, overshoot
-section-tagging), `test_report.py` (SectionMetrics serialization),
-handler tests (DB sections → per_section, no-sections skip).
-
-Backlog: section-windowed *loudness* shipped; per-section contribution
-attribution, section-scoped masking (the iZotope differentiator), and
-variable-tempo-accurate windowing carried forward as a P1 follow-on.
-
-## 2026-05-28 — Audio Analysis MVP follow-on: `sends.intended_rt60_s` schema + loudness helper unification
-
-<!-- prawduct: chunks=3-followup | status=shipped | release=v1.4.0 | scope=audio-analysis-mvp -->
-
-Two small bundled chunks against `develop` after the Chunk 3 squash-merge
-(d4d2387 on develop).
-
-**A. DB schema for declared reverb-send intent (P2 backlog → closed).**
-Closes the teaching-error gap shipped in Chunk 3: real-song `analyze_mix`
-invocations no longer fall through to the no-intent skip record when the
-composer has declared RT60s on reverb sends.
-
-- `sends.intended_rt60_s REAL` column (CHECK > 0 or NULL) — schema.sql
-  + `_ADDED_COLUMNS` migration entry. Existing songs pick it up on next
-  `init_db` open.
-- New mutator `M.set_send_intended_rt60(from_track_id, to_return_id,
-  intended_rt60_s)` — requires existing send row, accepts None to clear,
-  emits `SEND_INTENT_SET` event, idempotent on no-change.
-- New query `Q.get_reverb_send_intents_for_song(song_id)` — returns sends
-  with non-NULL intent. `get_sends_for_song` also gains the column in
-  its projection.
-- `analyze_handler` walks the DB intents and lifts each row into a
-  `DeclaredReverbSend` before calling `analyze_mix`. `analyze_mix` stays
-  DB-agnostic — the lift happens in the MCP layer, not in
-  `src/hallucinote/audio/`. The empty-intent skip record now names the
-  mutator (`set_send_intended_rt60(...)`) rather than the old
-  "wait for the DB schema" placeholder.
-- P2 backlog entry deleted (close-in-the-same-PR discipline).
-
-**C. Loudness helper unification (Critic note #3).** `_short_term` and
-`_short_term_from_momentary` collapsed into one `_short_term_median`
-backed by a shared `_blockwise_loudness(audio, sr, block_size)` helper.
-`_ShortTermResult` dataclass removed — the function returns a float
-directly. Behavior unchanged; net -25 LoC. New regression test pins the
-sub-3s fallback path with calibrated pink noise (was untested).
-
-**Tests:** 2159 → 2168 (+9). Full suite passes in ~41s parallel.
-- +6 in `tests/unit/sync/test_mix.py` — intent mutator (lifecycle,
-  validation, idempotence, event emission), query filtering NULLs,
-  schema CHECK at the raw-SQL boundary.
-- +1 in `tests/unit/audio/test_loudness.py` — short-clip fallback path
-  produces a finite LUFS-S via momentary blocks.
-- +2 in `hallucinote_mcp/tests/unit/test_handlers_analysis.py` —
-  handler picks up DB intent and produces `reverb_verifications`
-  populated; absent intent re-asserts the teaching-message contents.
-
-**Cross-boundary check.** Boundary crossed: DB schema → handler DB read.
-`set_send_level` callers unchanged (the new column is additive + NULL-
-default). `get_sends_for_song` callers see the new column appended; sync
-push/pull don't touch it (intent is composer authorship, not Live state).
-
-## 2026-05-28 — Audio Analysis MVP, Chunk 3 (3-A + 3-B + 3-C) — analysis pipeline + `ableton_analysis` MCP tool
-
-<!-- prawduct: chunks=3 | status=shipped | release=v1.4.0 | scope=audio-analysis-mvp -->
-
-Chunk 3 sub-chunks 3-A, 3-B, and 3-C closed. The analysis half of the
-audio-analysis MVP is now built: captures dirs produced by
-`ableton_render` are now consumable through a new MCP tool that
-produces a `MixReport` JSON keyed to the song's DB-recorded intent.
-
-3-D (Critic + final commit/PR) is the last remaining step — the
-pipeline is feature-complete and real-data verified, but the formal
-Critic pass + change-log polish is the in-flight close work.
-
-**Worktree:** branch `feature/audio-analysis-chunk3` off
-`origin/develop@f0d0a46`. Local `develop` was 1 ahead / 1 behind origin
-at the start of this session; the user is doing framework-sync work
-separately so a worktree was the lowest-disruption path to ship Chunk 3
-without entangling with the framework drift on `develop`.
-
-**What landed (3-A — foundation + loudness):**
-
-1. `src/hallucinote/audio/` is a new sibling of `db/`, `generators/`,
-   `sync/` per the project's "layer folders inside src/hallucinote"
-   convention. Pure-Python computation against WAVs + DB; never imports
-   MCP.
-2. `report.py` — `MixReport` dataclass + sub-dataclasses
-   (`StemMetrics`, `LoudnessMetrics`, `MasterOvershoot`,
-   `ReverbVerification`, `Finding`). Schema version pinned at `"1"` in
-   the report itself (matches the capture-manifest pattern).
-   `compare_to` field reserved as a skeleton for the P2 baseline-diff
-   backlog. `skipped_analyses` field is the structural "Never silently
-   drop a requirement" surface.
-3. `io.py` — `load_capture(manifest_path) -> CaptureSet`. Reads
-   `manifest.json` + per-surface WAVs via `soundfile`; refuses
-   non-float32 / non-stereo / sample-rate-mismatch with teaching
-   errors (analysis math depends on the exact format `sfrecord~` writes
-   per the analyzer spec).
-4. `loudness.py` — BS.1770-4 LUFS-I / LUFS-S median / LUFS-M peak via
-   `pyloudnorm.Meter`, plus 4×-oversampled true peak in dBTP via
-   `scipy.signal.resample_poly` (the 15-LoC spike §3 sketch). Short-clip
-   guard raises rather than silently returning NaN.
-
-**What landed (3-B — attribution + reverb):**
-
-5. `attribution.py` — `find_master_overshoots` (4×-oversampled detection
-   with gap-merge + min-window thresholds) + `master_bus_attribution`
-   (per-overshoot dominant-band detection via per-band RMS, then
-   per-stem RMS contribution ranking in that band). Six named bands per
-   spike §3 (sub_20_60 through air_6k_plus); names are stable wire
-   format. Beat conversion happens at the `analyze_mix` boundary, not
-   in this module — keeps attribution tempo-agnostic.
-6. `reverb.py` — `deconvolve_ir` (Wiener-regularized spectral
-   deconvolution with ε floor for stability) + `verify_reverb_send`
-   (deconvolves IR, trims to onset, runs
-   `pyroomacoustics.experimental.rt60.measure_rt60`, compares to
-   declared). Stable on noisy dry signals (regularization works) but
-   only accurate on clean dry — the spike §7 "honest gap" is pinned in
-   a stability-only regression test, not a fake accuracy claim.
-
-**What landed (3-C — `ableton_analysis` MCP tool):**
-
-7. `analyze.py` — `analyze_mix(captures_dir, song_db_conn=None,
-   declared_reverb_sends=())` orchestrator. Reads the capture set,
-   measures per-surface loudness, finds + attributes master
-   overshoots, runs reverb verification for any declared sends,
-   derives structured `Finding`s, returns a populated `MixReport`.
-   DB conn parameter is plumbed for future intent extraction (MVP DB
-   has no `reverb_send_intent` schema yet — when declared sends are
-   empty, `skipped_analyses` carries a teaching explanation).
-8. `hallucinote_mcp.schema.TOOLS` extended with `"ableton_analysis"`
-   (12 → 13 unified tools). `hallucinote_mcp.actions.analysis` exposes
-   three actions: `help`, `analyze(song_slug, captures_dir?)`,
-   `get_latest_report(song_slug)`. Both real actions are
-   `runs_server_side=True` — mirrors `ableton_annotation`'s pattern.
-9. `hallucinote_mcp.handlers.analysis` — `analyze_handler` opens song
-   DB to validate slug, defaults `captures_dir` to the latest
-   ISO-8601-named dir under `songs/<slug>/captures/`, calls
-   `analyze_mix`, writes the report to
-   `songs/<slug>/analysis/<iso-ts>.json`, returns
-   `{report_path, schema_version, finding_count, summary}`.
-   `get_latest_report_handler` returns the most recent MixReport JSON
-   contents + path.
-10. Tree-wide doc sweep for the tool-count drift: server.py PRIMER,
-    server.py module docstring, `create_server()` docstring (12 → 13),
-    `hallucinote_mcp/README.md` headline + tool table (added two new
-    rows for render + analysis — the table had been one behind through
-    Chunk 2), root `README.md` project-layout block.
-
-**Dependencies added** (`pyproject.toml`):
-`pyloudnorm>=0.2`, `librosa>=0.10`, `pyroomacoustics>=0.7`. All
-MIT/BSD/ISC. Comment in pyproject explaining what each does and why
-they belong as main deps (per Chunk 1's precedent: audio foundation
-belongs alongside the rest of the platform, not behind extras).
-
-**Tests:** +46 (2113 → 2159). Distribution:
-- `tests/unit/audio/`: 6 report, 7 loudness, 7 io, 5 attribution,
-  4 reverb, 4 analyze-orchestrator = 33
-- `hallucinote_mcp/tests/unit/`: 6 actions_analysis, 7 handlers_analysis
-  = 13
-Full suite: 2159 passed in 16.6 s parallel (`-n auto --dist loadgroup`).
-
-**Three measurable success criteria pass on synthetic fixtures:**
-- #3 — per-stem LUFS-I within ±0.2 LU on calibrated -23 LUFS pink noise
-- #4 — top-2 stems >60% attribution in the 60-200 Hz band on a
-  deliberately-overdriven kick+bass+rhythm fixture
-- #5 — measured RT60 within ±0.15 s of declared 1.2 s on a synthetic
-  dry impulse + known-IR convolution
-
-**Real-data sanity check** (informational; not gated on user verification):
-`analyze_mix('songs/reggae-metal/captures/20260527T200614Z')`
-produced a structurally-correct report: master at -16.48 LUFS-I,
--2.03 dBTP (no overshoots — render not hot enough to overshoot);
-5 stems all in plausible mix-bus territory (-16 to -22 LUFS-I, drums
-peaking at -0.63 dBTP); A-Plate return shows real reverb tail
-(-57 LUFS-I) while B-Room + C-DubDelay are silent (no sends were active
-during that render — informational, not a bug). Reverb verification
-section correctly skipped with the structured teaching reason (no
-declared RT60 schema in DB yet).
-
-**Out of scope for Chunk 3, deferred to backlog:**
-- Section-windowed analysis (P1 — chorus / verse / bridge scoping)
-- `compare_to` baseline diffs (P2 — field reserved in schema)
-- Masking analyzer (P2 — custom DSP)
-- Candidate mutation proposals (P2 — the "fix" side of §6)
-- Reference corpus + full realtime feature set + take retention +
-  `AUDIO_CAPTURED` event (P3 cluster)
-- Source-separation fallback (P4)
-- DB schema for `reverb_send_intent` (the missing piece that unblocks
-  populated reverb_verifications on real songs without caller-supplied
-  sends — natural Chunk-3 follow-up)
-
-**Bundled M4L bugfix (commit `c46288a`):** the P0 backlog entry "`.amxd`
-`[value track_id_retained]` is GLOBAL-by-name; multi-analyzer
-/signature reply routing is unsafe" closed in this branch. The Max
-patch was rewired to use a per-patcher `[message]` box for track_id
-storage instead of `[value <name>]` — same shape as the
-`[value hallucinote_path]` fix that closed Chunk 2 sub-chunk 2B,
-applied to the OSC-feature-emit side. `.amxd` re-exported from Max
-(487308 → 487801 bytes; verified byte-identical against the User
-Library install); spec.md updated to reflect the new wiring and remove
-the "Known multi-instance caveat" section that documented the bug;
-P0 backlog entry deleted (Verifiable signal "no `[value <name>]` boxes
-remain in the .amxd JSON" is satisfied). Not strictly required for
-the Chunk 3 analysis pipeline (the analyzer's `/signature` reply
-routing isn't on the analyze hot path), but bundling it here closes
-the only known structural M4L bug ahead of the next sidecar work that
-would have triggered it.
-
-## 2026-05-27 — Audio Analysis MVP, Chunk 2 close-out — multi-analyzer simultaneous capture verified
-
-<!-- prawduct: chunks=2 | status=shipped | release=v1.4.0 | scope=audio-analysis-mvp -->
-
-Chunk 2 — Capture pipeline — closed. Multi-analyzer simultaneous capture
-verified end-to-end on reggae-metal song in Live 12.4 at 180 BPM:
-`ableton_render(action='render', song_slug='reggae-metal',
-start_at_beat=8, stop_at_beat=24)` produced 9 WAVs (5 tracks + 3 returns
-+ master, each ~1.9 MB FLOAT/stereo/44.1k matching the 16-beat window at
-180 BPM) + `manifest.json` in `songs/reggae-metal/captures/<utc-ts>/`.
-Cross-correlation of track-01 Drums vs master.wav: peak lag = 0 samples
-(sample-accurate). The transport-position-driven recording design
-(Chunk 2 architecture decision) is structurally PDC-correct.
-
-**Five fix sets landed in this close-out session:**
-
-1. **Four integration-layer fixes from the prior session's afternoon
-   triage backlog** (each with dedicated regression tests pinning the
-   structural property that prevents recurrence):
-   - (a) `ensure_analyzers_loaded` marshals each Live touch through
-     `context.run_on_main` with a 50ms inter-surface yield. Was packing
-     9-surfaces × 3-ops into one Remote-Script request-thread call, which
-     deadlocked Live's main thread on the M4L runtime.
-   - (b) `render_handler` splits seek/play and stop/disarm into separate
-     `context.run_on_main` bouts with a worker-thread yield between.
-     Fixes Live's "Changes cannot be triggered by notifications" error
-     when one bout writes a state-change that triggers a listener
-     cascade then synchronously enters another mutation.
-   - (c) `server.handle_tool_call` absolutizes `ableton_render(render)`'s
-     `output_dir` against the MCP server's cwd before forwarding to the
-     Remote Script. Live's process cwd is `/` on macOS (read-only); the
-     handler's pre-existing relative default raised `OSError [Errno 30]`.
-   - (d) Port range shifted 11000 → 11020 (track base), 11100 → 11120
-     (return base), 11200 → 11220 (master), 11201 → 11221 (sidecar
-     emit). Clears AbletonOSC, the most common community Remote Script,
-     which binds 11000 + 11001.
-
-2. **Pre-roll seek fix** in render_handler: seeks to
-   `max(0, start_at_beat - pre_roll_beats)` instead of directly to
-   `start_at_beat`. Without the pre-roll, the patch's transport-cross
-   detector (`$f2 < $i3 && $f1 >= $i3`) lands its first observer fire
-   AT the threshold and misses the edge. Default `pre_roll_beats=4`
-   (one bar at 4/4), symmetric to `post_roll_beats`.
-
-3. **Wire/client `read_timeout` split**: `client.send`'s single 15s
-   `timeout` split into `connect_timeout` (default 15s, bounds socket-
-   accept) and `read_timeout` (default 15s, may be `None` for indefinite-
-   block). `server.handle_tool_call` passes `read_timeout=None` for
-   `ableton_render(render)` since the handler plays the full arrangement
-   (minutes for long songs). `wire.recv_message(timeout=None)` now
-   explicitly clears any inherited socket timeout.
-
-4. **MAJOR ROOT-CAUSE PATCH FIX**: in-Live verification revealed that
-   the `.amxd`'s `[value hallucinote_path]` storage was a GLOBAL shared
-   variable across all M4L instances (M4L's `[value <name>]` is global-
-   by-name). When N analyzers received `/path` in sequence, only the
-   LAST path survived globally; all N `sfrecord~` instances raced to
-   open the SAME file at cross-detect time, only one wins. Deterministic
-   and order-dependent: OSC to track 1 then track 2 → only track 2
-   records; reverse order → only track 1 records. Patch rewired so
-   `OSC-route /path → prepend open → sfrecord~` directly (per-instance
-   file handle on `/path` arrival), removing the value-storage
-   indirection. Plus a `[sel 0 1]` outlet 1 → `[-1.]` wire for arm-
-   rising-edge prev-pos reset (handles `start_at_beat=0` case under
-   repeated renders). New learning landed: "M4L `[value <name>]` is
-   GLOBAL-by-name across all device instances — never use for per-
-   instance state."
-
-5. **Critic-round-2 cleanups** (from `/critic chunk` second pass):
-   deleted duplicate `_default_captures_dir` helper from handlers/
-   render.py (server.py's `_absolutize_render_output_dir` is the single
-   source of truth for default-resolution + absolutization); handler
-   now refuses missing `output_dir` to make the contract explicit.
-   Removed obsolete `_PER_INSTANCE_OSC_YIELD_S` constant + the
-   `time.sleep` call — the patch fix makes per-instance OSC arrival
-   truly independent (each udpreceive owns its own bound port), so the
-   prior 50ms defensive yield is no longer load-bearing. Fixed
-   `shared_sidecar` test to monkey-patch the default port (was failing
-   when MCP server's sidecar was already running on 11221).
-
-**Tests:** 2114/2114 pass (+10 since chunk start, all regression-pinning
-the structural fixes above). Critic `chunk` mode after the Critic-round-2
-cleanups: 0 blocking, 0 warnings, 0 notes.
-
-**Cumulative session learnings (4 new entries to `.prawduct/learnings.md`
-during this close-out):** the global-by-name `[value]` rule; the
-`[sel 0 1]` outlet-2-vs-outlet-1 disambiguation around `[-1.]`. Plus
-struck-through deprecation marker on the pre-existing "`[value]`
-doesn't emit on cold write — bang to emit" rule (subsumed by the new
-"always GLOBAL" warning).
-
-**Out of scope for Chunk 2, deferred to Chunk 3 or later:** the
-`[value track_id_retained]` global-by-name bug (used in /signature
-query reply target routing) — same shape as the hallucinote_path bug
-but lower-priority since /signature isn't called in the multi-analyzer
-render path. Backlog candidate when /signature becomes load-bearing
-for sidecar version-discovery.
-
-## 2026-05-26 — Audio Analysis MVP, Chunk 2 sub-chunk 2B partial — in-Live recording-path verification
-
-<!-- prawduct: chunks=2b-partial | status=shipped | release=v1.4.0 | scope=audio-analysis-mvp -->
-
-Sub-chunk 2B's recording-path half shipped. The HallucinoteAnalyzer
-`.amxd` was extended in Max's GUI to the Chunk 2 contract, and the
-transport-position-sync render was verified end-to-end against Live's
-transport on a Hallucinote song.
-
-**GO criterion met:** render window [4, 12] beats at 180 BPM produced
-`/tmp/chunk2_dtest.wav` as FLOAT/stereo/44.1 kHz with duration
-2.6703s vs expected 2.6667s — **+3.6ms / +0.31 audio buffer drift**,
-far inside the spec's ±4 buffer tolerance. Peak -8.19 dBFS, clean
-audio content from the source track's instrument. Transport-position-
-sync delivered the architectural win pinned at Chunk 1 close: no more
-MCP-latency padding around the recording window.
-
-**M4L surface authored:** widened `Port` Live param to 11000-11400
-(via Float + Unit Style = Int — Live's Int parameter cap is 256),
-added `EmitPort` + `Emit` Live params, added four new OSC routes
-(`/track_id` symbol retainer, `/start_at_beat` int, `/stop_at_beat`
-int, `/signature/query` with explicit reply-args), built the
-canonical `live.thisdevice → live.path live_set → live.observer`
-transport observer with `property current_song_time` sent as
-runtime message, replaced all `[value]` cold-inlet storage with
-`[i]`/`[f]` (the `[value]` non-emit issue), wired `[t b b]` →
-open + 1 → sfrecord cascade, gated via `has_path` flag, added
-prev_beat reset on Arm rising edge.
-
-**Five durable M4L learnings landed in learnings.md** — each was a
-multi-hour in-Live discovery, codified so the next M4L author starts
-from a better baseline:
-
-- `[value]` doesn't emit on write — use `[i]` / `[f]` for cold-inlet
-  storage. The `[value]` object stores writes silently; only banged
-  reads emit. Trade-off: lose named-shared semantics for emit-on-write
-  reliability.
-- `live.toggle` emits int 0/1 directly — no `[== on]` shim needed
-  (and adding it INVERTS the value because `==` coerces the symbol
-  arg `on` to int 0).
-- `live.observer` needs runtime `property <name>` message; the
-  `@property` constructor attribute silently fails AND can poison
-  the patcher's loadbang sequence. Outputs bare value (no
-  `<prop> <val>` prefix), so `[route <prop>]` filters out everything
-  if added downstream.
-- M4L patcher editor and Live runtime conflict over `udpreceive` —
-  close the patcher window (Cmd-W, not Cmd-Q) before runtime
-  testing. Keep `Window → Max Console` open separately.
-
-Plus the install bug fix at e388242 (which prevented this whole
-debugging session from being even longer): the install skill was
-copying the `m4l/` subdir into Remote Scripts in addition to the
-proper Presets/Audio Effects/Max Audio Effect/ location, so Live's
-browser indexed the analyzer twice and the user kept dragging the
-stale Chunk 1 copy onto tracks while editing the Chunk 2 copy. Fix
-landed in `install_paths.py` (added `m4l` to `REMOTE_SCRIPT_EXCLUDE_DIRS_ANY`)
-+ install skill body update.
-
-The authoring guide `AUTHORING-CHUNK-2B.md` was rewritten through
-Section D (observer chain), Section E.2 (live.toggle directly; no
-`[== on]`), new Section E.4 (prev_beat reset on Arm rising edge),
-Section G preamble (close-the-editor workflow rule), and the
-appendix traps table (six new rows for each discovered gotcha).
-
-Python-side: 2103/2103 tests still passing, no regressions.
-
-**Remaining for full Chunk 2 close:** Section F feature emitter
-(audio tap → K-weighted LUFS + sample peak + low-mid band → 30 Hz
-OSC frames to sidecar), in-Live master-strip analyzer load
-(`master=True` path; Python side ready), multi-analyzer simultaneous
-capture verification, PDC cross-correlation between track and master
-WAVs, `/critic chunk`. The recording-path verification alone is the
-hardest architectural piece — the rest is incremental in-Live
-authoring + verification work.
-
-## 2026-05-26 — Audio Analysis MVP, Chunk 2 sub-chunk 2A — Python deliverables for the capture pipeline
-
-<!-- prawduct: chunks=2a | status=shipped | release=v1.4.0 | scope=audio-analysis-mvp -->
-
-Sub-chunk 2A of Chunk 2 closed with the full Python-side surface for
-the audio-capture pipeline. M4L authoring + in-Live verification (sub-
-chunk 2B) is the next deliverable; the split mirrors Chunk 1's per the
-"Human-authoring boundaries split the chunk" learning.
-
-What landed:
-
-- **Master-strip device push** — `plan_push_devices`
-  (`src/hallucinote/sync/push.py`) now walks `kind='master'` tracks and
-  emits load + set-parameter ToolCalls addressed via `master=True`
-  instead of `track_index`. The `ableton_device` action schema +
-  `_resolve_parent` accept the new addressing uniformly across every
-  device action. **Closes the P0 backlog entry "Master-strip device
-  chains"** (open since 2026-05-17).
-- **`hallucinote_mcp.analyzer` package** — `setup.ensure_analyzers_loaded`
-  (idempotent silent sweep over audio tracks + returns + master,
-  deterministic per-instance OSC port assignment, writes Port + EmitPort
-  Live params on load), `osc.AnalyzerOSC` (OSC 1.0 string/int packer
-  for `/path`, `/track_id`, `/start_at_beat`, `/stop_at_beat`),
-  `sidecar.OSCSidecar` (lazy-spawned UDP receiver with per-`track_id`
-  ring buffers, lenient frame parsing — malformed frames drop without
-  killing the receiver).
-- **`ableton_render` MCP tool** with two actions:
-  `ensure_loaded` (silent sweep, returns layout) and `render`
-  (orchestrates ensure-load → OSC delivery → batch arm → seek + play →
-  poll transport → batch disarm → manifest write). Render handler is
-  fully unit-tested via injected seams; status='ok' on clean exit,
-  'incomplete' on transport timeout.
-- **Install skill extension** — copies
-  `HallucinoteAnalyzer.amxd` from the package into Live's
-  `Presets/Audio Effects/Max Audio Effect/` during install, probes
-  M4L runtime (returns `None` for MVP — Live edition isn't reliably
-  detectable; skill asks the user).
-- **Auto-load postlude** wired into `/song-new`,
-  `/track-new-with-instrument`, and `/return-new` skill bodies so
-  structural mutations keep analyzer placement in sync.
-- **Spec extension** in `m4l/HallucinoteAnalyzer.amxd.spec.md`: full
-  Chunk 2 surface documented (OSC feature emitter shape, transport-
-  position observer behavior contract, signature OSC query rationale,
-  widened `Port` range to 11000-11400 for the deterministic per-
-  surface port allocation).
-- **`.gitignore`** updates for `songs/*/captures/`, `.hallucinote/stems/`,
-  `*.amxd~`.
-
-Test impact: +66 unit tests across `analyzer/*`, `actions_render`,
-`actions_device` (master-strip), `push_devices` (master-strip planner),
-`install_paths` (analyzer copy + M4L probe), `install_skill_consistency`
-(structural-skill postlude wiring). 2033 → 2099 passing.
-
-## 2026-05-26 — Audio Analysis MVP, Chunk 1 — Plumbing proof-of-life shipped
-
-<!-- prawduct: chunks=1 | status=shipped | release=v1.4.0 | scope=audio-analysis-mvp -->
-
-Chunk 1 of the audio-analysis MVP closed with track-only proof-of-life
-verified in Live: `HallucinoteAnalyzer.amxd` (Max for Live audio effect)
-records a clean WAV under Remote Script control. The full Chunk 1 arc
-landed in two passes: the Python-side deliverables (numpy/scipy/soundfile
-deps, synthetic-stem fixtures, PDC alignment unit test, spec, throwaway
-harness) landed 2026-05-23, and the binary `.amxd` authoring + in-Live
-verification + close-out landed 2026-05-26.
-
-In-Live verification surfaced three M4L-authoring traps now codified in
-spec + learnings.md as durable rules:
-
-1. **Live parameters are float/int/enum only** — strings need an
-   out-of-band OSC channel. `output_path` cannot be a Live parameter;
-   delivered via `/path` to `[udpreceive]`.
-2. **Remote Script API uses short names** — `Parameter.name` returns the
-   `parameter_shortname`, not the long name. Harness addresses `Arm` /
-   `Port`, not `Record Arm` / `OSC Port`.
-3. **`sfrecord~` uses bare integers** — `1` (start) / `0` (stop AND
-   finalize). NOT `record 1` (= "record 1 ms" — produced 44-frame
-   captures), NOT `stop` / `close` (rejected with "doesn't understand").
-
-The MCP-latency-bounded recording window observed in Chunk 1 (~2 s wider
-than transport play window due to ~700 ms per `set_parameter` round-trip)
-pinned the **transport-position-driven, beat-based** recording boundary
-design for Chunk 2. The patch will read Live's transport at signal rate
-and start/stop `sfrecord~` at requested beat positions; arm parameter
-becomes a gate, not a boundary definer. Sample-accurate, tempo-change-
-immune, multi-analyzer-aligned for free.
-
-Chunk 1 GO criteria explicitly tightened to track-only proof-of-life
-scope (clean WAV, header finalized, format correct, signal reaches
-`sfrecord~`). Strict-duration and track-vs-master PDC alignment deferred
-to Chunk 2 (both require master-strip MCP support, a known Chunk 2
-deliverable). Full test suite green: 2033 passed in 18.42 s.
-
-## 2026-05-23 — Hygiene wave: P0 delete_notes + migrate tests + P1 JSONSchema enrichment + P3 fingerprint NUL-sniff
-
-<!-- prawduct: chunks=hygiene | status=shipped | release=v1.4.0 | scope=mutator-event-shape+test-coverage+wire-schema-enrichment+fingerprint-binary-safety -->
-
-Five backlog items closed in one feature branch (fix/hygiene-wave-p0-p1-p3),
-each with tightly-scoped regression tests, accurate root-cause commit
-messages, and same-PR backlog deletions per discipline rules #1 + #3.
-
-**P0 `delete_notes` clip_id fix** (`b123e93`): `delete_notes` previously
-emitted a single NOTES_DELETED event with `clip_id=None`, so
-`_latest_actor_for(row_kind='clip')` — which scans `events.clip_id`
-directly — missed the touch. A build-owned clip whose only LLM-touch
-was delete_notes became falsely tombstone-eligible. Fix emits one event
-per affected clip with `clip_id` set, symmetric with NOTE_UPDATED +
-insert_notes so events.clip_id carries consistent semantics for every
-clip-touching event. Single-clip path (the only shape today's
-`sync/pull.py:2971` exercises) still emits one event; multi-clip path
-yields per-clip events instead of one spanning many, also restoring
-per-clip granularity on the events.clip_id column.
-
-**P0 W8-B verification** (no code): verified the agent-side push/pull/
-capture wrap-in-M.request item is already structurally satisfied by
-W23-C — `push_execute.py:410` opens kind='push', `pull_cli.py:161+277`
-open kind='pull', MCP dispatcher's `auto_request` opens kind='mutate',
-and `/song-snapshot` doesn't mutate the DB (the snapshot file IS the
-deliverable). Entry deleted from backlog as stale.
-
-**P0 `tools/migrate_arrangement_clip.py` test coverage** (`6369c21`):
-401-line synthetic-fixture test file with 7 cases covering the one-shot
-`arrangement` → `arrangement_clips` migration: table+index renames,
-event-kind rename, JSON1 payload-key rewrite (with a sentinel kind
-proving unrelated rows stay untouched and that no legacy
-`arrangement_id` key survives anywhere), `ableton_links.db_kind` rename,
-second-run no-op idempotency, both-tables-present refusal, and full
-rollback on mid-transaction failure. Loader pattern mirrors
-`test_migrate_returns_strip_prefix.py` (importlib.util + raw-SQL seeding
-via the inverse rename).
-
-**P1 JSONSchema enum/min/max/description enrichment** (`44955e1`):
-ParamSpec already carries `enum` / `minimum` / `maximum` / `description`
-(used by the dispatcher's teaching errors and `action='help'`), but
-only the Python type flowed into FastMCP's pydantic-derived JSONSchema.
-Agents saw `Optional[int]` for `cc_number` (no 0–127 bound),
-`Optional[str]` for `target_kind` (no seven-value enum), and no
-descriptions — pruning impossible calls happened only after the
-dispatcher's error. New helper `_annotated_param_type` wraps each
-param's Python type in `Annotated[Optional[T], Field(...)]` inside
-`_register_tool`: `ge` / `le` for ranges, `description` passes through,
-and `json_schema_extra={"enum": [...]}` for runtime-data enums.
-Dispatch-time validation is unchanged; this widens the discovery surface
-only. Test pins three representatives (bpm 20–999+description,
-target_kind enum, cc_number 0–127 integer range).
-
-**P3 `_FINGERPRINT_PATHS` binary-safety guard** (`49e546d`):
-`_hash_file`'s CRLF→LF normalization is correct for the current
-`_FINGERPRINT_PATHS` membership (every entry resolves to Python source),
-but the invariant lived only in the docstring. A future contributor
-adding a non-Python entry (JSON manifest with embedded CRLF, static
-`.als` skeleton, `.so`) would have `b"\r\n"` substrings silently
-corrupted by the replace. Fix sniffs the read bytes for a NUL byte: if
-present (binary heuristic), skip the replace and hash byte-for-byte.
-Python source has no NUL bytes, so the existing CRLF/LF cross-platform
-stability path is unchanged for them. Test pins the new invariant —
-two binary blobs differing only in a CRLF↔LF substitution must hash
-differently.
-
-Backlog scrub closes the five entries inline. `docs/v11-requirements.md`
-F2 strike-through marks delete_notes events.clip_id as shipped (Critic
-note from the bundle review). Settings.json banner refreshed from v1.4.0
-to v1.5.0 alongside the post-sync state.
-
-Test count: **2027 passing** (11 new tests this wave: 1 schema
-enrichment, 1 fingerprint NUL-sniff, 2 delete_notes, 7 migrate). Both
-cumulative-Critic and PR-review gates clean.
-
-## 2026-05-22 — Arc 7-tail: enum envelopes + device-load hardening + W13-A fallback identity (E1+E2+E3)
-
-<!-- prawduct: chunks=E1,E2,E3 | status=shipped | release=v1.4.0 | scope=enum-envelope-authoring+device-load-post-condition+w13a-fallback-identity -->
-
-Three chunks bundled per the user's "one PR for the bundle" direction,
-all empirically scoped from the 2026-05-22 Live-side probing session.
-Empirical-Live round-trip verification for E1 and E3 is explicitly
-deferred behind the MCP version-mismatch gate
-(`project_mcp_reconnect_workflow`); each chunk's "Done when" leaves the
-deferred verification line as `[ ]` rather than collapsing scope.
-
-E1 closes the per-section enum-parameter envelope authoring gap. Schema
-lift `device_parameters.value_items_json` carries enum cardinality at
-`detail='full'`; pull captures it on the same path that already captured
-numeric value; new mutator `M.create_enum_envelope` resolves enum-name
-breakpoints via DB snapshot (primary) or `value_items` kwarg
-escape-hatch; MCP `write_envelope` accepts `value_type='enum' |
-'continuous'` (default continuous for back-compat) and mirrors
-`set_parameter`'s enum-resolution path. `songs/sun-zone-done/` ships as
-the empirical driver — Amp.Type Clean↔Heavy authored via the helper at
-section boundaries (28 breakpoints across 8 sections, escape-hatch
-`value_items` until a Live round-trip populates the snapshot).
-Tree-wide doc sweep updated `song-authoring-conventions.md`,
-`snapshot-schema.md`, `mcp-tool-design.md`, and the ableton-pull skill.
-
-E2 closes the device-load post-condition false-positive surfaced in the
-2026-05-22 probing pass: `ableton_device(action='load', kind='Drum
-Rack')` onto a track ending with an Instrument Rack succeeded
-semantically (chain ended `[1:DrumGroupDevice]`) but the handler raised
-because the post-condition only checked chain-length growth. Fix lifts
-the post-condition to three success shapes — chain grew (append, the
-common case), chain length unchanged but class at exactly one position
-changed (replace-in-place), or zero changes (still the silent-no-op
-error) — and raises distinct `RuntimeError`s for multi-position-change
-and chain-shrink. `_canonical_class_name(device)` factored so the
-pre-load snapshot and the response's `loaded_class_name` use the same
-`class_display_name || class_name || ""` rule. `_raise_silent_noop`
-typed `NoReturn` so future refactors can't silently fall through.
-Backlog refresh: Instrument Rack bare-name entry struck
-(fixed-by-drift on Live 12.4); Drum Rack name-collision entry reframed
-as per-machine library hazard.
-
-E3 closes the W13-A v1.0 instrument fallback identity gap (cross-machine
-plugin-load portability). Single new column `devices.browser_path_json`
-carries the JSON-encoded browser path from root to loaded item — design
-shift from the original two-column (manufacturer + pack_name) plan
-since vendor/pack live at different depths across Live's browser tree
-(third-party plugins 1-deep under `plug-ins`; Live packs 1-deep under
-`packs`; Suite instruments 1-deep under `instruments`). `M.create_device`
-accepts `browser_path: list[str] | None`, validates shape, JSON-encodes,
-participates in idempotency tuple + DEVICE_CREATED event payload.
-`replay_capture` reads the snapshot's `browser_path` key (pre-E3
-snapshots land NULL — graceful degradation). MCP `load_handler`
-accepts `browser_path` alongside `preset_uri`, tries URI first, on
-URI-walk failure synthesizes a `preset_query` from
-`path[0]`/`path[1:-1]`/`path[-1]` and reuses `_resolve_preset_query`
-with its 0/multi-match teaching errors. Load response surfaces
-`resolved_path` so capture flows can record the path automatically.
-Push planner emits `browser_path` alongside `preset_uri` (not alongside
-`preset_query`, which is itself the path-scoped selector — redundant
-layering avoided).
-
-Tests: +43 across the bundle (E1: +21, E2: +4, E3: +18). Suite:
-1949 / 1949 passing in 14.82s (+45 from the 1904 baseline at the prior
-Arc 7 polish PR). Three files intentionally left unstaged on the
-branch (parked v1.5 framework WIP per
-`project_prawduct_framework_authorship`): `.claude/settings.json`,
-`.prawduct/critic-review.md`, `tools/product-hook`.
-
-## 2026-05-22 — Arc 7: production polish (P1, P4, P5, P7) + Arc 2 / B5 (MCP auto-mutate)
-
-<!-- prawduct: chunks=P1,P4,P5,P7,B5,backlog-scrub | status=shipped | release=v1.4.0 | scope=envelope-polish+nested-rack-tombstone+device-load-class+mutator-prefix-strip+mcp-auto-mutate -->
-
-Arc 7 production-polish chunks bundled per the user's "one PR for
-several fixes" direction; P2 / P3 / P6 collapsed to documentation-only
-(P3 + P6 turned out to be already shipped; P2 deferred — needs Live
-access for the enum-param investigation).
-
-P1 closes the envelope WRITE polish backlog tail: `write_envelope_handler`
-threads `note_duration` so the note_expression branch extends its last
-step to note end (mirrors the W7-0 clip-scoped fix in note-LOCAL
-coords); `sidechain_trigger` gains `envelope_start_beats` to floor the
-first attack window at a section boundary (drops the redundant rest
-anchor when clamping collapses onto the hit); falling-walking drops
-its per-chorus `+ attack_beats` workaround; three `_emit_*_envelope`
-emitters (mixer / send / device_parameter) consolidate into thin shells
-around `_resolve_and_translate_to_session_clip` +
-`_emit_session_clip_envelope_post_warnings` helpers.
-
-P4 closes the last residual nested-rack gap: `_tombstone_untouched`'s
-device_chain / device / device_parameter SELECTs now go through a
-`WITH RECURSIVE` CTE (`_NESTED_RACK_CHAINS_CTE`) so chains parented by
-`parent_rack_device_id` are enumerated alongside top-level chains.
-Recursion terminates naturally; correct at any depth even though
-capture/push still target one level.
-
-P5 adds `loaded_class_name` to the `ableton_device(action='load')`
-response (reads `class_display_name` with `class_name` fallback) so
-callers can detect kind / preset_uri mismatches without a follow-up
-device.list probe. The other P5 items (canonical-root walk,
-Instrument Rack teaching error) were already shipped; master-strip
-device push deferred to the existing backlog entry.
-
-P7 enforces the W4-C `<letter>-` slot-prefix strip at the mutator
-boundary (`M.create_return` / `M.update_return`); shared helper moved
-to `hallucinote/return_naming.py` so capture.py and mutations.py both
-import from there (no circular dep). Send warnings consolidated on the
-`return_name` (DB-form) identity convention; `_track_kind` routed
-through `Q.get_track` so the two single-row lookups share one query.
-
-Arc 2 / B5 (committed earlier in the branch): MCP dispatcher
-auto-opens a `M.request(kind='mutate')` around `ableton_annotation`
-writes via `provenance.auto_request` so the handlers get `_request_id`
-threaded automatically and emitted events carry full provenance.
-
-Backlog scrub closed 7 entries shipped this PR per frontmatter rule 1
-(W7-0 cumulative-Critic warning 4, W4-B W1, W4-B N3, W4-C N1, W4-C N2,
-W10-F note 1, W12-A nested-rack tombstone, plus the stale W12-B pan
-alias entry).
-
-Suite: 1904/1904 passing (+31 from the 1873 baseline at Arc 6 tail).
-
-## 2026-05-22 — Arc 6: song-author hygiene tail (H1–H5)
-
-<!-- prawduct: chunks=H1,H2,H3,H4,H5,backlog-scrub | status=shipped | release=v1.4.0 | scope=song-author-hygiene+kit-strict+negative-beats-refusal -->
-
-Five small chunks closing song-author-side polish items the cumulative
-PR reviewer surfaced.
-
-H1 switched `full-band-rock/build.py` and `solo-piano-ambient/build.py`
-to `resolve_db_path()` — both had been pinned to bare
-`Path(__file__).parent / "<slug>.db"`, so their DBs never picked up
-D4's ALTER-add of `devices.class_name` and their regen'd
-`REQUIREMENTS.md` kept emitting `DrumGroupDevice` / `Compressor2`
-instead of post-D4 display names. With the change, per-branch DBs now
-carry "Drum Rack" / "Glue Compressor" / "Instrument Rack" in
-`devices.kind` and `REQUIREMENTS.md` regenerates cleanly.
-
-H2 renamed `songs/falling-walking/tests/test_build.py` →
-`tests/test_falling_walking_build.py` per the project's per-song
-convention (every song's bootstrap test file must be unique under
-`pytest -n auto --dist loadgroup`).
-
-H3 added `Kit.assert_has(*, strict=True)` — refuses pre-capture state
-explicitly so an empty-mappings kit doesn't silently pass via GM
-fall-through and then surface the wrong-sound case on a later session
-once `drum_pad_mappings` populates.
-
-H4 added a `start_beats < 0` refusal to `_normalize_note` — the
-chokepoint every note-write passes through. `apply_feel`'s math
-stays correct (within-bar positions can shift below zero); the wire
-layer rejects with a teaching error naming the most common cause (a
-feel shift on bar-1's downbeat) and the two valid fixes.
-
-H5 reworked `docs/song-authoring-conventions.md` "Per-part feel" rule
-2 to make explicit that the generator API is dict-only (strings live
-in the LLM prompt, resolve to dicts at compose time). `apply_feel`
-now also raises `TypeError` for non-Mapping non-None inputs so the
-documented contract is enforced at the boundary.
-
-Backlog scrub closed 5 entries shipped this PR per frontmatter rule 1.
-
-Suite: 1873/1873 passing (+3 from Arc 5 baseline, after Critic-driven fix-up tests).
-
-## 2026-05-22 — Arc 5: iteration-loop polish (P1–P6)
-
-<!-- prawduct: chunks=P1,P2,P3,P4,P5,P6 | status=shipped | release=v1.4.0 | scope=iteration-loop-polish+backlog-discipline -->
-
-Six small chunks of polish closing iteration-loop pain points after
-Arcs 2–4 shipped, plus structural backlog-accuracy discipline added
-to the frontmatter of `backlog.md`.
-
-P1 added `pull_cli execute --dry-run` (SAVEPOINT-wrapped preview;
-applied diff surfaces without DB mutation). P2 wrote the
-`/snapshot-bake-recent-changes` skill wrapping that engine. P3 shipped
-the first `hallucinote://` templated resource —
-`hallucinote://song/{slug}/annotations` — with parallel
-`RESOURCE_TEMPLATE_URIS` + `registered_resource_template_uris`
-plumbing. P4 added a Stop-hook-driven
-`tools/stamp_evidence_sha.py` that auto-refreshes
-`.test-evidence.json`'s `git_sha` so the recurring PR-review staleness
-friction stops. P5 guarded `parse_path_shape` against empty interior
-segments. P6 regenerated four songs' `REQUIREMENTS.md` post-D4 and
-added a `_post_d4_note` to `device-params.json`.
-
-P0 (backlog accuracy tooling) deferred to coordinate with in-flight
-v1.5 framework WIP. P6c (Arc 3 e2e against real Live) deferred — needs
-a known-good Live session.
-
-In-session backlog scrub: frontmatter discipline rules added; three
-verified-shipped entries removed (build.py song_id reuse, ableton_track
-delete refuse, push-state coherence three-bug entry); seven entries
-closed by the PR itself.
-
-Both cumulative `/critic` and the independent `/pr` reviewer were
-unable to run during the session due to Anthropic API 529s; merged
-under explicit `.gates-waived` rationale with the commitment to
-re-run when API recovers.
-
-Suite: 1870/1870 passing.
-
-## 2026-05-22 — Arc 4 / D4: structural display-name shift (delete _CLASS_TO_DISPLAY)
-
-<!-- prawduct: chunks=D4-1,D4-2,D4-3,D4-4,D4-5,D4-6,D4-7 | status=shipped | release=v1.4.0 | scope=loader-display-name-convention -->
-
-D4 verification surfaced a deeper problem than the spec called for.
-Live merged Phaser+Flanger in 12.x and minted a new internal class
-`PhaserNew` — the existing translation table (`_CLASS_TO_DISPLAY`)
-had no entry, so the captured class name didn't round-trip. Empirical
-investigation showed Live ALREADY exposes the right value natively
-via `device.class_display_name` (already read by the `capabilities`
-MCP action); the translation table has been reinventing a Live API
-attribute the whole time.
-
-Per user direction (no back-compat — no snapshots in the wild yet),
-the table is eliminated entirely rather than patched with a
-`PhaserNew` entry. Convention shift:
-
-- **`devices.kind`** semantics flip from "Live's internal class
-  name" to **"browser display name"** (= `device.class_display_name`).
-  This is what the loader's kind-as-given walk matches against.
-- New nullable **`devices.class_name`** column carries Live's
-  internal class identifier (`Compressor2`, `PhaserNew`,
-  `PluginDevice`, etc.). Informational + drives plugin
-  classification (compat's third-party-plugin discriminator now
-  reads class_name).
-- MCP capture probes (`ableton_device(action='list')` / `info` /
-  `get_device_chains`) gain a `class_display_name` field. Pull
-  writes `class_display_name → kind`, `class_name → class_name`.
-- Loader simplified to single kind-as-given match. `_kind_candidates`
-  removed. `_CLASS_TO_DISPLAY`, `class_name_to_display`, and
-  `strip_device_suffix` deleted from `device_names.py`. The W7-0
-  cross-category rack-root protection (`browser_root_for_rack_kind`)
-  stays — that's a separate concern, still load-bearing.
-
-**Maintenance footprint dropped dramatically.** Pre-D4 the table
-required an entry per Live built-in whose internal class differed
-from its display name (~30 entries today; growing with each Live
-release). Post-D4 there's nothing to maintain — Live's own API
-provides the data.
-
-Test fixtures + 5 captured_session.json files migrated to the new
-convention. Action descriptions + agent-facing skill markdown updated
-(loader contract docs that drive every `ableton_device(action='load')`
-call were the cumulative Critic's BLOCKING finding — the test
-explicitly pins kind='Compressor2' as a FAILURE post-D4, but the
-description was still recommending that exact value to agents).
-`docs/snapshot-schema.md` updated: `class` field convention shifted
-to browser display name + `class_name` field added.
-
-After merge: re-run `/ableton-mcp-install` to refresh the vendored
-Remote Script (the `class_display_name` probe field needs to be in
-Live's Python before pull benefits from it). The MCP server side
-ships in the next pip release.
-
-Suite: 1847 passing (was 1880 — 33 tests removed via deletion, no
-behavior regressions; the functions they covered no longer exist).
-
-## 2026-05-21 — Fix: annotation handler crashed Live's Remote Script load
-
-<!-- prawduct: chunks=hotfix | status=shipped | release=v1.4.0 | scope=arc-2-live-verification-fallout -->
-
-Arc 2's `ableton_annotation` handler imported `sqlite3` at module
-load. Live 12.x's embedded Python ships without the `_sqlite3` C
-extension, so the import raised `ModuleNotFoundError` and cascaded
-up through `actions/__init__.py` to abort the entire Hallucinote
-Control Surface load. Symptom: Live shows "Hallucinote" in the
-Control Surface dropdown but the MCP bridge on `127.0.0.1:9878`
-never starts and `ableton_session(action='info')` returns
-"Connection refused." Diagnose via Live's `Log.txt` — the
-`RemoteScriptError` traceback names the chain.
-
-This is exactly the gap the Arc 2 cumulative-Critic backlog item
-"`ableton_annotation` live verification end-to-end" predicted: unit
-tests pass against the host Python (which has `sqlite3`), but the
-embedded Python is the runtime that matters. The `sqlite3.Connection`
-/ `sqlite3.Row` references in the handler were function-signature
-annotations only, lazy strings under `from __future__ import
-annotations` — so the import was dead at runtime and could be
-removed without touching any logic. A load-bearing NB comment now
-names the trap.
-
-**Regression test (AST-based, host-Python-independent).** New
-`hallucinote_mcp/tests/unit/test_remote_script_import_safety.py`
-walks every action/handler/transitive top-level module in the
-Remote Script load chain, collects module-load-time imports, and
-refuses any in `_FORBIDDEN_TOP_LEVEL_STDLIB` (`sqlite3`, `_sqlite3`
-today). Imports nested in function bodies / try/except guards /
-conditionals don't count — those are deferred to invocation time,
-which is the safe pattern. AST inspection rather than runtime import
-because several Remote Script modules depend on `_Framework`
-(Live-only) and would fail with the wrong error if imported
-directly.
-
-Suite: main 1878 passing (+2 for the new tests), MCP 697 passing.
-
-After merge users must: quit Live (caches Control Surface modules
-at startup), `/ableton-mcp-install` to refresh the vendored copy,
-reopen Live, then `/mcp` to respawn the MCP subprocess.
-
-## 2026-05-21 — Arc 3: Compose-time validation, round 2 (R-2 follow-ons)
-
-<!-- prawduct: chunks=C1,C2,C3 | status=shipped | release=v1.4.0 | scope=compose-validation-r2-followons -->
-
-R-2 (v1.0.1) shipped the pure module `compat.classify_preset_query`
-and the `browser_dry_runs` map plumbing through `check_song`, but left
-the CLI orchestration on the backlog. Arc 3 closes the loop the R-2
-PR opened: in-process browser-search probing for compat check,
-ergonomic path-shape sugar at the authoring boundary, and a one-shot
-`pull_cli execute` that bakes mix-time tweaks back into the DB.
-
-**C1 — `compat check --probe`.** New flag on the existing CLI. When
-set, walks the song's DB for unique structurally-valid `preset_query`
-specs, dedupes by `(root, pattern, path_prefix)`, issues
-`ableton_browser(action='search', limit=2)` per unique key
-in-process via the MCP TCP client, populates `browser_dry_runs` and
-feeds it to `check_song`. Orthogonal to `--installed-plugins <path>` —
-the two flags can be combined or used independently. Without
-`--probe`, existing behavior preserved (preset_query devices land in
-`preset_query_unverified`). `limit=2` because the report only buckets
-0 / 1 / 2+ matches — walking past 2 is wasted work. Failed searches
-raise `SystemExit` (a partial map would silently surface as a
-false-clean report). The stale `--browser-dry-runs <file>` reference
-in the `preset_query_unverified` detail message replaced with the
-now-real `--probe` flag. 8 new tests.
-
-**C2 — `preset_query` path-shape sugar.** New top-level module
-`src/hallucinote/preset_query.py` ships `BROWSER_ROOTS` (single source
-of truth replacing the duplicate constant in `compat.py`) +
-`parse_path_shape("Drums/Kit-Core 909") → {root, pattern}` +
-`normalize(dict | str | None)`. `M.create_device(preset_query=...)`
-accepts either form; the DB always stores the canonical dict so
-downstream consumers (push planner, compat.check_song, MCP loader)
-see a single shape. Root segments are case-insensitive with
-``" "`` ≡ ``"_"`` (`"Audio Effects/Hall"` ≡ `"audio_effects/Hall"`).
-≥2 segments required; empty/whitespace pattern rejected; unknown root
-rejected naming the valid set. ``mode``/``case_sensitive`` not
-surfacable through path-shape — authors who need those keep using
-the dict form. 20 new tests (parser + integration through
-`create_device` for persistence/idempotency/error propagation).
-Closes the v11 Arc 3 C2 open question on syntax — resolved in favor
-of sugar-at-the-authoring-boundary with DB stored only as canonical
-dict.
-
-**C3 — `pull_cli execute` (in-process probe + apply).** The spec
-framed this as "snapshot-bake-recent-changes" but the real round-trip
-durability lives in the DB, not in `captured_session.json` —
-`captured_session.json` only feeds `replay_capture(snap)` in
-`build.py`, while push reads directly from the DB. So writing to the
-DB is the right target. New `pull_cli execute <domain> <session_id>
---song <slug>` subcommand collapses the historical `plan → file →
-execute probes → file → apply` dance into one in-process pass.
-Generic across all 10 existing `_DOMAINS` (device-parameters is the
-motivating use case; the surface is domain-agnostic). The "clear
-diff" comes free via `ApplyResult.details`. Provenance envelope
-identical to `_cmd_apply` — every `execute` opens a `kind='pull'`
-request closed on success. 6 new tests.
-
-Deferred for v1: dedicated `--dry-run` (a proper rollback wrapper
-or in-memory DB clone is bigger than C3's spec calls for; backlog if
-the workflow shows it's needed). Live verification deferred for both
-`--probe` (C1) and `execute` (C3) — Live's Control Surface slot wasn't
-enabled in this session; unit tests cover wire shapes against the
-production schema. Skill markdown
-(`/snapshot-bake-recent-changes`) deliberately not in this arc.
-
-Suite: 1876/1876 passing (was 1842 — 34 net new tests).
-
-## 2026-05-21 — Arc 2: Provenance + annotations MCP + dev-loop dispatcher bypass
-
-<!-- prawduct: chunks=Q1,B3-resid,B2,B4,B5 | status=shipped | release=v1.4.0 | scope=provenance+annotations-mcp+dev-ergonomics -->
-
-After a Wave 8 audit found that B1 had already shipped wholesale and
-B3/B5 were partial, Arc 2 reduced to: Q1 (dev-loop dispatcher param)
-+ B3-residual (three missing `requests` columns) + B2 (the agent-facing
-annotations MCP surface W8-C didn't ship) + B4 (provenance wiring into
-drivers) + B5 (defensive/generative `/song-context` modes).
-
-**Q1 — `allow_version_mismatch` MCP envelope bypass.** The strict
-server/Remote-Script version handshake is correct for production but
-poisonous for the dev loop where every Python edit invalidates the
-source fingerprint. New envelope-level `allow_version_mismatch: bool`
-on `wire.Request` (default `False`) lets a caller opt into dispatching
-across drift. On bypass+drift, the response carries a `warnings: [...]`
-advisory naming the data-corruption risk and "development only" intent;
-on bypass+no-drift it's a no-op. The existing version-mismatch error's
-`hint` now mentions the escape hatch so agents discover it through the
-error path itself (no docs lookup). Wired through `wire.Request`,
-`wire.Response.warnings`, new `check_version_compat_with_override`
-helper, FastMCP `_register_tool` synthetic-param injection, and
-Remote Script `_handle_client`. Covered by unit + 3 end-to-end TCP
-integration tests.
-
-**B3 residual — provenance rationale columns on `requests`.** Adds
-`prompt_text` (verbatim seed prompt), `parent_id` (self-FK so child
-cycles chain to enclosing parents), and `metadata_json` (`{model,
-git_sha, branch, hostname, ...}`) via the same idempotent
-`_ensure_added_columns` path W8-B used. Existing rows get NULL on all
-three; `create_request` + `M.request(...)` context manager accept the
-new fields. Invalid `parent_id` raises (vs silent dangling FK).
-
-**B2 — `ableton_annotation` MCP tool.** W8-C shipped the annotations
-table + mutators + queries but no agent-facing surface — storage
-without affordance. New unified tool wraps `M.add_annotation` /
-`update_annotation` / `delete_annotation` / `Q.get_annotations_for_song`
-/ `get_annotations_at_bar` via `add` / `list` / `get_at_bar` / `update`
-/ `delete` actions. Handler resolves `song_slug` → per-song DB →
-song row + 1-based `track_index` → `track_id`. Teaching errors on
-unknown slug / unknown track / unknown annotation_id. Three-line
-Python-via-Bash workaround replaced with a single MCP call so the
-"annotate as you compose" habit becomes cheap. Resource
-`hallucinote://annotations/<song_slug>` deferred (templated-resource
-test plumbing; the `list` action covers the read use case).
-Session-briefing wiring dropped per user direction (prawduct-framework
-upstream territory).
-
-**B4 — provenance wiring into drivers.** New `M.provenance_metadata()`
-helper (best-effort git_sha/branch/hostname + caller extras).
-`build_session` auto-captures via this helper AND accepts explicit
-`prompt_text`/`parent_id`/`metadata` kwargs (caller-provided keys
-override auto-captured). `push_execute` and `pull_cli` pass
-`metadata={"driver": ..., "session_id": ..., +/- "domain": ...}` on
-their `M.create_request` calls. Every compose / push / pull cycle
-now carries platform context for free. Dispatcher-level auto-`mutate`
-parent descoped — the MCP dispatcher has no DB awareness today and
-threading one in is its own chunk.
-
-**B5 — `/song-context --defensive` + `--generative`.** Adds two
-retrieval orientations to the existing read-only markdown_refs surface.
-`--defensive` reframes results as "items below MAY CONTRADICT your
-plan" and flags rows whose snippet carries negation/constraint
-language. `--generative` runs a second `Q.find_markdown_refs(tags=...)`
-pass surfacing related-by-tag rows under a "Related context" heading.
-Single additional SQL pass; semantic search is v1.2+. Skill name kept
-as `/song-context` rather than renamed to `/decisions` — the corpus
-spans decisions + annotations + structural-facts; "context" is broader
-and matches object-action naming.
-
-**Tests:** suite 1788 → 1841 (+53 new). Coverage spans wire shape +
-4-state handshake bypass, FastMCP wrapper propagation, integration
-TCP loop, request column round-trips + parent FK enforcement + ALTER
-idempotency, annotation handlers (15 tests, end-to-end DB ops),
-provenance metadata + build_session auto-capture, and defensive +
-generative mode rendering + related-by-tags exclusion of seeds.
-
-**Out of scope (carried to backlog):** dispatcher-level auto-`mutate`
-parent (architectural), `hallucinote://annotations/<song_slug>`
-templated resource (test plumbing), live verification of
-`ableton_annotation` end-to-end against a real Live session (requires
-`/ableton-mcp-install` + Live restart to materialize the new tool;
-will fire on first compose-time use).
-
-
-## 2026-05-21 — Arc 1: Drum Rack pad-mapping discovery + push-loop residuals
-
-<!-- prawduct: chunks=A3,A1-resid,A2-resid,A5 | status=shipped | release=v1.1.0 | scope=push-reliability+drum-mapping -->
-
-**A3 (substantive) — Drum Rack pad-mapping discovery.** Closes the
-sun-zone-done Hot Rod Kit cautionary tale (metal sections clanging on
-cowbell because GM-default ride at note 51 lands on Hot Rod's "Cowbell
-Fenk Chick" pad) structurally:
-
-- `Kit.pitch_of(canonical)` now **raises** with a teaching message
-  when the kit has captured mappings, no canonical-name chain matches,
-  AND the GM-default note is taken by a differently-named chain (the
-  wrong-sound case). The empty-pad-slot fall-through stays warn+GM
-  (harmless silence — GM-default points at a Live empty pad on this
-  kit; nothing plays).
-- `Kit.try_pitch_of(canonical) -> int | None` — additive safe
-  resolver for callers that want to react to absence.
-- `Kit.assert_has(*canonicals)` — bulk fail-fast at composition start.
-- `push_cli execute` auto-populates `drum_pad_mappings` via a new
-  `Q.get_linked_drum_racks_for_session` walker invoked after the
-  devices-phase position (runs on both phase-OK and phase-SKIPPED so
-  W20-A's idempotent re-pushes still trigger pad capture).
-- `PhaseOutcome.pad_probes_ok` / `pad_probes_failed` surface in the
-  state file only when probes actually fire (zero-ceremony for songs
-  without Drum Racks).
-
-**A1-resid — `_cmd_execute` coherence-check default hardening.** The
-argparse mutex group is now `required` and includes a visible
-`--no-coherence-check` opt-out. Pre-hardening the default behavior was
-"silently skip the check when neither --probe nor --snapshot is set"
-(the punk-fate state-drift safety net was opt-in by accident). Now the
-default is "refuse with the three flag options enumerated."
-
-**A2-resid — `browser.load_item` no-append error.** The handler's
-`device.py::load_handler` no-append path now enumerates the parent's
-existing chain (`[index:class_name, ...]`) so diagnose-and-fix doesn't
-need a separate `ableton_device(list)` probe. The misleading
-"instrument on a return" hint is preserved only for return-parent
-calls (where it's actually structural).
-
-**A5 — Partial-push recovery docs.** `push_cli execute` FAIL summary
-now appends the verbatim recovery command (idempotent re-run after
-fix). `.claude/skills/ableton-push/SKILL.md` gains a "Recovering from
-partial push" subsection naming the structural pattern. No `--resume`
-flag — W20-A's device-binding idempotency makes re-run the right
-recovery path.
-
-**Scope audit.** Initial Arc 1 plan covered seven chunks (A1-A7).
-Code-level audit on 2026-05-21 confirmed five chunks already shipped
-during v1.0.0: A1 via W18-A/B, A2 via W20-A, A4 in `create_song`'s
-existing by-name lookup, A6 via W18-E, A7 in `ableton-push/SKILL.md:159`.
-`docs/v11-requirements.md` Arc 1 + the build-plan carry the
-audit-corrected scope; the backlog reconciliation marks Hot Rod Kit +
-Drum Rack pad-mapping discovery + Push planner duplicates devices +
-browser.load_item misleading hint (i) as RESOLVED with cross-references.
-
-**Documentation.** `docs/song-authoring-conventions.md` gains a "Drum
-kits: probe, don't assume" subsection. `docs/v11-requirements.md` Arc 1
-section rewritten with audit-accurate scope.
-
-Suite: main 1788 (+30) + MCP 664 (+3) = 2452 passing, 0 failed.
-
-
-## 2026-05-20 — R-1 + R-2: cue idempotency, scaffold cleanup CLI, compat preset_query validation
-
-<!-- prawduct: chunks=R-1,R-2 | status=shipped | release=v1.0.1 | scope=push-reliability+compose-time-validation -->
-
-**R-1.1 — Cue push idempotency.** `ableton_arrangement(cue_create /
-cue_create_batch)` gains `if_exists={"refuse", "skip"}`. Single-cue
-default `"refuse"` preserves one-shot caller semantics; batch default
-`"skip"` makes the planner's re-push idempotent (same-name same-position
-no-ops with `skipped=true`; name mismatch refuses so rename intent goes
-through `cue_rename` explicitly). `plan_push_cue_points` emits
-`if_exists="skip"` so re-pushing the same DB into a Live set that
-already has the cues no-ops the second time, instead of the prior
-"halt with `a cue already exists at position_beats=0.0` on every cue."
-
-**R-1.2 — Default-scaffold cleanup CLI.** `push_cli
-cleanup-default-scaffold <session_id>` replaces the 6+ hand-issued
-`ableton_track/return(action='delete')` calls W18-D's detect-only path
-required. Pure planner `push.plan_cleanup_default_scaffold` refuses on
-non-canonical unmatched parents (user must hand-resolve "another song's
-tracks") and on "would empty Live tracks" (Live's ≥1-track constraint).
-CLI dispatches deletes in descending index order in-process, then
-re-runs `probe_and_link` to reconcile shifted indexes.
-`.claude/skills/ableton-push/SKILL.md` Step 2a now points at the
-subcommand.
-
-**R-2.1 — Compose-time preset_query validation.**
-`compat.classify_preset_query()` catches the two structural traps that
-hit sun-zone-done at push time: `root` not in the loader-accepted enum
-(typo `'effects'` vs `'audio_effects'` — 8 push failures) and non-list
-`path_prefix` (3 failures). `check_song` accepts an optional
-`browser_dry_runs` map; structurally-valid preset_queries classify as
-`kind_unresolvable` (0 matches), `kind_ambiguous` (2+ matches),
-`preset_query_unverified` (no dry-runs provided), or fall through to
-the existing classifier on 1 match. `has_issues` flips True for every
-new failure mode. Lock-test against `hallucinote_mcp.actions.browser._ROOTS`
-prevents enum drift between the two sides. `format_requirements_md`
-surfaces preset_query authoring issues in a dedicated section.
-
-**R-2.2 — `docs/snapshot-schema.md` consolidated edit.** Documents:
-loader's class-or-display-name dual accept (with the `Glue`/`Glue
-Compressor` failing case named explicitly); `kind` field is
-informational only (the loader ignores it); `preset_query.root` enum
-enumerated inline with the `effects` vs `audio_effects` typo callout;
-`path_prefix` must-be-list rule with wrong/right examples; "default
-device vs named preset" subsection with both worked examples.
-
-**Housekeeping.** `tests/unit/sync/test_pull.py::test_apply_device_parameters_property_round_trip`
-gained `@settings(deadline=None)` — pre-existing hypothesis
-`FlakyFailure` surfaced under parallel xdist contention; the test
-checks correctness, not timing. Eight backlog items closed (cue
-idempotency, default-scaffold cleanup, snapshot-schema gaps, `kind`
-field documentation, default-vs-named preset doc, class-vs-display-name
-doc, compat preset_query validation, first-push scaffold cleanup
-offer) — `.prawduct/backlog.md` marked with RESOLVED / PARTIALLY
-RESOLVED tags pointing at the chunk that closed them.
-
-Suite: main 1758 (+31) + MCP 661 (+8) = 2419 passing, 0 failed.
-
-
-## 2026-05-20 — v0.9.0 milestone: cross-machine portability + first tagged release
-
-<!-- prawduct: chunks=W13-B,W13-C,hygiene | status=shipped | release=v0.9.0 | scope=cross-machine-portability+v0.9.0-cut -->
-
-First user-facing tagged release. Bundles W13-B (missing-plugin detection
-+ REQUIREMENTS.md + push preflight refuse-and-confirm), W13-C
-(`docs/collaboration.md` walkthrough naming three portability cases), the
-v0.9.0 CHANGELOG, and a hygiene sweep deleting four stale `.prawduct/`
-investigation/triage artifacts (`bug-triage.md`, `bug-triage-wave2.md`,
-`build-plan-wave-SD-paused.md`, `w12-a-investigation.md` — all covered
-shipped work; git history preserves them).
-
-New module `hallucinote.sync.compat` with five tagged status values
-(`native`, `placeholder`, `third_party_ok`, `third_party_missing`,
-`third_party_unverified`), nested-rack-recursive song walk, and a
-`check | write-requirements` CLI surface. Push planner gains a clean
-skip-with-warn for `kind='placeholder'` devices. The `/ableton-push`
-skill adds Steps 0a (probe Live for installed plugins) and 0b (run
-compat check, refuse-and-confirm on exit 1) before any push phase
-fires. Express non-goal pinned in CHANGELOG: Hallucinote will never
-substitute plugins or bundle audio.
-
-W11 (inline `hallucinote://` DB read surface), W13-A (instrument
-fallback identity — blocked on missing MCP `browser(search)` action),
-and W16-A (assertions module) explicitly deferred to v1.0.
-
-Suite 1510 → 1549 (+39 tests, ~11.8s). All four canary songs
-(`falling-walking`, `full-band-rock`, `solo-piano-ambient`,
-`odd-meter-experimental`) have REQUIREMENTS.md generated — all-native,
-no install needed.
-
-## 2026-05-17 — `arrangement` → `arrangement_clip` rename
-
-DB table `arrangement` becomes `arrangement_clips`; indexes follow.
-Mutators `add_arrangement` / `remove_arrangement` become
-`add_arrangement_clip` / `remove_arrangement_clip` (kwarg
-`arrangement_id` → `arrangement_clip_id`; payload key same). Event kinds
-`ARRANGEMENT_ADDED` / `ARRANGEMENT_REMOVED` become
-`ARRANGEMENT_CLIP_ADDED` / `ARRANGEMENT_CLIP_REMOVED` (constant + value
-both move). Sync-layer link kind `"arrangement"` becomes
-`"arrangement_clip"` in both `push._LINK_KINDS` and
-`mutations.ABLETON_LINK_KINDS`; the planner key prefix on the
-`batch_arrangement_layout` inner ops moves with it.
-
-MCP-side `location='arrangement'` enum is **deliberately unchanged** —
-it names Live's Arrangement *View*, per `docs/terminology.md`.
-
-Latent footgun closed: `handlers/clip.py` `create_handler` for
-`location='arrangement'` was returning `result["clip_index"] = i`, but
-`_LINK_KINDS["arrangement_clip"]` expects `arrangement_clip_index`. The
-mismatch silently dropped the `ableton_links` row the moment any
-planner emitted `ableton_clip(create, location='arrangement', key='arrangement_clip:...')`.
-No live consumer today (`batch_arrangement_layout`'s
-`duplicate_to_arrangement_handler` already returned the right field) —
-fix is forward-defensive.
-
-Migration: `python tools/migrate_arrangement_clip.py <song.db>` —
-single-transaction, idempotent. Renames table + 3 indexes, rewrites
-`events.kind` (both kinds) + `events.payload_json.arrangement_id` →
-`.arrangement_clip_id`, rewrites `ableton_links.db_kind`. Verified
-round-trip against falling-walking's DB (32 placements + 32 events +
-3 indexes rewritten; re-run is a clean no-op). The real
-`songs/falling-walking/falling-walking.db` was migrated in place;
-`build.py --reset` from the new schema is the alternative path.
-
-Suite: 804/804 passing (no count change — pure refactor).
-
-## 2026-05-17 — Install / uninstall skill cross-platform hardening
-
-`hallucinote_mcp/src/hallucinote_mcp/install_paths.py` grew detection
-helpers for User Library candidates (Windows OneDrive Documents
-redirection, USERPROFILE divergence), installed Live versions, Live
-process probing, `hallucinote-mcp` command resolution (PATH +
-venv-bin/Scripts fallback, returning `(path, on_path)`), and MCP config
-scanning across three scopes (project-local `.mcp.json`, global
-top-level `~/.claude.json`, and the `projects.<cwd>.mcpServers` scope
-that `claude mcp add` writes by default).
-
-`python -m hallucinote_mcp.cli preflight` is a new CLI subcommand that
-emits a JSON report consumed by both SKILL.md bodies — single source of
-truth for install/uninstall detection. Both SKILL.md files rewritten to
-drive off preflight: Claude Code now auto-detects Live state, User
-Library location, installed Live versions, MCP config scope, and
-malformed JSON instead of asking the user. Drift between SKILL.md copy
-commands (rsync / robocopy / Copy-Item fallback) and `REMOTE_SCRIPT_EXCLUDE`
-is now structurally enforced by `test_install_skill_consistency.py`.
+## 2026-09-11 — The release audit's second pass: one test folded in, two candidates read out
+
+<!-- prawduct: type=chore | scope=RELAUDIT-0911 | release=v1.9.0 -->
+
+The pre-release backlog question asked again against a tree that already has
+RELFOLD-0910. The window stands at 65 filed / 41 closed / 24 open; the only new
+fold-in decisions were #552 and #553, both raised by RELFOLD's own Critic
+rounds.
+
+**#553 folded in — one test.** `_warn_under_chain_solo`'s operator-facing
+envelope has three heads, and the mixed one (some chains soloed, some whose
+solo Live did not report) was the head #550 added and the only one untested. It
+is also the only head whose arithmetic can be wrong: the other two make a single
+claim over the whole list, while mixed derives `unknown` by subtraction. A
+miscount there reports a solo the read never found or an unreadable flag it
+never had, and those send the operator at opposite actions.
+
+**Two candidates were read in the code before being recommended, and both died
+there.** That is pass 1's own method correction applied — it had recommended an
+item whose premise the code disagreed with, and named a five-minute code read
+per item as the fix.
+
+- **#552** (the pre-render mixer read never walks the master strip) is real, but
+  ships as a **named** limit, which is the bar pass 1 set for #550: it is written
+  in this change log, in `architecture.md` § *What is deliberately not modeled*,
+  in `boundary-patterns.md`, and in `_soloed_chains`' docstring. It is also not
+  the small fix it resembles — Live's master carries no `solo` attribute, so a
+  naive master row reads `solo: None` and `_refuse_under_solo`, which refuses on
+  an unreadable flag by design, would refuse every render.
+- **#495** (`PushPlan.warn()` writes the channel the executor discards) was worth
+  re-asking, because RELFOLD's reflection names its exact shape — a value made
+  correct and then dropped at a boundary — as the mistake it made twice. But
+  both of RELFOLD's new warnings route to operator channels: the push half to
+  `notes_sink` with a fallback so it is never dropped, the chain-rebuild half to
+  stderr *and* `alerts`. The trap is still there for the next author; nothing
+  shipped through it.
+
+**The `alien` master-capture bug report is discharged and archived.** All three
+of its suggested fixes shipped (the `sum_reconciliation` blocking finding, the
+solo refusal, the manifest's `mixer_state`). Of the three observations left, the
+`state: done`/header-only-WAV one is a documented two-field contract that
+`capture_span_mismatch` catches downstream, `back_to_arranger` is disowned by the
+report's own correction, and the surviving one — a `compare_to` whose baseline
+take retention has swept — is filed as **#556** rather than archived with it.
+
+**Bookkeeping:** `planless-scopes-disposition.md` answered five planless scopes
+while `check-releasability` had begun firing on six; `MYPY-COMPARE-0911` merged
+after that file was written and now has its row. This entry's own scope makes
+seven, and it is trivial by the size heuristic — a test and two bookkeeping
+edits, no contract surface moved — so it is dispositioned there in the same
+breath rather than left to be explained later.
+
+**Re-vendor: not required.** Nothing here touches `_FINGERPRINT_PATHS`; the test
+exercises the handler in-process. The re-vendor RELFOLD and RENDERGUARD are both
+waiting on is unchanged and still owed.
+
+## 2026-09-11 — CI was red on `develop`, and the type it tripped on was the honest answer
+
+<!-- prawduct: type=fix | scope=MYPY-COMPARE-0911 | release=v1.9.0 -->
+
+`develop` failed `mypy` on a single error, and had since the RENDERGUARD-0910
+merge: `_master_disqualification` in `audio/compare.py` annotated its `verdict`
+as `tuple[str, float, float] | None` and then built one out of `finding.get(...)`
+reads off a stored report's JSON, which is `Any`.
+
+Found by CI on an unrelated PR, which is the part worth noting — the branch that
+introduced it ran `mypy` on the files it had touched rather than the project
+config, so a whole-project gate caught what a per-file invocation could not.
+
+**The widening is the fix, not a cast, and the reason is behavioural.** The three
+values come from a report written by this same codebase — `analyze.py` builds
+the finding from the identical `master_is_not_stem_sum` tuple — so in practice
+they are always present and correctly typed. But a report that somehow carries
+the finding WITHOUT its numbers is still disqualified: the finding's presence is
+the verdict, not its arithmetic. Coercing with `float(...)` would raise on that
+report, and defaulting to a number would invent evidence. So the missing value
+travels as `None`, the annotation says so, and a test pins it.
+
+That test characterizes behaviour rather than guarding a regression — an
+annotation is erased at runtime, so it passes against the pre-fix module too.
+What it adds is that the case is now exercised at all; nothing reached it before.
+
+## 2026-09-10 — The release audit folds in what the release's own work left open
+
+<!-- prawduct: type=fix | scope=RELFOLD-0910 | release=v1.9.0 -->
+
+A pre-release backlog audit against the 19 release-pending scopes. The release
+window filed 63 backlog items; 36 had already shipped inside these scopes and 27
+were still open, every one of them residue of this release's own work. Six were
+coupled — shipping a defect, a half-closed guard, or a bookkeeping claim the code
+had made false. Four are fixed here, one is re-scoped after the code disagreed
+with it, and one is a read that was owed.
+
+**A soloed rack CHAIN is reported** (#550). The solo guard that shipped in
+RENDERGUARD-0910 refuses a render under a soloed track or return; chain solo is a
+separate first-class concept here and the guard could not see it. It **warns**
+rather than refusing, by owner decision: a chain solo silences the sibling chains
+inside one rack, not the song, so the master bus still carries every track and the
+capture is a real mix with one rack rendering as a fraction of itself. Refusing
+would block an author auditioning a layer mid-session; silence would let a report
+call that thinning a mix change. `manifest.mixer_state` records chain solo either
+way, so a report read a week later can still say what it was made under. Top-level
+racks only, and the docstring says so rather than leaving the depth to be assumed.
+
+**A sidechain source the probe cannot read is announced before it is destroyed**
+(#544). Two surfaces already warned on that shape and the destructive one did not
+— `chain-rebuild` deletes and reloads, so an unreadable source is gone rather than
+uncarried. The warning goes to stderr as well as into the report: the command is
+non-interactive, so the operator's own Ctrl-C is the only abort there is, and the
+report prints after the device is already gone.
+
+**`device load` stops reading as a loss** (#546). Live appends a browser load to
+the end of the chain and exposes no reorder API, so on a rendered track the device
+always lands behind the analyzer tap. Nothing is under-measured — `render(start)`
+re-seats the tap before capturing — but only the source said so, and someone read
+that chain order cold and concluded otherwise. It is a `note`, not a `warning`:
+there is nothing for the caller to do, and saying so is the point.
+
+**The sidechain-enable hints are named MCP-side** (#545). The guard keeping them
+in step with the engine's mirror scraped the handler's source text between two
+literal anchors, so a reflow failed it without anything having diverged. Both
+sides are imported now — and a second test drives every hint through the
+dispatcher, because comparing two imported collections proves they agree and not
+that either is what the match actually reads. That is the one failure mode the
+brittle guard did not have, and replacing it without noticing would have been a
+quiet downgrade.
+
+**#534 was approved for build and then not built, which is the entry worth
+reading.** The item reports `_PARAM_EPSILON`, an absolute 1e-6, being breached by
+float32's relative round-trip error on a large-magnitude parameter and by an
+integer-stepped one — measured against Live 12.4.5, and real. Reading the code to
+fix it showed the defect cannot reach the path `chain-rebuild` takes: the capture
+reads every value **off Live**, the restore writes that same value back verbatim,
+and the verify compares the two, so both ends are the same float and the delta is
+zero by construction. A 22 kHz frequency and a 41-step bend range round-trip at
+exactly 0.0 through the module. That reproduces the item's own Pass 1; its Actual
+section comes from the *perturbing* pass, which wrote deliberately off-grid values
+— something this module cannot do, because it never invents one.
+
+So the residue is the property, not the tolerance: the epsilon is safe only
+because the restore copies Live, and nothing pinned that — no test referenced
+`_verify_parameters` or the constant at all. Two now do, and the first is what
+should fail if an authored value ever enters the restore.
+
+**#526's blocker did not resolve the way it predicted.** The item is ordered
+behind #537 and says the open design question — a `call` argument has no current
+value to gate coercion on — would "dissolve" once #537 typed scalars on the wire.
+#537 closed, and it did not type them: `value` is still `type="any"` and the
+mechanism is server-side coercion **gated on the current value**. The gate is
+still load-bearing and `args` elements are still untyped, so the question is
+exactly as open as before. Recorded because the item asked in terms that nobody
+close it on #537's merge without reading the residue first.
+
+**Three bookkeeping claims the code had made false**, corrected rather than
+carried into the release: #533 was open against a fix already in the tree and is
+closed; #529 says the manifest records no fader values and it now records them,
+leaving only the read side, which is the half worth keeping; and #544's own
+mechanism paragraph said the sidechain source is "never journaled and never
+restored" when it is both.
+
+**`architecture.md` learns three packages it never had** — `assets/`, `features/`
+and `spectral/`, all new since v1.8.6 — and loses the count that had drifted with
+them. It opened with "the ten packages" while naming ten and the tree held
+thirteen; a count is the half a reader cannot check at a glance, so it decays
+first and silently. The list is a pointer at the tree now, with the command to
+re-derive it.
+
+**The five planless release-pending scopes are dispositioned**, not suppressed
+(`planless-scopes-disposition.md`). Two were correctly sized as trivial; three
+were not, and they are the same mistake three times — work sized by the size of
+its edits rather than by the size of what it changes. A ceiling on governance
+files, an owner ruling on a norm, and a BREAKING change to path resolution are
+each a small diff and a durable commitment. `check-releasability` will keep
+warning, which is right; the file is what a reader consults when it does.
+
+**#482 stays out of this release, deliberately.** Its R1/R2 change what goes INTO
+the stem sum that RENDERGUARD-0910 turned into a blocking finding — a return at a
+non-unity fader is summed at full pre-fader level and inflates the residual. Doing
+both at once would leave neither proving the other, which was the prior session's
+reasoning and still holds. The consequence is stated rather than left implicit:
+this release ships a blocking gate over a sum that can read high for a benign
+reason, and the RENDERGUARD operator-verification box that prices that false
+positive is the one still owed.
+
+**The Critic's blocking finding was that the chain-solo warning never reached a
+caller, and it is the entry worth reading second.** A render is async: the
+handler's `result` is projected to the operator by `Job.status_result`, which
+copies a per-kind **allowlist** — `manifest`, `manifest_path`, `render_status`.
+The new advisory was not in it, so the field was computed, written, and dropped
+in production while four tests calling the handler in-process stayed green. Two
+reviewers found it independently from opposite ends. The projection now carries
+it, and the test that keeps it honest is a JOB-level one, because no in-process
+handler test can see that boundary at all.
+
+The same finding renamed the field. It had been `result["warnings"]`, a list —
+and `warnings` is already `wire.Response.warnings`, a documented advisory
+channel that serializes at the top of the response rather than inside `result`.
+One payload carrying both under one name is two things a reader cannot tell
+apart. It is `warning: str` now, the convention every sibling handler uses.
+
+**Three more from the same round, each a rule this diff had quietly made a
+second copy of.** The tap note identified the analyzer by name where the MCP
+side requires name AND `class_display_name == "Max Audio Effect"` — a third
+discriminator for one identity, and the case it gets wrong is a note telling an
+operator not to worry about a device the re-seat sweep will never touch; it
+calls `find_analyzer_index` now. The "warns before the first delete" claim was
+asserted only after the run returned, which cannot tell that apart from warning
+at report-assembly time, when the device is already gone; it is proved at the
+first delete now. And the chain-solo read's limits — top-level racks only, chain
+mute and volume unread, the positions PHYSICAL and read before the analyzer is
+appended — were visible only in a docstring; `boundary-patterns.md` owns that
+contract and now carries them, along with which of the two representations a
+consumer should join on.
+
+**A scope-out this work broke, recorded rather than quietly kept.** Chunk 02
+scoped out the gain-param match and then refactored it anyway, because naming
+one hint set while leaving its neighbour an inline `or` chain leaves two idioms
+for one thing. The plan says so now. The gain constant is underscore-private
+where the enable one is public: what the scope-out was protecting is the
+*guard*, and the gain set still has no engine mirror and no drift test, so a
+public name beside the enable set would advertise protection it does not have.
+
+**And a re-scope that was announced but not performed.** An earlier draft of
+this entry said #529 had been re-scoped when the item had only been commented
+on — body and stage untouched. The item is actually re-scoped now, to the half
+that is still open: the read side never learned the manifest records faders.
+
+**One test was consolidated, and the reason belongs here rather than only in a
+docstring.** Chunk 05 added `test_a_parameter_left_at_its_default_is_still_caught`
+and it was a second witness, not new coverage — identical setup
+(`live.swallow_set_parameter = True`) and identical expectation to
+`test_verify_fails_when_a_restored_parameter_reads_back_at_its_default`, which
+already existed in the same file. It contributed two assertions on the mismatch
+message's exact text, and those moved into the surviving test; nothing it
+covered is uncovered. What chunk 05 was actually missing was the OTHER half —
+that a faithful round trip does NOT report a mismatch — and that test is new and
+stays.
+
+**The chain-solo read had no unknown, beside a surface solo that insists on
+one.** Four reviewers reached one line from four angles. `_soloed_chains` read
+`bool(getattr(chain, "solo", False))`, collapsing "Live did not answer" into
+"not soloed" — forty lines below the sibling comment that forbids exactly that,
+and sharper here than there: these rows go into `manifest.json`, and the
+boundary artifact edited in this same work tells consumers to JOIN on them. A
+chain that never answered, recorded as clear, is a false negative asserted as
+fact to a reader with no way to check it. `solo` is now `true` or `null`, never
+`false`, an unreadable chain is listed as unknown, and the warning says which it
+is — the warn-tier analogue of the surface guard refusing on a flag it cannot
+read.
+
+**The advisory was fixed in code and still dropped one hop later.** The blocking
+finding's fix carried it through `Job.status_result`; `skills/render-analyze/`
+and the two `actions/render.py` descriptions still enumerated the status keys
+without it, and those are what a caller actually follows. All three now relay
+it, and the action description names `Job.status_result` as the authority rather
+than pretending a prose list can stay closed.
+
+**Two limits the read never had, one of them now a backlog item.** `_mixer_state`
+walks tracks and returns and never the master strip — and `master.wav` is a
+captured stem, so a rack on the master with a soloed chain is invisible. That is
+**#552**, filed rather than described, because the master needs handling as its
+own case: Live's master carries no `solo` at all, so a naive master row would
+read `None` and the existing guard would refuse every render. A rack's return
+chains are the other, stated alongside.
+
+**An append-only file was edited twice, by the same mechanism, one round
+apart.** Two hunks of this entry were inserted with an uncounted string-replace
+against `**Re-vendor: REQUIRED.**` — a phrase this file's entries repeat — so
+each one also landed inside the 2026-09-09 `RELBLK-V19` entry. The first round
+caught one paragraph; the fix deleted it and the NEXT edit put four more in its
+place, including a sentence claiming the entry had been restored. It had not
+been; nothing re-checked after the second edit.
+
+Restoring it by another replace would have been the same bet a third time. The
+entry was spliced back from `6dfdadb` verbatim by index, and the check is now
+structural rather than a spot read: parse both files into entries by heading and
+assert that the set of pre-existing entries is byte-identical. It is, and this
+entry is the only addition.
+
+Worth naming because the shape outlives the instance: **an append-only file
+whose sections share boilerplate cannot be edited by matching that
+boilerplate**, and a claim that a file was repaired is worth exactly as much as
+the re-check behind it.
+
+**Re-vendor: REQUIRED.** Three chunks touch `handlers/device.py` and
+`handlers/render.py`, both inside `_FINGERPRINT_PATHS`. Batched for exactly that
+reason — one restart pays for all three. Nothing here exists in Live until the
+Remote Script is re-vendored and Live is fully restarted, the same clock the
+RENDERGUARD solo guard is already on.
+
+## 2026-09-10 — Two silent lenses: a partial that stopped counting as a recall, and a capture that stopped reading the wrong beat
+
+<!-- prawduct: type=fix | scope=OPENBUGS-0910 | release=v1.9.0 -->
+
+The two reports the 2026-09-10 incoming-bugs triage left open. Both are the same
+shape of defect: something measured the wrong thing and said nothing about it.
+
+**The recurrence lens counted a guess as a recall.** The matcher has two tiers. A
+clean recovered op — `exact`, `transpose +8`, `fragment[0,1.5)` — is a structured
+claim about the layer. When nothing clean matches it falls back to
+`derived (<op>, <coverage>)`: the most of the motif some composed op could account
+for. Over eleven motifs, ten sections and five layers the transform group finds one
+of those almost everywhere, and on `alien` 201 occurrence records came back with the
+large majority sitting at exactly 0.50 coverage. Read straight, the render said every
+motif recurs on every layer everywhere and the whole-motif recalls that describe the
+form were a fifth of the lines.
+
+The reported symptom was noise. The consequence found by reading the code was worse:
+`_recurring_motifs` counted a motif as recurring on **any** non-home occurrence, so
+the partials put every registered motif in the cell-set, made `recall_coverage` read
+100 %, and emptied `never_recalled` — which silenced `registered-never-recalled`, the
+single coaching question the economy path is allowed to emit. The noise was not
+burying the signal, it was deleting a finding.
+
+Now a sub-threshold **derived** reading is marked `partial`: still detected, still in
+the report, still in `--json` (the matcher reports partials on purpose — REC-4Z8Q),
+but folded into a per-section count in the render (`--all` expands) and excluded from
+every economy figure. A motif that recurs only as partials now raises its question and
+says so, naming the best coverage it reached, because "never recurs" would be untrue
+of it.
+
+The floor is **derived-tier only**, and that distinction is the part the plan got
+wrong before the code did. A coverage-only floor demotes `fragment[0,1.5)` at 0.50 —
+the quoted answering cell, a real recall carrying the fragment tier's own evidence
+floor — to the same status as `derived (invert ∘ diminish ×2, 0.50)`. The reporting
+author had already resolved this by hand; their filter kept every non-derived
+variation at any coverage. `MatchResult.derived` now carries the tier from the one
+site that chooses it, so consumers weigh a reading without prefix-matching a
+human-facing label. The floor rides on the report itself, so the render names the
+percentage it actually applied instead of guarding for a field that is now always
+there and falling back to prose that names no threshold at all.
+
+**`capture execute` baked end-of-song automation values in as baselines.** A parameter
+under an automation envelope reads at whatever value the envelope holds *at the
+playhead*, and after any render or performed-automation push the playhead sits at the
+end of the arrangement. Captured there, that value becomes the device's dialed
+baseline and `replay_capture` re-asserts it on every subsequent build — permanently
+redefining the value every envelope rides from. Hit five times in one session on
+`alien`, silently each time: A-Reverb return volume 0.95 for 0.85 and its `Decay Time`
+6.87 s for 2.50 s, the Voice Shifter's `Dry/Wet` 72 % for 0 % and `RM Coarse` 283 Hz
+for 220 Hz, the Noise Auto Filter's `Frequency` 893 Hz for 2.52 kHz. The diff shows
+each as an ordinary field change, indistinguishable from a deliberate by-ear tweak.
+
+`capture execute` now reads the transport before it probes anything, seeks to beat 0
+when the playhead is elsewhere, and confirms the seek settled there before the walk
+begins. It refuses (exit 2) while the transport is rolling — a capture cannot be made
+deterministic while the playhead moves, so no seek would help — and refuses if the
+seek does not land, which is the silent case in miniature. It refuses on one more
+reading: a transport `info` that comes back without `is_playing` or
+`current_song_time`. Defaulting a missing read to "stopped at beat 0" would let the
+guard reinstate the exact silence it was built to end, so the unreadable case is
+named and refused rather than assumed away. The confirmation reads the
+seek handler's own settle poll rather than reading `current_song_time` back, because
+Live's getter can return a stale cached value in the same callback as the setter
+(`learnings.md`). `--no-seek` opts out and warns.
+
+This one's Live-side half is an assumption the unit tests cannot reach: they prove the
+seek precedes the walk against a fake bridge, not that Live re-applies automated values
+on a locate while the transport is stopped. Queued in `operator-verification.md` with
+the failure to look for named — a snapshot still carrying end-of-song values while the
+CLI reports it parked the playhead at 0.
+
+**What the cumulative review found, and it was the same defect three more times.**
+`rev-20260910T215848Z-0aed784e` returned nothing blocking but converged, across three
+independent reviewers, on the transport guard still defaulting the value it had just
+learned to require: `float(info.get("current_song_time") or 0.0)`, two lines under the
+comment saying that assuming "stopped at 0" is the silence the guard exists to end. A
+present-but-null reading passed the presence check and took the already-parked path.
+It is parsed now, and an unreadable value is refused by name.
+
+The floor had the same shape of hole in three more places, each one the fix re-entered
+through a door it had not closed:
+
+- **`match_motif_in_window` dropped `derived=`.** The package-exported entry point
+  rebuilt its result field by field without the new tier flag, so every tier-4 guess
+  reached a consumer as a clean recall — the exact miscount, through the one call the
+  documented contract tells consumers to make. The module also still decided
+  derivedness by prefix-matching the human-facing label at both of its own sites; both
+  read the field now.
+- **A sub-threshold partial could claim a motif's home section.** `found_this_motif`
+  fired on a reading marked `partial` on the next line, so a motif first *detected* as
+  a half-match took that section as home and its genuine later statement read as a
+  non-home recall — back into the cell-set, coverage and compression back up,
+  `never_recalled` emptied. Every fixture placed a clean home match first, so the suite
+  could not see it. Home is now the first section where the motif is heard as itself.
+- **`never_recalled` contradicted the question it feeds.** It names every motif outside
+  the cell-set, which is two populations; the render printed "never recalled" over both
+  while `economy_finding` said, a few lines lower in the same report, that the motif
+  "recurs beyond its home section only as partials". The render splits them.
+
+Underneath those, "counts as a recall" was being re-derived at four sites. It is one
+property on the occurrence now (`MotifRecall.counts_as_recall`), with
+`counted_recalls` / `partials` on the report, because the shape every consumer had
+before the floor existed — filtering on `is_home` alone — silently re-lands the
+miscount.
+
+**The guard also reached the path it did not cover.** `capture_plan()` — the by-hand
+probe recipe two skills drive — had no transport read and no seek, so a hand capture
+after a render bakes end-of-song values in as baselines with none of the refusal. The
+precondition is now the first two records the plan emits. This is a deliberate scope
+extension, recorded in the build plan: the requirement was boundary-shaped (the capture
+contract refuses to read parameters at an unknown playhead) and had been written
+entry-point-shaped.
+
+Two smaller ones from the same review: `melody_lens`'s exit-3 still pointed at
+`songs/sun-zone-done/build.py` after the recurrence twin dropped that pointer on the
+stated principle that a path into `songs/` is a claim about a workspace this package
+neither ships nor can check — it names the shape inline now; and `compose-review`'s
+operative Run-it block still taught the pre-fold render, so an agent who ran the lens,
+saw no `derived (...)` line and reported "no partial recalls" would have been reading a
+render that folds them by default. It offers `--all` and says so.
+
+**Also in this pass, and worth recording because it is the cheaper half of triage:**
+the other two open reports were verified **already fixed** and archived. The
+one-beat-early render capture was root-caused to arm-before-locate and fixed in
+`8b54a53` with a regression test; `push_cli`'s version-pin recovery no longer calls
+the content fingerprint a commit. A fourth report was a leftover stub carrying an
+unrelated bug under an archived report's filename — refiled under its own name, which
+is where the capture-playhead fix above came from.
+
+## 2026-09-10 — A render under a soloed track is refused, and a master that is not the mix cannot be reported as a changed mix
+
+<!-- prawduct: type=fix | scope=RENDERGUARD-0910 | release=v1.9.0 -->
+
+Three consecutive renders of `alien` reported `render_status: ok`, every surface
+terminal, and a `compare_to` advertising "26 significant deltas / 112 section-level
+deltas" against a song nobody had touched. The master measured −22.6 LUFS-I against a
+−8.6 baseline. **Track 3 was left soloed.** The capture was faithful; the mix was
+wrong — the master bus carried one part, the ~11 dB gap was that track's own −10 dB
+fader against a pre-fader stem tap, the B-Delay return went silent because solo killed
+the Voice feeding it, and it survived a full Live restart because solo is saved in the
+`.als`. That determinism is what made it read as an engine fault; the first
+investigation concluded the master capture surface was bound to the wrong track, and
+that reading is retracted in the report itself.
+
+**#549 — the engine detected it and told nobody.** `sum_reconciliation` measured
+`correlation` 0.159 against a healthy 0.959 and `gain_offset_db` −32.65 — it knew the
+master was not the sum of its stems — and was computed, serialized, and read by
+nothing. `_derive_findings` never took it. Now a disqualified master is a `blocking`
+`master_not_stem_sum` finding, and `compare.py` withholds master and master-section
+deltas rather than reporting them as changes. Both sides are checked: a stored report
+is re-used as a baseline for as long as it is the newest, so a capture made under a
+solo does not stop being wrong once later renders are measured against it. Stem deltas
+are untouched — every stem was within 0.4 dB, which is the evidence that proves the
+master is the odd one out. The refusal reaches the operator's summary too, because a
+disqualified comparison yields SMALLER counts and would otherwise read as a quieter
+render.
+
+**#548 — nothing refused the render.** `ableton_render(start)` now reads solo and mute
+across `song.tracks` **and** `song.return_tracks` before arming, refuses on any solo
+naming each offending surface, warns on mute, and records per-surface `solo` / `mute` /
+`volume` in the manifest so an old report stays auditable after Live has moved on.
+Returns are in because a return is a Track in Live and carries solo: soloing one
+silences every regular track's direct output — the same wrong mix through the
+collection that is easy to miss. `handlers/` is fingerprinted, so this does not exist
+in Live until the Remote Script is re-vendored and Live fully restarted; the boxes for it
+are queued in `operator-verification.md`. The read-side half is not on that clock —
+`server_side/` sits outside the fingerprint, so the summary change takes effect at once.
+
+**The tests were the third defect, and the user named it: *"tests are suspect if that
+shipped."*** They were. The `sum_reconciliation` tests asserted it was present, that
+`skipped` was None, and that it serialized — every one pinning that the number EXISTS
+and is CORRECT, none that anything ACTS on it, which is indistinguishable from a lens
+that gates nothing by design. The suite stayed green across the whole render-integrity
+build with the defect inside it. `report.py` now carries `FINDING_BEARING_BLOCKS` and
+`EVIDENCE_ONLY_BLOCKS` — every `MixReport` measurement block must declare which it is,
+against `gate-verdict-policy.md`'s existing split (defect lenses may block; intent
+lenses never fail a build) — and a new test file fails on a block in neither. Deleting
+`sum_reconciliation` from the gating map reproduces the original defect as a test
+failure. It does not catch a parameter that exists and is ignored in the body; that
+guarantee is not claimed.
+
+**Three further defects surfaced in review, all in the guards themselves.** The solo
+guard **failed open**: `getattr(track, "solo", False)` made "not soloed" and "did not
+answer" indistinguishable, and the manifest then wrote `solo: false` as a fact
+`boundary-patterns.md` tells consumers to trust — both flags are `null` now when Live
+does not present them, and a null refuses the render. The inert-lens tripwire proved a
+parameter NAME, not the wiring: every finding-bearing parameter has a default, so
+dropping a keyword from the one `_derive_findings` call reproduced the original defect
+with the new test file green — it parses the call site now. And the baseline half could
+not see a report written before the gate existed (those carry `sum_reconciliation` and
+no finding, and `resolve_baseline` filters on `db_seq` alone), so the three stored
+`alien` reports would have stayed diffable as baselines forever; the predicate moved to
+`reconcile.py` as the one owner both readers share. `overshoot_count` — a master-bus
+true-peak window, so a master delta by another name — also survived the disqualification
+and fed the headline count.
+
+`reconcile.py` documented in bold that it holds no threshold and must never be read as a
+verdict. This work put one there. The module doc records that as a narrow, reasoned
+exception — it decides whether the master IS the mix, not whether it is good — rather
+than leaving the contract silently false. A real-render negative control on a song with
+a hard-working master chain is queued in `operator-verification.md`: the thresholds come
+from one incident, and nothing yet prices the false positive.
+
+The Critic caught the returns gap, the baseline half of the gate, and the summary key —
+then, on the verification round, caught that the summary passthrough had shipped with no
+test reaching it through the handler, which is the same shape of gap this entry retracts
+two paragraphs above. Rack-chain solo is a real hole in the same guard and is filed as
+#550 rather than accepted: a soloed chain silences siblings inside one rack, not the
+song, so it is weaker than a track or return solo and is its own scope.
+
+## 2026-09-10 — The release blockers: a restore that lands on the right device, and a failure that says so
+
+<!-- prawduct: type=fix | scope=RELBLK-0910 | release=v1.9.0 -->
+
+Four issues, and one that turned out not to be an issue at all.
+
+**#532 — the restore addressed a chain that no longer existed.** `chain-rebuild`
+excluded the `HallucinoteAnalyzer` from its *logical* model in three places and
+still addressed devices *physically*, by the index captured **before** the
+delete. The demolish deletes only DB-known devices, so the tap survived; the
+reloads tail-appended behind it; the analyzer that sat at the tail now sat at the
+head, and every restore landed one slot off. Measured on `alien` before this
+release made it worse: EQ Eight lost 7 of 84 parameters, two of them real gain
+cuts (`3 Gain A` −1.99951 dB → 0.0, `4 Gain A` −2.50488 dB → 0.0).
+
+This was urgent rather than merely open because **this release also ships #533's
+fix**. Until now every restore write was refused before it reached Live, so the
+off-by-one wrote to the wrong device and the wrong device ignored it. Those
+writes land now. Shipping #533 without this would have converted a latent
+addressing bug into silent corruption of a real mix — and the device that
+triggers it is placed by our own render path, so the trigger is "rendered, then
+rebuilt a chain", not an exotic state.
+
+The journal now carries each device's DB `position` alongside its physical index,
+and the restore, the verify and the link rebind all pair by position against a
+**post-rebuild** chain read. A device the rebuild can neither address nor delete
+refuses before the first delete, naming it; the analyzer is the one tolerated
+survivor.
+
+**The same defect was one layer further out, and the review found it.** The link
+rebind wrote `ableton_index=position`, but a device link is consumed as a
+*physical* index — `plan_push_devices` hands it straight to `set_parameter` as
+`device_index`. The two agree only while the tap is terminal, which is exactly
+what a rebuild undoes. So the restore landed correctly and the links then sent
+the *next* push to the wrong device — including the `push execute --only devices`
+that this work's own shortfall alert recommends. Verified reachable rather than
+reasoned about: `reconcile_device_links`' stale-drop keeps those links because
+the indices exist, and its positional bind finds a class mismatch and declines to
+rebind. The rebind reads the post-rebuild chain now, and
+`boundary-patterns.md` says which number `ableton_index` holds — the ambiguity
+that produced the defect is the reason that is written down where the boundary
+is specified rather than in a docstring.
+
+**#538 — a rebuild that restored nothing reported success and deleted the
+evidence.** Three behaviours composed: `main()` returned 0 unconditionally; the
+verify was scoped to the set of *written* parameters, so when every write failed
+it compared **zero** of them and passed vacuously; and the journal — which the
+module's own docstring calls "the only way back" — was unlinked on that clean
+path. This is how #533 survived the module's entire life: every continuous
+restore failed on every rebuild ever run, and the command exited 0 each time.
+
+A run that captured N writable values and restored M < N now exits non-zero and
+keeps the journal; landing **none** of a non-empty capture fails the verify
+instead of passing on an empty comparison. A refused `set_input_routing` counts
+too — that is the sidechain source, the one value the module could still lose
+while exiting 0. Both callers honour the contract: the reconcile prepass used to
+print the alerts and return 0.
+
+**A retained journal means two different things, and saying the wrong one
+destroys work.** A shortfall journal describes a chain that is rebuilt, rebound
+and verified for everything that landed; a mid-flight journal describes one a
+rebuild abandoned. `--resume` is recovery for the second and destruction for the
+first. The journal already recorded a phase at every step and nothing read it, so
+the states were distinguishable on disk all along: `push execute` now refuses
+only the mid-flight kind and warns about the other — otherwise it would have
+blocked the very recovery the shortfall alert recommends — `--resume auto` will
+not silently select a shortfall journal, and an unreadable phase counts as
+mid-flight, because unknown degrades to dangerous.
+
+**A journal written before this release cannot be replayed, and the two refusals
+share one exit.** `JOURNAL_VERSION` goes 1 → 2 because a v1 entry carries no DB
+`position` — it is precisely a record written by the code that could not see a
+surviving analyzer, so replaying it would reproduce the off-by-one this work
+ends. `read_journal` refuses it by version rather than guessing. A v1 file left
+on disk by a pre-release crash therefore meets the operator twice: `journal_phase`
+cannot read a phase it does not know, unknown degrades to mid-flight, and
+`push execute` refuses and points at `--resume auto` — which then refuses on the
+version. Both refusals name the file and neither destroys anything, but the way
+out is stated in only one place, so it is stated here and in
+`docs/song-authoring-conventions.md`: read the journal, rebuild the chain from
+the DB (`chain-rebuild` with no `--resume`), delete the journal. The same trap
+runs backwards on a rollback — an engine at v1 refuses a v2 journal — and the
+exit is the same one.
+
+**#536 — an unreadable sidechain source stopped vanishing quietly.** A device
+that exposes `S/C On` but no input routing (Multiband Dynamics) can be armed and
+never pointed anywhere, and a source set by hand in Live's UI was lost on the
+next `build.py` rebuild with nothing said at capture time or push time. Not a
+routing fix — that limit is Live's. Both surfaces warn from one shared sentence,
+so they cannot drift: capture reads `S/C On` off the probe it already made, and
+push asks Live for `has_input_routing` per armed sourceless device. The negative
+half is as load-bearing as the warning: a device with a readable routing surface
+stays silent, because a warning that fired on the Compressor path #374 already
+covers would train the operator to ignore all of them.
+
+No snapshot field. `has_input_routing` is a property of the device in front of
+you, and persisting it would keep warning after the operator swapped the device —
+the noise failure from the other direction.
+
+The warning rides the **printed** channel, not the errors file. Nothing here
+failed to record, so a push carrying only this condition is clean, and a clean
+push does not print that file — the operator's one cue would never have reached
+them.
+
+**#537 — a string could not be sent through `probe set` at all.** The value was
+declared `ParamSpec(type="any")`, which serializes to `anyOf: [{}, null]`. An
+empty `{}` gives a calling client no type to serialize against, so a string was
+emitted bare and died in the client's own JSON parse before any request left the
+client — reproduced 6/6. Device renaming therefore had no working path, which is
+load-bearing: `replay_capture` keys devices by `display_name`, and `alien` now
+carries three indistinguishable Compressors on one track.
+
+The emitted schema is now an explicit union over every JSON type. Not the
+scalar-only union originally filed — that would have made a `dict` value
+schema-invalid and taken out `probe set`'s `{"$path": …}` LOM-object assignment.
+The point is explicitness, not narrowing: the set of values `probe set` accepts
+is the set it accepted before. #508's server-side coercion is untouched; #508
+rejected typing *as a substitute for* it, not typing alongside it.
+
+**Two corrections to what this item claimed.** The fix is not expressible in
+`actions/probe.py` — `ParamSpec` has no schema hook, so it lands in `server.py`,
+which `_FINGERPRINT_PATHS` does not include. So #537 **forces no re-vendor** and
+takes effect on an MCP server restart; the release's re-vendor comes from other
+work. And #526's blocker dissolves rather than needing a solution: its real
+defect is the same empty-schema bug one level down (`args` emits `items: {}`),
+which is a re-scope, not a fix here.
+
+**#532's second symptom was already fixed, three months earlier.** It claimed a
+`load` onto a rendered track leaves the new device after the tap, so the stem
+under-measures while the master does not. The harm is not reachable:
+`render(start)` calls `ensure_analyzers_loaded` in its preamble, which deletes
+and re-adds a non-terminal analyzer so it is terminal *before* any capture. That
+self-heal shipped 2026-06-13, and its own comment describes this exact case. The
+reporter saw the post-load chain order and inferred a consequence the sweep
+prevents — their recorded workaround is what the sweep does unattended. So this
+needed no MCP change, and the item's cross-package re-vendor argument and its
+open "where does the predicate live" question both dissolve. (The second was
+already answered in-tree: the dependency direction is MCP→engine, each side
+defines its own constant, and a drift-guard test keeps them equal. A second guard
+now does the same for the sidechain-enable hints, which were duplicated across
+the same boundary with nothing watching them.)
+
+**What the fakes cannot prove, and is not claimed.** Every chunk landed with unit
+coverage against fakes, and fakes are what let all of this survive: the fake
+chain was built from the DB's own rows, so a live chain holding a device the DB
+does not author was not merely untested but *unrepresentable*. It can hold one
+now. Six checks that need a real Live — a restore with the tap surviving, a
+genuinely refused write, the shortfall journal not blocking its own recovery, a
+mid-flight journal still refusing, the MBD warning firing once while seven
+Compressors stay quiet, and a string reaching `probe set` from a real client —
+are queued in `operator-verification.md`. #291's witness box, which failed twice
+on 2026-09-10, is unblocked for the first time.
+
+## 2026-09-10 — A chain rebuild could not carry a single parameter, and the fake said it could
+
+<!-- prawduct: type=fix | scope=CHAIN-RESTORE-STR | release=v1.9.0 -->
+
+`chain-rebuild`'s whole purpose is to swap a device without destroying the
+dialed state below it. It had never once done so. `_param_write_kwargs`
+returned `{"value": float(value)}` on the continuous branch while
+`ableton_device set_parameter` declares `ParamSpec(name="value", type="str")`,
+so validation refused every write before it reached Live and the captured
+values stayed in the journal. The enum branch beside it already passed a
+display string and worked, which is why the defect was one branch wide and
+nothing noticed.
+
+Found on first contact with a real chain, during the #291 operator sitting:
+all 41 EQ Eight params and all 5 Erosion params failed in one run, each with
+`param 'value' must be str, got float`.
+
+**The wire form is confirmed against Live 12.4.5**, not merely reasoned: the
+same sitting's tolerance probe wrote `{"value": <stringified float>,
+"value_type": "continuous"}` over the real wire for 29 continuous params
+across Analog, EQ Eight and Erosion, and every write was accepted rather than
+refused. That — validation admits the string form — is the whole of what this
+confirms, and it is what the defect needed.
+
+It confirms nothing about round-trip fidelity. Those 29 writes re-wrote each
+parameter's EXISTING value, which Live short-circuits, so their exact-0.0
+result measures nothing; the sitting records that pass as worthless for
+tolerance and it is not evidence here either. Fidelity is #534's question, its
+numbers come from a separate perturbing pass, and the deltas there are not
+float32 representability — the largest are integer-stepped params
+(`Note PB Range` written 41.424, read 41).
+
+`str` rather than `repr` — identical for floats, but `push.devices`'s
+`_param_value_kv` already produces this same wire field with `str`, and two
+producers of one field that choose differently is how they drift apart.
+
+**Why the suite never caught it, fixed at the root.** `FakeLive.send`
+dispatched `dict(req.params)` with no validation, so a wrong-typed param
+passed the fixture and failed only against Ableton. It now runs the real
+`validate_params` against the real registered `Action`, and **fails closed** —
+an unregistered pair raises rather than silently switching validation off,
+which would reintroduce this defect's exact shape. Holding the fake to the
+wire's contract turns 20 existing tests red against the old code: the coverage
+was always there, only the contract was missing.
+
+**What this unblocks, and what it exposes.** #532 (an off-by-one that puts a
+restore on the wrong same-class device) previously had every write refused
+anyway; those writes now land, so its severity rises. #534 (`_PARAM_EPSILON`
+is absolute where the float32 error is relative, and blind to stepped params)
+governs a verify comparison that until now had nothing to compare.
+
+## 2026-09-10 — Every open bug, and the surfaces that had been reporting them fixed
+
+<!-- prawduct: type=fix | scope=BUGSWEEP-0910 | release=v1.9.0 -->
+
+The owner asked for every open bug closed on one branch, with subagents where
+they would not conflict. All twenty-two `kind: bug` items sat at `stage: ready`,
+each carrying its own requirements and design from the 2026-09-10 readiness
+pass — so this was not a design cycle. It was a partition problem and, far more
+than expected, an integration one.
+
+Twelve chunks: eleven built by worktree-isolated delegates against disjoint file
+sets, one taken here. Every delegate's file ownership was stated in its brief and
+none crossed it except where a brief was wrong. The partition's one error ran the
+safe way — #291 turned out not to touch `push_execute.py`, so two chunks held
+apart for a collision that did not exist went out together instead.
+
+**What the bugs had in common.** Very few were wrong arithmetic. Almost all were
+a surface stating something untrue, confidently, on the success path:
+
+- **#222** printed *"None. This song uses only Live's built-in devices"* over a
+  song whose Drum Rack lives in an Ableton Pack — an affirmative wrong answer to
+  the one question REQUIREMENTS.md exists to answer. The signal was already in
+  the DB, in two columns compat had never read.
+- **#516** returned a **real** device that was not the one loaded, which is the
+  worst failure shape available: nothing downstream can tell it is wrong, and
+  `device_index` feeds push's device linking.
+- **#481** made better authorship read as worse: a ramp authored as 64 fine steps
+  produced 64 `not_realized` findings where a coarse one produced two.
+- **#475** turned a 120 ms automation edge into a step on a 400 ms grid and
+  reported `ok` — on a song whose entire subject was the perceptibility of that
+  edge.
+- **#515** called `Clip.envelope_for_note`, a method Live has never shipped, and
+  a test fake for it kept the suite green over three load-bearing call sites.
+- **#291** lost every downstream effect's dialed parameter state on an instrument
+  swap, which on a tuned chain is mix work destroyed rather than a bug.
+- **#496** raised an alert on correctly-authored multi-meter songs forever, which
+  costs the alert channel its meaning for the cases that are real.
+- **#322** raised `TimeoutError` while the work was still executing on Live's
+  main thread — Python cannot interrupt a running Live API call, so the timeout
+  was only the caller looking away — and released the single-flight gate on that
+  path, admitting exactly the retries that stack more work behind the op still
+  running. That is the beachball the operator force-quit.
+
+**#328 was investigated and closed as not reproducible**, and it corrected its
+own issue on the way: the claim that each per-branch DB carries its own
+fingerprint state is false — `.last-notes-push.json` is a fixed filename in the
+song directory, so every branch's DB shares one ledger. That makes the confound
+different, not weaker, and it still explains the report. Its root cause was
+already fixed and closed.
+
+**#275 could not be closed here** and is not claimed as closed. Its acceptance
+criterion is a measurement only a live Ableton set can make. What was closable
+was the question the issue also asked — *is the device-load path reliable?* — and
+the answer was no: the cross-machine fallback inferred its browser root from the
+device kind (filing every audio effect under `instruments`), took the first
+substring hit, and never compared what loaded against what the song authored, so
+an authored Hybrid Reverb could be replaced by a stock one inside a green push.
+It now reads the root and folder Live recorded at capture time, prefers the match
+at that exact path, and refuses any load whose class is not the authored one.
+
+**The integration work was not merging.** Three patterns recurred often enough to
+be worth recording:
+
+1. **A landed column nobody writes is a requirement half-done, not descoped.**
+   #496 R1 covers three tables; the delegate that owned the schema could not
+   reach `score.py`, so `sections.bar_ruler` shipped inert. Finishing it was the
+   difference between a requirement met and a requirement filed.
+2. **A fix that removes a step has to remove every pointer to it.** #476 replaced
+   an unrunnable pytest invocation, and `scaffold`'s own next-steps print — read
+   immediately *before* the fixed step — still named the old one.
+3. **Docs describe the bug, so fixing the bug falsifies the docs.** Nine
+   documents asserted behaviour these fixes overturned, including two that
+   described a permanent API absence as a Live-version limitation, which reads as
+   *pending an update*.
+
+**Four follow-ups were filed rather than folded in** (#526–#529), each with the
+reason it was not fixed here: a real design question, a shared-config change that
+would have disturbed running delegates, an explicit non-goal of its parent, and a
+gap whose fix lives in a file the boundary reserved.
+
+**Three fixes could not be proven here, and none is claimed as proven.** #322's
+fence holds against a wedged scheduler in tests and cannot be shown to hold
+against Live dropping a scheduled callback; the design has no timed auto-clear
+by choice, so that state is recoverable only by an operator who knows to look.
+#291's verify tolerance was reasoned, not measured. #519's exclusion predicate
+names two Live class strings nothing here can read. All three are on the
+operator queue with what would settle them.
+
+**Three operator sittings are queued.** Three fixes are inside the MCP fingerprint
+paths and reach no live session until the vendored copy is replaced, so their
+verdicts are unknowable rather than passing; #291's `alien` witness and its
+`_PARAM_EPSILON` tolerance need real Live float behaviour, not a fake's.
+
+**Addendum 2026-09-10 (after the sittings ran) — two of the three unproven
+fixes are now measured, and the claim above is narrowed accordingly.**
+
+- **#322's fence is real for the case it models and inert for the case in the
+  report.** Verified against Live 12.4.5: the admission gate refuses concurrent
+  callers naming the running operation and its elapsed time, and `bout_status`
+  answers under a bout-fenced main thread. But the escalation path was never
+  reached, because it cannot be: under a real Ableton export that blocked Live's
+  main thread for 61.5s — four times the ceiling, correlated against the gap in
+  Live's own log — both in-flight calls died as bare 20s socket timeouts, no
+  escalation was generated, and `bout_status` timed out with them. The whole
+  request path stalls before any fence logic runs. **So the bullet above should
+  be read as: the single-flight gate no longer admits stacking retries, which is
+  true and verified. The beachball itself — Live blocked by its own modal work — is
+  NOT addressed by this fix.** Filed as #531.
+- **#291's `_PARAM_EPSILON` is now measured, and it is wrong in two ways**: the
+  float32 round-trip error is relative (1.335e-07 at a value of 4.11, 5e-09 for
+  normalized params) while the epsilon is absolute, and integer-stepped params
+  breach it outright (wrote 41.424, read 41). Filed as #534. The witness itself
+  failed for two further defects the fake `send_fn` cannot model — #532 and #533.
+- **#519's two Live class strings were confirmed** and that sitting is discharged.
+
+Nothing in the entry above is retracted; the fixes landed as described. What is
+narrowed is the scope of what #322 fixes, which the entry's own "none is claimed
+as proven" already anticipated. Evidence: `.prawduct/operator-verification.md`
+§ #322 and § #291.
+
+**The review found the sharpest defect in the sweep, and it was in the
+coordinator's own work.** The #275 guard compared the loader's answer
+(`class_display_name` — "Hybrid Reverb") against `devices.class_name` (Live's
+internal "HybridReverb"). Two namespaces, so it would have refused every
+*correct* substitution and disabled the cross-machine recovery it was written
+to protect. It passed because the fixture asserted the same contradiction — a
+test built from the same misunderstanding as the code confirms the
+misunderstanding rather than catching it.
+
+Three review rounds, and each found something the previous fix introduced:
+
+1. Thirteen fixed, four accepted. Beyond the blocking one, the recurring
+   shape was a **contract only one caller learned** — two delegates authored
+   in parallel against the same wire, and the escalation reply that means "still
+   running" was resolved in one caller and unwrapped as success in the other.
+2. Both new operator-facing refusals shipped **untested**, including the
+   coupling that mattered most: `resume` reaches the destructive phases
+   directly and so bypasses the journal-overwrite guard — correct today, and
+   exactly what a later refactor breaks silently.
+3. The fix for (1) closed the wire contract at two sites when it needed closing
+   **by construction**, and a docstring I wrote to explain the remaining raw
+   seam named a consumer that does not exist — while two destructive
+   index-based delete loops, its real consumers, stayed escalation-blind. Every
+   engine seam that resolves the client send is escalation-aware now, so a
+   module written tomorrow inherits the contract without knowing it exists.
+
+The pattern worth keeping: **a green suite is evidence about what could have
+made it red.** Three of the defects above passed a green suite because the
+fixture, the fake, or the assertion carried the same wrong assumption as the
+code — a fake for a method Live has never had (#515), a fixture asserting two
+namespaces are one (#275), and an assertion matching digits rather than the
+quantity it meant, which failed 4% of runs for a reason unrelated to its
+subject.
+
+## 2026-09-09 — The release blockers: seven defects that would have shipped, and two of them were in the release mechanism
+
+<!-- prawduct: type=fix | scope=RELBLK-V19 | release=v1.9.0 -->
+
+The owner asked which backlog items gate a release, ratified the resulting Tier-1
+list, and approved filing the one defect that had no issue. Seven chunks, built by
+delegates on a disjoint partition, plus one bug filed as **#518**.
+
+Two of the seven are defects in the **release mechanism itself**, which is why they
+blocked rather than merely queued. **#310** — eleven entries are vendored into
+Live's User Library but sit outside `_FINGERPRINT_PATHS`, so Live silently runs
+stale code on a green handshake; `docs/release-process.md` step 5 derives the
+consumer-facing `Re-vendor:` verdict from exactly those paths, and its
+consumer-facing section told a release cutter that an unflipped fingerprint meant
+"nothing to do". An advisory content fingerprint now spans the whole vendored set
+beside the hard one, never blocking, and step 5 gained a third verdict,
+`Re-vendor: recommended`. **#518** — the push CLI's version-mismatch recovery told
+the user the `+<sha>` suffix was "the commit it was vendored from" and handed them
+`git worktree add <sha>`. It is a content fingerprint; `git cat-file` rejects it.
+A version mismatch is what a release *causes*, so this was the recovery path for
+the release's own upgrade failure, and that recipe was #388's own shipped
+resolution — a regression against its acceptance, not a gap.
+
+The rest: **#505** a replace that cannot succeed no longer deletes the clip first
+(the fake LOM learned track kind, which is why wave 1 deferred it); **#514**
+capture excludes an untouched default scaffold track, and renumbers survivors by
+dense rank (see the caveat below);
+**#501** the compat check answers for samples through a second entry family whose
+status vocabulary is deliberately disjoint from `DeviceStatus`; **#509** an
+arrangement audio copy is bounded to its authored span; **#498** the render arms
+the analyzers AFTER the locate.
+
+**#498 is a capture that lied by about a beat.** The M4L patch resets `prev_beat`
+to -1 on the arm rising edge, which leaves the start detector's
+`prev_beat < start_at_beat` clause unconditionally true — so an armed patch fires
+on the first `current_song_time` change of ANY kind, and the locate that followed
+the arm was exactly such a change. `sfrecord~` opened at the seek and captured the
+wall clock before the transport rolled, so every per-section window in an affected
+report sat about 1.1 beats early and nothing downstream could notice. It only bit
+when the locate actually moved the playhead, which is why the same set produced
+two good renders and one bad one minutes apart. Moving the arm below the locate
+makes the transport the first post-arm movement. `_set_arm_on_all`'s docstring
+claimed arm timing was irrelevant to the recording boundary — true of the latency
+BETWEEN arms, not of ordering, and that wrong "why" is what made the original
+order look safe.
+
+**#509 was re-scoped by a probe that had already been run.** Row 27 of
+`lom-probe-results.md` records that `end_marker`/`loop_end` are writable on both
+placement routes while `Clip.end_time` has no setter, so the trim the issue
+assumed is unreachable and the block extent is a permanent Live limit, not a gap.
+Every surface that told the user to "trim in Live" was corrected, including
+`capability-truth.md`, which declares itself unable to lag.
+
+**One upgrade boundary is NOT closed, and it is named rather than implied.** The
+dense renumber is what makes the exclusion converge, but it also shifts every real
+track's index — and replay keys on `(song, track_index)` with no name
+reconciliation and no prune. So replaying a post-fix snapshot into a DB built from
+a pre-fix one can take a row's name onto a different row and leave the original
+behind at its old index. The snapshot-refresh joins that carry `browser_path` and
+preset seeds now fall back to a unique track name, and replay WARNS when a rename
+ORPHANS the row the name came from — narrowly, because a rename is ambiguous by
+itself: renaming a track in Live and re-capturing yields the same (index, old,
+new) triple and nothing is wrong on that path. What separates them is whether the
+incoming name also sits at another index, which is the row about to be stranded.
+The reconciliation itself is a design question (is a capture authoritative over
+track layout, or only over the mix?) that a release-blocker cluster is the wrong
+place to settle — tracked as #524. Deleting a user's track rows to fix it would be worse than the
+rename.
+
+**Tests corrected, not weakened** — each encoded the defect its chunk fixes.
+`test_replace_that_fails_to_recreate_says_the_slot_is_now_empty` asserted the clip
+was destroyed on a wrong-kind replace (retargeted to a failure the pre-check
+cannot foresee, so the disclosure contract stays pinned). Three pin recovery tests
+asserted `"git worktree add" in text`. Three chunk-07 tests encoded the pre-probe
+belief. And `test_execute_skips_the_region_pass_when_the_placement_failed` was
+**vacuous**: failing every `ableton_clip:create` halts the session-clips phase, so
+the arrangement phase never ran and the assertion held over a push that could not
+have written a region whatever the code did. It now fails only the arrangement
+create and asserts the phase actually ran.
+
+**The Critic caught a defect in the fix for a Critic finding.** The first review's
+R-9 said the region pass sat behind the devices phase's convergence guard, so one
+failed call withheld the region from every copy that landed. The fix for it added
+three operator warnings that all claimed "re-pushing an unchanged song will not
+retry them" — false, because the arrangement phase is an unconditional
+clear-and-rebuild projection and a re-push does retry. The verify pass blocked on
+it. The counts were wrong in both directions too: the "bounded N" alert was
+emitted before the executor's filter ran, and the withheld count counted calls
+rather than copies, doubling every number.
+
+**Re-vendor: REQUIRED.** `handlers/clip.py`, `actions/clip.py` and
+`handlers/render.py` are all inside `_FINGERPRINT_PATHS` — the tuple names the
+`handlers` and `actions` DIRECTORIES, not a file list — so the handshake
+fingerprint flips away from `6283768de096`, which is what `develop` carries. A
+consumer who skips the re-vendor gets a server that refuses every call.
+
+The post-flip value is deliberately NOT written here. It is a content hash over
+the whole wire-shape tree, so every later commit touching one of those
+directories moves it — it moved twice while this entry was being written, and
+each stale literal was a number an operator would have compared against and
+concluded the handshake was already right. Read it from the code, which cannot
+go stale: `hallucinote_mcp.compute_version_for(<pkg_root>)`.
+`docs/release-process.md` step 5 is where the cut records the value that ships.
+
+The bundle also touches `install_paths.py`, `install_ops.py`, `__init__.py` and
+`resources/guides/error-recovery.md`, which are vendored but NOT fingerprinted.
+Those alone would have been `recommended` — the advisory this release adds is
+exactly what reports them. They do not lower the verdict; the fingerprint-bearing
+pair sets it.
+
+**One change here is not a chunk, and it is the reason the rest can be believed.**
+`project-state.yaml` had no `test_command`, so `test-evidence record` had been
+falling back to the hook interpreter's own pytest — not the locked environment
+`project-preferences.md` says a green claim must come from. The gate that reads
+that evidence is the release gate, and this bundle exists because defects in the
+release mechanism ship quietly. The canonical invocation is declared now, so what
+the recorder runs is what the project calls green.
+
+Follow-ons filed rather than absorbed: **#519** (scaffold returns ship with
+devices, so the untouched predicate can never reach them), **#520**
+(`devices.audio_file` has the identical false-clean), **#521** (the advisory
+compares the invoking interpreter's package, not the running server's), **#522**
+(the region write assumes Live warped the file), **#523** (post-apply dispatch is
+a second `phase.name ==` special case). Nine operator-verification boxes are
+queued: every assertion behind these seven chunks is unit-level.
+
+## 2026-09-09 — A sample is now something the music can be derived from
+<!-- prawduct: type=feature | scope=SMP-6V2K-W2 | release=v1.9.0 -->
+
+SMP-6V2K wave 2, built by eleven parallel delegates on a file-disjoint partition and three
+more in a second wave, integrated on `plan/smp-6v2k-w2`. What a song can now do with a
+sample beyond placing it: **keep it** — `hallucinote asset add` normalizes a file under
+`assets/sources/` and records its provenance in `assets/manifest.json`; `derive(line, ...)`
+in `build.py` runs a recipe (trim, fade, normalize, reverse, pitch shift, stretch-to-bars,
+chop-at-onsets, carve / vocode against a symbolic or measured reference) into a
+content-addressed cache under `assets/derived/`, so a `reverse=1` row places the reversed
+file in the session and the arrangement; **hear it** — a second audio front door
+(`audio/sample_io.py`) and feature streams in seconds mapped to beats through the clip's
+placement (F0, formants, energy and spectral descriptors, onsets and phrases), detectors
+with musical gates, a follower generator that turns a contour into a part with the key as
+a parameter, and `hallucinote sample-lens` / `/sample-lens` rendering the reading against
+bars; **play it** — a Simpler row's `audio_file` is assigned on push (`assign_sample`, a
+new `ableton_device` action; the wire fingerprint flipped) and captured back; and the mix
+report can carry a per-turn speech-over-bed measurement (`speech_track=`), numbers only
+under the 2026-08-10 analyzer-freeze ruling. Wave-1 leftovers closed: pull links the
+audio clip it ingests (#507), the clip mutators refuse slot 0 (#473). Deferred at
+dispatch: source separation (#266). The Live session (sampler, reverse, the #509 and
+Sampler probes, the first hearing) RAN on 2026-09-09 against Live 12.4.5 —
+`operator-verification.md` has it box by box and `lom-probe-results.md` rows
+21-31 hold each verdict with its literal response. Sampler assignment and its
+idempotence, the hand-drop capture round trip, and reverse in both the session
+and the arrangement all passed. Two things did not and are recorded as open:
+the symbolic carve was never pushed, and the first hearing's musical result was
+not accepted by the operator ("it does not really read as tracking") — the
+pipeline ran end to end on real material, the music did not land. R6.2 was
+decided by ear: **Rubber Band**, which commits the R4.3 path to a non-Python
+binary dependency. The CLIs shipped are `asset`, `derived`, `sample-lens` and
+`stretch-ab`.
+
+`SCHEMA_VERSION` does not move (D17): `SectionReport.intelligibility` defaults to `None`,
+so a reader written against `"1"` still loads a report that carries it and still means the
+same thing by every field it already knew. The bar for a bump is a change to what an
+existing field MEANS, because bumping makes every existing report un-diffable
+(`compare.ensure_comparable` refuses across versions).
+
+One-time cache churn to expect: a file derived through `derived.derive` or a
+`Recipe` before this landed was addressed without its reference fingerprint, so
+it now resolves to a different address and the old file becomes an orphan.
+`hallucinote derived prune` will list a long set the first time after this
+change — that is the fix working, not a defect, and every file in it is
+regenerable from its source and recipe.
+
+`hallucinote derived prune` reads what the song's clips and devices point at, which is a
+mixed set — a song references its ingested sources as well as its derived files — so an
+addressed path naming nothing in the cache keeps nothing rather than raising. It refuses
+outright when it cannot read the song's DB at all: an empty reference set is
+indistinguishable from a complete one at the point where it would condemn every file in
+the cache, and only one of those is an answer.
+
+Tests consolidated: `test_reverse_is_refused_loudly_but_the_clip_is_still_placed` into
+`tests/unit/sync/test_push_clips_reverse.py`, which pins the contract that replaced it;
+three fixtures that used `slot=0` incidentally now use 1. `recipes.prune`'s contract
+changed deliberately: it raised on an addressed path that named no derived file, which
+contradicted its own docstring and made the CLI traceback on any song with a source.
+
+## 2026-09-09 — The audio path ran against Live, and the one silent replace it found now speaks
+
+<!-- prawduct: type=bugfix | scope=SMP-6V2K | release=v1.9.0 -->
+
+SMP-6V2K wave 1's live clauses are discharged on Live 12.4.5 (`.prawduct/operator-verification.md`
+→ SMP-6V2K wave 1, box by box; `capability-truth.md`'s audio row now says live-verified). The
+run surfaced one defect, fixed here: an unlinked audio row pushed into a slot Live already holds
+a clip in — the seam a pull-ingested clip falls through, since pull writes no link (#507) —
+plans `create(replace=True)`, whose delete happens inside the handler, and said nothing about
+it. The code comment and `capability-truth.md` both claimed the cost was stated in the create's
+purpose; purposes never reach `execute`'s output. `plan_push_clip` now alerts on the operator
+channel whenever the probe shows the slot occupied, naming the clip Live holds, the file it is
+rebuilt from and the warp markers that do not survive; an empty or unprobed slot stays silent.
+Two planner tests pin both halves; the alert was seen on a live push.
+
+## 2026-09-09 — Push acts on the probe's verdicts: a re-pointed sample is recreated with its ride, and an envelope-hosting audio placement duplicates
+
+<!-- prawduct: type=feature | scope=SMP-6V2K | release=v1.9.0 -->
+
+The two `plan.blocked` refusals chunk 03 shipped pending the Live probe are gone, replaced by
+the rule its recorded verdicts license (`lom-probe-results.md` rows 16-17). In the clips phase
+a linked audio row whose `audio_file` changed — or whose slot Live reports as holding a MIDI
+clip — now plans one sequence: an explicit `delete` (new ack-only key `clip_delete:`), the
+`create` at the same slot, the full conform, then every envelope the row hosts written again,
+because `Clip.file_path` is read-only, a create into an occupied slot is a hard error, and a
+recreate drops the clip's envelopes. The re-emit reuses the envelopes phase's own planner
+through a new per-clip entry point (`plan_push_envelopes_for_clip`, over
+`envelope_hosts_by_clip`) rather than a copy, so the route table has one home; the recreate
+is announced as an alert. In the arrangement phase an audio placement whose source clip hosts
+an envelope takes the duplicate-onto-cleared route exactly as a MIDI one does — the duplicate
+carries the ride off an audio session clip, and the conformed session clip with it, so the
+per-placement conform gap stops firing for those rows and keeps firing for envelope-free
+direct creates. Only envelope-hosting rows duplicate: the extent gap is route-independent and
+filed as #509 rather than widened into here. The MCP handler's teaching-error mapping
+gains Live's third path shape (`Please provide an absolute path`), which flips the wire
+fingerprint — re-vendor before the live checks. `capability-truth.md`, the sync-boundary
+contract (phases 6 and 13) and `operator-verification.md` (chunk 03's live clause re-queued
+over the two new paths) track it; nothing in `sync/push` cites chunk 01 as pending.
+
+The cumulative review's fixes landed as one batch. Pull now rules an absent audio clip or
+placement on its **link**, not its kind: a linked one was in Live and is a real deletion, an
+unlinked one may be a push refusal (sample not on disk) and is kept and reported — the
+session and arrangement passes had reasoned in opposite directions. The arrangement phase's
+extent gap and untouched-audio-track summary moved from `notes` (the channel the executor
+discards) to one `alert` per phase, so the operator actually sees what the records claimed
+they did. The sample-resolution chain, the audio create call and the sub-plan merge each got
+one home (`resolve_authored_sample`, `_audio_create_call`, `PushPlan.absorb`); a duplicated
+path helper was deleted; the set_property tip stopped offering a Simpler Reverse parameter
+the probe found does not exist; README, known-issues and the pull skill stopped claiming a
+working round trip the capability table rates ◐, and now say a pulled-in clip is *staged*
+into the regenerable DB rather than made source. #504's in-wave fix is recorded as such;
+wave 2 and wave 3 are filed as #511 and #510.
+
+## 2026-09-09 — The probe session settles the reverse contract and the recreate semantics
+
+<!-- prawduct: type=research | scope=SMP-6V2K | release=v1.9.0 -->
+
+SMP-6V2K chunk 01 ran against Live 12.4.5 through the shipped `ableton_probe` bridge, and
+every question the wave had left open now has a recorded call and a literal response
+(`docs/research/audio-first-class/lom-probe-results.md` rows 14-20, raw records in the
+JSONL). A Live `Clip` has no reverse, and neither does Simpler — its `reverse()` is a
+destructive method that writes a derived file — so `clips.reverse` materializes only as a
+reversed derived asset, which the schema comment and design D6 now say. The warp-mode map is
+pinned by the one gap Live leaves (REX refused on a WAV). Creating into an occupied slot is a
+hard error, a delete-and-recreate drops the clip's envelopes, and `duplicate_clip_to_arrangement`
+carries a ride off an audio session clip exactly as off a MIDI one — a control duplicate
+without an envelope was run so the `automation_state` flip could be trusted. Live also
+checks path absoluteness before existence, a third error shape row 1c never saw.
+
+Two things fell out of running the write path instead of reading about it. Simpler's sample
+assignment via `replace_sample` and its `Sample` surface are recorded for wave 4 (#330), and
+`ableton_probe(set)` turned out unable to write an int from this client — its untyped
+`value` arrives as a string — which is backlogged as #508 with a repro. The two push refusals that
+cited this chunk are now **chunk 07** in the plan; they stay in force until it is built, and
+`capability-truth.md` says exactly that.
+
+## 2026-09-09 — A sample is song material: audio clips place, conform and round-trip
+
+<!-- prawduct: type=feature | scope=SMP-6V2K | release=v1.9.0 -->
+
+Audio clips reach Live. An audio file referenced from `build.py` places into a session
+slot with its warp mode, transpose, gain and markers as authored, and into the arrangement
+as a placement; a clip dragged into Live by hand comes back into the song's source on pull,
+in a portable path form; and a volume ride or send throw authored under an audio clip
+pushes, because an audio host now routes exactly like a MIDI one. The DB has modeled all of
+this since CLP-AUD1 and the LOM calls were probe-confirmed on 12.4.1 — this wave is the
+wiring between them. Closes the `audio_path_deferred` no-op, the two push refuse-loudly
+paths, the pull refusal, and the `refused_audio` envelope route.
+
+**The read half was the gap nobody had noticed.** `list` reported a clip's name and length
+and nothing else — no discriminator, no file path, no warp state — so pull could never have
+ingested audio at all. Found by reconciling the plan against its own requirements before
+building, which is the one place that gap had no owner: it sat at the far end of the
+dependency chain, in a chunk whose builder would have had no authority to change the wire.
+
+**What it deliberately does NOT do**, because guessing would be worse: re-pointing a clip
+at a different file, and an arrangement placement whose clip hosts an envelope, both refuse
+loudly and name what is unknown. `Clip.file_path` is read-only, so a re-point is a
+delete-and-recreate, and whether a recreate preserves the clip's envelopes has not been
+probed — a recreate could drop an authored ride, and re-emitting one "just in case" could
+double a ride that survived. The arrangement copy also carries no conform: Live's direct
+arrangement-create takes no properties and the planner cannot address the new clip until
+after the call returns, so the run reports that gap rather than implying a conform it did
+not apply.
+
+**Nothing regresses the MIDI path**, and that is measured rather than asserted: a
+concurrent song session pushed a pure-MIDI set through this branch's engine — 58/58 clips,
+116/116 arrangement placements, `verify-arrangement` faithful with no orphans. Both
+rewritten modules met a real set. The audio path itself has NOT been live-verified, and
+`capability-truth.md` says so: its new audio row ships at partial, not full.
+
+Also corrected here, because they had quietly become false: four surfaces still describing
+the refusals this wave removed (the agent-facing `gaps.md`, `terminology.md`, `README.md`,
+`song-authoring-conventions.md`), `authorship-model.md`'s claim that Live won't create
+session audio clips, and `schema.sql`'s promise that `clips.reverse` materializes at push —
+Live exposes no settable reverse at all, so the clips phase refuses a row that sets it.
+
+Deferred with citations rather than carried: #504 (the arrangement integrity assert's
+blindness to a dropped audio placement — fixed here, since this wave made that path
+destructive), #505, #506, #507.
+
+## 2026-09-09 — Doc deep-links: the parity check now covers every link, not one file
+
+<!-- prawduct: type=bugfix | scope=docs-hygiene | status=shipped | release=v1.9.0 -->
+
+`test_every_song_workflow_deeplink_resolves` only validated links whose target
+was `song-workflow.md`, so a heading renamed in a design artifact left two
+backlog `refs:` pointing at nothing and the suite stayed green. It is now
+`test_every_markdown_deeplink_resolves` over every relative `*.md#anchor` link in
+the repo, plus a sibling for the bare `path/to/doc.md#anchor` form the backlog's
+`refs:` field uses (no link syntax, so the first check cannot see it).
+
+The slugger was also wrong in a way that would have hidden a real break: it
+collapsed whitespace runs, but GitHub emits one hyphen per space. Dropping an
+em-dash from `Foo — bar` leaves two spaces and GitHub's anchor is `foo--bar`, so
+the old helper both rejected correct links and would have accepted links GitHub
+resolves to nothing.
+
+Four dangling references fixed: two backlog `refs:` anchors, `docs/faq.md` →
+`README.md#requirements` (no such heading), and
+`docs/song-authoring-conventions.md` → `performance-model.md#references` (the
+heading is numbered). Also corrected the README's claim that a mid-song
+tempo/meter change is refused at the call site — it is authored fine and warned
+about at push — and restored a missing `---` rule in the conventions page.
+
+## 2026-09-09 — Meter is a projection concern: the DB records what the song IS
+
+<!-- prawduct: type=bugfix | chunks=01 | scope=tmp-7b3x | status=shipped | release=v1.9.0 -->
+
+`add_time_signature_point` and `update_time_signature_point` refused any
+`start_bar > 1.0`. The stated reason was a Live limitation — Live 12.4's MCP has
+no `song_signature` automation target_kind, so a within-song meter change cannot
+reach Live. The consequence was that **the DB could not record that a song is in
+7/4**, because of what the renderer cannot draw.
+
+**The ruling, from the owner:** *the song itself is 7/4 or whatever; if we have
+to represent it as 1/4 or 1/8 in Live, fine.* A song's meter is a property of the
+authored work; Live's ability to render it is a materialization detail. So the
+guard was in the wrong layer — the same lesson the arrangement redesign already
+applied: the DB holds the authored truth, Live is a projection of it, and
+projection limits are enforced where the projection happens.
+
+**What changed.** Both refusals are deleted; `_require_bar_floor` (bars are
+1-based) stays, and so does the schema `CHECK (start_bar >= 1.0)`. Nothing else
+had to move: `start_bar` was already a float, and every consumer of the map —
+`_split_bar`, `_position_bar_to_beats`, arrangement verify, the analysis
+handlers — already reads multi-point maps through meter-aware geometry. The
+planner tests had been reaching past the mutator with a raw INSERT to prove it;
+that helper is retired.
+
+**Where the limit is stated now.** `plan_push_time_signature_map` pushes the
+bar-1 row and reports the rest — and reports it on the channel the operator
+actually reads. The first cut used `plan.warn`, which appends to
+`PushPlan.notes`, a field documented as diagnostic-only and never drained by the
+executor; a mutator exception the author could not miss had been replaced by a
+message nobody sees. It is a `plan.alert` now, landing in the push report, and
+says what is lost and what is not: Live's ruler will read the bar-1 meter for the
+whole song, the DB still holds the true map, and the felt meter has to live in
+note placement and accent. Tempo's identical non-bar-1 skip was promoted with it
+— the same silent drop, and asymmetry there would have been indefensible.
+
+**A hazard the guard had been masking, now surfaced rather than inherited.** Two
+bar rulers exist in this codebase: push translates bar positions through the
+meter map, while `hallucinote.arrangement` accumulates whole bars against one
+uniform `beats_per_bar` and never reads the map. They agree only while the map is
+bar-1-only — which the guard had guaranteed. Push now DETECTS it, in the two
+phases where a bar position actually becomes a Live beat: the arrangement and
+cue planners run `uniform_bar_math_divergences` and alert only on the placements
+whose two translations differ, naming the count and both beat positions. A
+detector that fired on the mere presence of a meter change would have been
+identical noise on every correct odd-meter song, so it discriminates rather than
+announcing. Closing the divergence itself is `ARR-4M3T`'s (a meter-aware
+`Arrangement.plan()` and meter-aware lenses); getting a declared map to actually
+materialize in Live is `TMP-4J6Q`'s. Neither closes the other, and this change
+closes neither — it stops the model lying about what the song is.
+
+Unblocks the tour demo song's v2 take, whose chorus is in true 7/4, and makes
+`/song-new`'s meter exit criterion satisfiable: the meter row now resolves
+DECIDED instead of UNDECIDED-owned-by-the-engine.
+
+(`backlog TMP-7B3X`)
+
+## CAPSPAN-491 — a capture that does not span what it declares now says so
+
+<!-- prawduct: type=fix | scope=CAPSPAN-491 | release=v1.9.0 -->
+
+A peer session reported that one render of `songs/alien` came out with every
+stem shifted about a beat, and that nothing in the analysis pipeline noticed:
+the manifest said `status: ok`, and the mix report attributed a reverb peak to
+the beat *after* the one it landed on.
+
+**Why nothing noticed, which is the interesting half.** `BeatSampleMap` maps the
+declared beat span onto whatever sample count it is handed and rescales. That is
+deliberate — its docstring says the rescale exists so "a global tempo offset
+between the DB `tempo_map` and what the render actually played can't shift
+boundaries". It is a good property against a tempo mismatch and an
+indistinguishable one against audio of the wrong length. The map is not the bug
+and is unchanged; the excess is now measured before the rescale absorbs it.
+
+`measure_capture_span` compares the captured duration against the span the
+manifest declared, and a mismatch beyond a quarter beat emits a
+`capture_span_mismatch` finding. The numbers land in the report's `alignment`
+block on the passing path too — a check that only speaks when it fails cannot be
+told apart from one that never ran, which is the failure being fixed.
+
+**Three things measurement decided that a reading of the report would not have.**
+Three real captures of the same song were measured first: the defective one ran
+1.06 beats long and the two healthy ones sat inside 0.05, which is what makes a
+quarter beat a bright line rather than a tuned threshold. Within *every* capture,
+healthy ones included, the returns run up to 0.38 beats longer than the master —
+the known independent-`sfrecord~` tail spread — so the check reads the common
+(post-trim) length and a per-surface check would have flagged all three. And the
+finding claims only what length can support: a capture that armed early and one
+that disarmed late produce the same number, so it never says "started early",
+though that is what the evidence in the report suggests.
+
+**Where it declines, and why that is not timidity.** The comparison is against
+the *declared* tempo, and push materializes only the bar-1 row today — Live plays
+the whole song at that one value — so wherever the declared tempo differs from
+it, the declared duration is not what was rendered. The check refuses there and
+names the push gap, rather than reporting it as a bad capture.
+
+That gate asks about the **render**, not the score, and it took a round to get
+right. A first version asked whether the declared tempo was constant across the
+captured span, which accepts a song declaring 90 bpm at bar 1 and 124 from beat 8
+rendered from beat 16: declared-constant at 124, actually played at 90. It would
+have compared real audio against a duration nobody performed and reported the
+push gap as a broken capture — in the one lens the mix-review skill tells the
+reader never to hedge. The predicate now takes the bar-1 bpm and requires
+the declared tempo to agree with it from beat 0 through the span's end —
+stricter than the span alone needs, and deliberately so, because the error it
+gives up is a false decline and the one it refuses is a false alarm.
+
+It also refuses on a missing tempo map, on a malformed manifest whose
+declared span is non-positive, and on a capture starting before the song's first
+tempo point — `declared_span_seconds` will not reuse `BeatSampleMap`'s constant
+fallback, which cancels in a rescale but would be a fabricated duration here and
+would manufacture a finding on every song not at that constant. **Each of the
+four declines carries its own reason** in `skipped_analyses`: they send an
+operator to four different places, and a shared message would replace the silence
+this work removes with a wrong answer, which is worse.
+
+**One refusal will go stale, and saying so is the point.** The variable-tempo
+guard reads the DECLARED tempo, not what the renderer can honour, so it does NOT
+retire itself when variable-tempo rendering lands — every such song would keep
+declining and keep blaming a gap that no longer exists. An earlier draft of this
+entry called it self-healing; the review caught that the code does not do that.
+The obligation to delete the guard is written where whoever lands that capability
+will meet it, rather than asserted as automatic.
+
+The beats-to-seconds integration is now shared by the map and the check, because
+two integrators disagreeing about how long 515 beats is would produce a finding
+that contradicted the section windows in the same report.
+
+Verified against the reported capture itself, not only fixtures: it produces the
+finding at 1.06 beats and the healthy capture beside it produces none.
+`SCHEMA_VERSION` does not move, and three things shipped under that call rather
+than the two an earlier draft of this entry counted. Two are plainly additive: a
+new `Finding.kind` extends no enumeration, and the `alignment` block gains a key.
+The third — re-keying the `skipped_analyses` entries below — is **not** additive,
+and was held to the same version deliberately after checking what could read it:
+`compare.py` never touches the field, the MCP handler never emitted the old key,
+and no checked-in report carries it. Bumping the version would make every
+existing report un-diffable (`compare.ensure_comparable` refuses across versions)
+for no consumer's benefit.
+
+One seam that call leaves open, worth knowing before reading an old report:
+`capture_span: null` means the check declined and `skipped_analyses` says why,
+while the key being **absent** means the report predates the check entirely. Same
+schema version, different meanings — the skip entry is what tells them apart.
+
+**One thing found on the way.** Skip entries are selected by `kind`, and
+consumers index it unguarded — but the render-integrity and imaging skips were
+keyed `analysis` instead. They never reached a real report only because the MCP
+handler happens to enable both lenses, so the inconsistency sat one default away
+from a `KeyError` in every reader of a report produced by a direct
+`analyze_mix` call. Copying the wrong key for the new entry is what exposed it.
+All three are `kind` now, and a test walks every skip the pipeline can emit
+rather than the few any one test happens to trigger.
+
+Detection only. Correcting the offset, and the Live-side reason `sfrecord~` armed
+early, stay open on #491 — both live in the fingerprint-bearing render handler
+and would force a re-vendor.
+
+## JANITOR-2026-09 — first Norm Health sweep, and the bookkeeping that had fallen behind the work
+
+<!-- prawduct: type=chore | scope=JANITOR-2026-09 | release=v1.9.0 -->
+
+The survey found a codebase in good order and bookkeeping that had fallen
+behind it. Six TODO markers, all deliberate scaffold placeholders; every
+relative link across 26 docs resolving; no dead top-level modules; backlog
+groomed with 0 stale and 0 unstaged. What had accumulated was records, not rot.
+
+**Plans (Chunk 01).** `plans/` held 51 entries and had archived 4. Forty-seven
+were archived here (46 plan directories plus the EXECUTION-ORDER wave doc), and
+the Critic round added six finished `build-plan-*.md` at the artifacts root that
+sat outside the same lifecycle — 53 units in all. Eight were superseded, each
+naming what absorbed it; the rest completed. (An earlier draft of this entry
+said "50, 39 completed, 11 superseded" — the review caught it. The counts here
+were derived from the tree, not carried over from that draft.) Classification was per-plan because a mechanical read gets it wrong
+in both directions: NODE-ADDR's boxes are unticked while its text says DONE +
+LIVE-VERIFIED, and ENV-9P4T uses a `[~]` box no box-counting regex matches, for
+a chunk its own Live probe invalidated. Every superseded plan's open work was
+confirmed to hold a backlog id BEFORE archiving — archiving a plan whose
+remainder is untracked buries it. `build-plan.md` was deliberately left live
+(gitflow, merged-but-unreleased) and now says so.
+
+**Norms (Chunks 02-03).** Ten measured: six clean, four with distance, split
+evenly between statement drift and code drift — the finding that a sweep must
+ask which side moved, now a learning. Statement drift: the raw-SQL norm narrowed
+to writes (owner ruling R1) with markdown_refs' projection rebuild recorded as a
+bounded exception; the `sync.*` row restated to planners-vs-executor, matching
+the contract artifact that already modelled it. Code drift: `kit.py`'s db import
+inverted into a new `hallucinote.kits` loader, with `Kit.from_device` kept as a
+one-major alias because it is a published authoring API (two ratified norms
+collided; the owner ruled the seam), locked by an import-GRAPH test rather than
+a source grep; and the future-annotations norm mechanized as ruff `I002`, which
+is what its unacted-on "promote to a ruff rule" note should have been. `I001`
+was measured at 248 files and deliberately left off as formatting churn (#487).
+
+Two norms were closed on governance rather than code: the push-projection norm
+had sat AGENT-PROPOSED / PENDING OWNER VETO for 19 days (ratified), and
+`architecture.md` now states its altitude — runtimes and boundaries, not a
+module inventory — naming the ten packages as bare pointers because the
+briefing's staleness probe is a substring test with no way to declare a doc
+deliberately module-free.
+
+**Deferred, not dropped (Chunk 04).** #484/#485 the two cold branches carrying
+real unmerged work, #486 whether the 17 raw-SQL reads should consolidate, #487
+the ruff churn decision, #488 the two worthwhile artifact templates. #489 was
+added at the PR-review gate: Chunk 04 also specified filing two findings upstream
+to prawduct and neither was sent, so the reports are descoped to that item —
+they cross an owner boundary, which makes sending them the owner's call and not
+the sweep's. The chunk's own done-when is satisfied by the id, not by the tick.
+
+**Baseline (Chunk 05).** `norm_health_last_run` and the first `norm_health:`
+entry are stamped, so the next sweep reads a trend instead of measuring from
+zero. That absence is why this one existed.
+
+Suite green with no path argument at every chunk boundary and after the Critic round; ruff and mypy clean. Exact totals live in the evidence store, not in this prose, because a copied count drifts the moment a test is added.
+
+## 2026-09-08 — The report learns to ask whether the audio is damaged
+
+<!-- prawduct: type=feat | scope=render-integrity | release=v1.9.0 -->
+
+Every lens in the mix report measured *musical realization against intent*.
+Nothing measured whether the captured audio was **defective**. Across 23 modules
+in `audio/` there was no clipping detection, no DC offset, no click or dropout
+detection, no polarity check and no stem-vs-master reconciliation; the only
+clip-adjacent number anywhere was the master's delivered true peak. The string
+`click` appeared only as a *musical* term — the kick beater's 2-6 kHz band.
+
+Four new lenses close that. `integrity.py` finds clipping, DC offset, dropouts,
+clicks and truncated decays per surface; `phase.py` finds polarity inversions,
+time offsets and per-band cancellation between surfaces; `imaging.py` gives
+per-band correlation, width and image position; `reconcile.py` asks whether the
+captured surfaces sum to the captured master.
+
+This family is exempt from the analyzer freeze, and the reason matters: the
+2026-08-10 owner ruling gates lenses whose thresholds *encode taste*, and a
+sample discontinuity has physical ground truth. It is also the only family that
+may name a defect as a defect rather than reporting against declared intent.
+
+**It is upstream of the rest of the report.** A click reads as an onset to
+`onsets.py`, so the timing and cross-rhythm lenses faithfully report a groove
+nobody played; a dropout reads as a written level move; a truncated capture
+reads as a short decay. `/mix-review` now reads integrity before any musical
+number and treats a damaged surface's musical readings as suspect.
+
+**Two false positives were found by running the lenses over a real render, and
+neither would have survived to a listening test.** The clipping detector keyed
+on amplitude — but captured stems are pre-fader float32, so a healthy part
+peaking at +6.30 dBFS spends most of every cycle above full scale without ever
+going flat, and it drew 7970 clip runs from undamaged audio. Clipping is a flat
+top, not a loud one, and keying on samples pinned to one value takes that to
+zero while still catching flat-topping at any level. Separately, a
+cross-correlation always peaks somewhere: every uncorrelated stem pair reported
+a confident-looking offset of tens of milliseconds at r ~ 0, which is two parts
+sharing a downbeat rather than a device delay. `lag_correlation` now carries how
+much of a lag reading to believe, because reporting coincidence as latency is
+worse than reporting no lag at all.
+
+Two delegates building different lenses independently reached for the same two
+private helpers rather than write a second definition of "energy in this band"
+and of the degenerate-correlation cases. Two arrivals at one seam is the signal
+that these were public in all but name, so `attribution.band_energy` and
+`stereo.channel_correlation` now say so. The unification is only partial and
+deliberately so: `phase` and `reconcile` keep their own correlation conventions
+because they answer different degenerate cases, and consolidating them would be
+a behaviour change wearing a refactor's clothes.
+
+**An independent review then found four blocking defects, three of them the same
+shape as the two above — a threshold that is physically grounded but wrong for
+real material.** `stem_gains` was being run through Live's fader curve a second
+time, mis-levelling a unity fader by +6 dB and a −14 dB one by −20 dB while the
+report asserted the levels were modelled. The discontinuity detector derived one
+global sigma over a non-stationary signal, so any percussive part read as tens of
+thousands of clicks — 32,752 against 31 real onsets on drum-like material; it is
+now computed per 25 ms window. The new flat-top clipping rule had picked up a
+false positive at the *opposite* end of the range from the one it fixed, because
+its tolerance was absolute while a crest's flatness scales with amplitude — a
+clean 20 Hz sine at −12 dBFS drew 32 phantom runs. And a zero-run gap was
+accepted if *either* edge was abrupt, which made every musical rest a dropout.
+
+Running the fixed detectors back over the finished song then found the last one,
+which no synthetic fixture would have posed: a heavily-processed vocal produced
+42,578 flagged steps inside 660 windows — about 65 per window, which is very
+nearly every sample in those spans. That is one *region* of step-rich material,
+not 65 defects, and distortion, bitcrushing and granular processing produce it
+because it is the sound. Events now collapse to one region per window, which took
+the drum stem from 638,099 to 4 and the vocal to 1,296 regions over 6.5% of its
+length. No threshold separates "a splice" from "a texture" — that decision needs
+the song's intent, so the lens reports the count and `/mix-review` reads it,
+exactly as every other lens here works.
+
+The lesson the plan recorded after the first real-capture pass generalized further
+than it was written: being *exempt from the analyzer freeze* is not the same as
+being *calibrated*. Physical ground truth belongs to the quantity, not to the
+threshold placed on it.
+
+`cross_correlation_peak_lag` also came out of the test tree, where it had sat
+since the MVP behind a docstring promising a promotion that never happened,
+leaving `alignment.py` pointing at a function in `tests/`.
+
+## 2026-09-08 — Live plays from a position `current_song_time` never moved
+
+<!-- prawduct: type=fix | scope=perform-start-position | release=v1.9.0 -->
+
+Issue #471 opened as "a perform pass reports success and records nothing", and
+the reporter closed it themselves with the mechanism: `song.current_song_time`
+is the playhead, and `start_playing()` rolls from Live's **start playing
+position**, which that write does not move. The LOM exposes no writable
+property for the second — `CuePoint.jump()` is the one surface that moves it.
+
+The two agree on a set nobody has listened to and part company the moment
+someone presses play in the arrangement, so locate-then-play was only ever
+coincidentally correct. On `songs/alien` the start position had drifted to ~351
+while the arcs lived at 96-104: three passes in one day each seeked correctly,
+read the seek back correctly, rolled from 351, exited the ramp loop on the first
+tick already past the span, and returned a clean result. The divergence was
+found by ear, from a reverb wash that did not match what the DB said was there.
+
+**The settle-verify was not missing — it was answering about the wrong
+property.** `perform_batch` already had a worker-thread poll on
+`current_song_time` (PSH-4L6C), and it passed every time, honestly. That is what
+makes this class hard to see, and it is why the fix has two halves rather than
+one.
+
+`handlers/_transport.py` is the first: `locate_start_position` moves the start
+position by jumping to a cue at the target — the operator's own where one is
+there, otherwise borrowing one (create, jump, delete) and reporting rather than
+swallowing a locator it fails to give back.
+
+**Borrowing writes to the operator's set, and that was the decision worth
+weighing.** A locate now costs two Undo entries and shows a locator flickering
+in the arrangement — a mutation nobody asked for, in a set that is somebody's
+song. The alternative was to jump to the nearest cue at or before the target and
+let each arc's window gate the writes, which mutates nothing. It was rejected on
+cost: for an arc at beat 345 on a set whose nearest earlier locator is at bar 1,
+that is a realtime pre-roll of several minutes per pass, on a mechanism whose
+whole expense is already wall-clock. The borrow is bounded instead — one cue, at
+one beat, given back in a `finally` so it survives a raise, and its failure to
+come back is logged with the beat named. A third option, requiring the operator
+to place a locator at every span they author, was not seriously considered: it
+makes the tool's mechanism their problem. A cue that exists but cannot be
+jumped degrades instead of falling through to the borrow path, because that
+path's toggle fires at the same beat and a toggle where a cue already sits
+DELETES it.
+
+The second half is `require_playhead_within`, which judges where the transport
+ACTUALLY rolled from. That one is mechanism-independent — it holds when the
+locate is defeated by something nobody has seen yet — and it is why a wrong
+position is now a loud error rather than silent divergence. Both callers hand it
+a beat they already read (the ramp loop reads one every tick; the render reads
+one for its engine pre-flight), so the guard costs no extra Live touch — and
+both read it only once the transport is demonstrably rolling, because Live's
+playhead mirror lags the audio thread and the first read after `start_playing()`
+still shows the position the locate parked, which is the one value that would
+make the check pass at the moment it must fail.
+
+**The same two lines were in two more places.** `render.py`'s capture seeked and
+played, and its engine pre-flight asks whether the transport ADVANCES — a
+transport in the wrong place advances exactly as well as one in the right place,
+so a render could capture minutes of the wrong section and report a healthy
+capture. And `session.py`'s play note *told operators* that "seek then play
+locates-and-plays: the render capture path relies on exactly that", which is the
+false belief that cost the reporter six hours, shipped as documentation and read
+at precisely the moment someone is debugging this. `seek` now moves the start
+position too and says which method did it, so the read-back workflow that
+diagnosed the bug is trustworthy.
+
+A source-level test now fails on any handler that reaches `start_playing()` for
+a positioned pass without locating first, with a two-entry exemption list for
+the bare transport verbs. The mistake leaves no trace in the code that made it,
+so it is checked rather than left to reviewers.
+
+**Reporting, the other half of the issue.** `automation_state` cannot verify a
+perform: it reads 1 whenever ANY lane exists on the parameter, so on every
+iteration after the first it is 1 regardless of what the pass did. A parameter
+with no prior lane failed honestly; one with a lane could not. Each arc now
+carries a stated `outcome` (`recorded` / `unverified`) plus the reason, computed
+where the pass happened, and the apply layer branches on that with the old two
+field checks kept as the floor for a server predating it. `apply_push_results`
+gains a `notes_sink` — a benign channel next to the actionable one, since the
+returned warnings ride `.last-push-errors.json` and a per-arc roll-up there
+would make a clean push look failed — and every arc gets a line naming its span,
+its verdict and its write count.
+
+**Not built, and why.** The issue's ask 1 (verify each arc by sampling the
+parameter back across its span) was written before the mechanism was known, when
+read-back shape was the only diagnostic available from outside. `updates_written`
+is a direct count of what the pass wrote and the position guard catches the
+failure before the ramp even runs, so it is filed as defence-in-depth rather
+than built. Ask 4 (prefer the `session_clip` route wherever the span allows) is a
+routing-policy change with real consequences the reporter names themselves —
+`insert_step`-only, so a ramp must be authored as an explicit staircase — and
+deserves its own design pass. Filed as #478 and #479; #479 should be read
+alongside the already-open #474, which asks for the inferred route to be
+surfaced at all.
+
+**Verified against Live 12.4.2 the same day — and the verification found a
+regression before it confirmed anything.** `song.record_mode = True` is Live's
+Record BUTTON, and pressing Record starts the transport (beat 0 → 2.768 at
++1.0s → 8.402 at +1.5s). The fix as first written located AFTER the record-mode
+settle, reasoning that arming was the last thing that could disturb the
+playhead. Arming does not disturb the playhead; it starts it. So the locate
+aimed at a moving target, could never place its cue — the toggle fires at the
+transport's real position, so an imprecise one is refused by design — and every
+locate degraded to `playhead_only`. The whole fix was inert while reporting
+itself accurately: the first live pass wrote 21 values, recorded no lane, and
+read back flat at 0.9000 on every beat.
+
+Stopping between the arm and the locate is not the escape hatch either: a stop
+DISARMS `record_mode`. The order is now quiet-the-transport → locate → arm, and
+the arm rolls from the start position the locate just set, which is where the
+pass wanted it. Two tests that encoded the old sequence were updated with the
+measurement as their reason, and a third now pins locate-before-arm.
+
+After the reorder, on the same set: a virgin parameter records and reads back as
+a real ramp (0.315 → 0.859). Then the start position was poisoned to beat 104
+the way a human does it — click late, roll, stop — and a second arc was
+performed against that same, now lane-bearing parameter. It recorded, and the
+read-back DESCENDS (0.834 → 0.204) where the first pass ascended, which is what
+proves the second pass landed rather than the first still answering for it. That
+is the exact case that silently did nothing three times in one day. The borrowed
+locator came back every time (`cue_count: 0`), and the past-the-extent refusal
+fires with its teaching message.
+
+The reorder had one consequence the live run could not show, because every pass
+there was single-arc: the initial gesture-open read the live playhead to decide
+which arcs were already active, and with the transport now rolling since the arm
+that read is `union_start` plus whatever the settle let it travel. An arc whose
+span began inside that drift opened early, and `start_playing()` re-asserts
+`union_start` a line later — so the ramp would write that arc's first breakpoint
+value across beats it was never authored over. The read was only ever a proxy
+for `union_start`; it now asks `union_start` directly, which is the question it
+was always answering. The fake that catches it is the first one here to model
+arming as a transport event rather than an inert flag — and a multi-arc live
+round then confirmed it in Live: two arcs on staggered spans (32 beats and 16)
+came back with 41 and 21 writes, a ratio that tracks the spans rather than the
+union, and the later arc's parameter read exactly centred through its own span
+start. An early open would have shown in both numbers.
+
+The same reorder moved one more thing under the guard's feet, caught on review
+rather than by measurement. The ramp's movement gate — the thing that decides a
+read is evidence the mirror caught up — compared against the beat the LOCATE
+settled at. Since the arm now rolls the transport away from that beat before
+play, a stale first read reporting the pre-play position looked like movement
+and retired the position check on the read that proves the least. The baseline
+is now the beat read immediately before `start_playing()`, which is the only one
+a stale read can equal.
+
+Handlers changed, so the wire fingerprint flips: re-vendor and a full Live
+quit/reopen precede any of this reaching Live. **The render capture path is NOT
+covered by that verification** — same defect, same fix, but it needs analyzers,
+OSC and written WAVs and none of that was exercised; nor was `songs/alien`
+itself, only the mechanism on a scratch set. Both stay in
+`operator-verification.md`.
+
+## 2026-09-08 — The governance files stop growing without a ceiling
+
+<!-- prawduct: type=chore | scope=governance-file-sizes | release=v1.9.0 -->
+
+Two session-briefing advisories had been relayed unactioned for weeks:
+`project-state.yaml` at 51 KB and `change-log.md` at 285 KB, both over the 40 KB
+nudge threshold that every reader of them pays once per session. They look like one
+complaint and are two different problems, so they get two different answers.
+
+**`project-state.yaml` — the ceiling was wrong, not the file.** About 20 KB of its
+51 KB is `technical_decisions` + `design_decisions`. That is the Reasoned Decisions
+principle working: the more faithfully a repo records reasoning, the louder a fixed
+ceiling complains at it. `oversized_file_threshold_kb: 55` raises this repo's ceiling
+rather than cutting the reasoning.
+
+**`change-log.md` — the file was wrong, not the ceiling.** An append-only log with a
+year of history behind it should be *rolled*, not exempted. The 92 entries older than
+v1.8.3 moved verbatim into `change-log-archive.md`; the live log keeps 13 entries
+(50 KB), covering the last four releases and all four release-pending scopes.
+
+**The one failure this could cause, and the guard against it.** An entry with no
+`release=` key IS the release-pending marker, so archiving one drops its whole scope
+out of the release gate *silently* — the work would never ship and nothing would say
+so. The roll asserts before it writes that every moved entry already carries a
+`release=`, and `check-releasability` confirms the result: 4 release-pending scopes
+across 4 entries, unchanged. Nothing reads the archive — `lib/change_log.py` names
+`.prawduct/change-log.md` specifically — so a tag in it is inert.
+
+Rolling the log is now **step 1 of the release procedure**, not a periodic cleanup
+somebody remembers; otherwise this recurs every few months. Reconciling that step
+against the code exposed that it had gone stale in three ways: it told a releaser to
+run `prawduct-hook stamp-merged` (deprecated and inert — it warns and does nothing),
+to flip a `status=merged` → `status=shipped` key (retired; nothing reads it), and
+published a tag grammar containing `chunks=` (also retired). The absence of `release=`
+has been the only merged-not-shipped marker for some time. Step 1 now says so.
+
+**`learnings.md` is deliberately left above the ceiling** at 60 KB. Its nudge points at
+real, unwalked work — rule here, narrative in `learnings-detail.md` — and because the
+threshold is repo-wide, raising it past ~58 would silence that as a side effect. The
+key's comment says so, so the next raise has to decide that on purpose.
+
+## 2026-09-08 — Two read-side lenses: psychoacoustic sharpness and drum-hit transient shape
+
+<!-- prawduct: type=feature | scope=aud-lenses | release=v1.9.0 -->
+
+Dogfooding `alien`'s listen turn left two by-ear complaints with no number in the
+MixReport to reason over — "the high elements are a bit shrill" and "the kick is a
+thud". Both now have one.
+
+- **`timbre.sharpness_acum`** — psychoacoustic sharpness (von Bismarck / Zwicker
+  weighting over Bark specific loudness) on every surface and section. A piercing
+  lead reads higher than a warm pad at the same centroid; scale-invariant.
+  Provisional 0.10 acum significance floor.
+- **`per_section[].transients`** — per-part low-band (40–150 Hz) hit shape: rise,
+  T20 ring, the attack window's sub / low / low-mid / click levels, and the two
+  level-blind reads `click_minus_sub_db` / `low_minus_sub_db`. Estimators that hit
+  their own boundary are censored and counted, never reported as measurements, and
+  every part without a reading has a structured reason in `transient_skips`.
+- **`compare_to.section_deltas`** — the timbre family per section on every surface
+  the window measured (stems, returns and the master) plus transient shape per
+  part, counted in the summary as `significant_section_delta_count`, so a
+  "de-shrill chorus 3" or "sharpen the kick" edit is A/B-able where it was made.
+
+**The lens found its own defect, which is the part worth remembering.** Used on
+alien, `rise_ms` read 42 ms in verse 1 and ~16 ms in eight other sections off the
+*same kick sample*. The kick had not changed — the estimator was bimodal. This kick's
+low-band envelope has two comparable lobes 31.8 ms apart, and the rise was found by
+scanning FORWARD from the search window's edge for the first 90 % crossing, so
+whether the first lobe cleared 0.90 × peak decided which lobe was measured. A mix
+edit that lowered every section's first lobe by the same amount flipped exactly the
+two that crossed the line. Scanning BACKWARD from the peak fixed it; a second pass
+found the same defect class one step later, where a censored rise left the attack
+window anchored on the search window's edge and read band levels over 75 ms instead
+of 30. Recorded as a learning: an estimator that reports the FIRST threshold
+crossing is bimodal on multi-lobe material.
+
+Build plan: `.prawduct/artifacts/build-plan-aud-sharpness-transients.md`. Six Critic
+rounds (three cumulative, three verify-resolutions), the last clean.
+
+## 2026-09-01 — Elicitation becomes a conversation: read the turn, build to the hearable unit, offer a hearing
+
+<!-- prawduct: type=feat | scope=collab-turn | release=v1.9.0 -->
+
+The owner's complaint was that the agent "does a poor balance of assisting the
+user versus taking over and building too much before discussing" — the same
+complaint they had made three weeks earlier. The first fix rewrote the opening
+turn; the next take had the best opening turn in the evidence corpus and then
+declared *"That's identity resolved. Scaffolding now"* while the user's answers
+were still arriving. A failure that moves one exchange later is structural, not
+a wording problem.
+
+Five structural causes were diagnosed and are recorded in
+`.prawduct/artifacts/collaboration-turn-model.md`, with a twenty-case evidence
+corpus beside it. The load-bearing one: **two different complaints had been
+collapsed onto one dial.** The June complaint was about *procedural* stops
+("scaffold done, what next?"), and it became the loudest norms in the repo —
+stop only on high-stakes decisions, the burden of proof for stopping is high.
+The collaborative stance was then written as a *carve-out* to those rules, and
+under pressure an agent obeys the hard rule and treats the carve-out as
+optional. The agent named its own inversion: it *"asked permission for craft and
+took authorship of identity."*
+
+What changed:
+
+- **"The user leads the creative project" is now the primary norm**, and
+  stop-less is scoped to *procedural* stops. Not a carve-out — that shape was
+  the cause. Both failures stay named: never stop to summarize-and-ask, and
+  never build past a hearable unit without offering to play it.
+- **Every turn is read before acting.** Six kinds — directing, reacting,
+  exploring, asking, delegating, handing-off — and only two of them authorize
+  building. Musing touches nothing.
+- **The one-turn elicitation bound is retired.** `/song-brief` is a conversation
+  that runs until the user hands off. The two failures the bound prevented (the
+  stage that never converges, the turn that fragments) are now bounded by the
+  hearable unit and the status offer. The three-state model and *a stage may not
+  emit an unresolved gap* were right and are untouched.
+- **Identity closes at hand-off, never by inference.** An answer that adds a
+  noun is not a closure; silence on an asked item is still-thinking.
+- **The brief gains an owner column** (*yours / offer me options / mine*),
+  learned from the conversation rather than asked for, and is a ledger updated
+  every turn.
+- **A loaded prompt opens its domain.** A genre, a form, an era, an artist:
+  unpack it, say what you take as read, ask the two or three that would change
+  the song most. The checklist's "a reference collapses 5 other answers into
+  one" framing is deleted — that compressor reading is what produces
+  "run off and build".
+- **Song work belongs in a songs workspace.** `init-workspace --check` now
+  reports `governed_repo`, and both entry skills give a heads-up — never a
+  block — before scaffolding inside a governed repo.
+
+Verification is honest about its own limit: no test can judge a conversational
+register. `tests/unit/test_collaboration_norm_parity.py` locks what *is*
+mechanical — that no live surface promises the retired rule, that the vocabulary
+is defined only in its sanctioned homes, that the brief template still parses
+against the live validator — and an operator session is queued as the acceptance
+test for the rest. The retired-phrase check matches over collapsed whitespace,
+because the plain grep the plan specified could not fail: the phrase wraps
+across line breaks, and did so in two of the files being swept.
+
+Built by four parallel delegates in isolated worktrees with disjoint file
+ownership; the delegation shape they used is now a pre-approved
+`project-preferences.md` row. Three of the four independent chunk reviews
+converged on the same finding — a file promising it did not restate the
+vocabulary and then restating it — which made it the plan's defect rather than
+any delegate's, and the plan gained a `definition` vs `rule` amendment.
+## 2026-08-20 — Three post-sync advisories cleared: a merge driver, a triaged bug report, and a norm re-affirmed
+
+<!-- prawduct: type=chore | scope=advisory-clearing | release=v1.9.0 -->
+
+Housekeeping against the three advisories the session briefing had been carrying.
+
+- **`.gitattributes` now marks `.prawduct/change-log.md` `merge=union`.** Every
+  branch prepends its entry at the same offset, so a three-way merge conflicted on
+  content that never actually disagreed and always resolved to "take both". The
+  selection criterion is written into the file: union engages only where git would
+  otherwise conflict, so what matters per file is whether "keep both" is right *at a
+  collision* and whether a wrong answer is **visible**. The exclusions are recorded
+  there too, because that second half is what does the work. `learnings.md` +
+  `learnings-detail.md` were added and then **reverted** when the Critic found the
+  visibility claim false: `audit-learnings` pairs the two by exact title and
+  `_take_active_narrative` breaks on the FIRST match, so a union-duplicated heading
+  makes a retirement run cut one block and silently orphan the other — against a file
+  whose stated invariant is *never delete an entry* — and no doctor or janitor check
+  pairs them, so nothing would report it. `operator-verification.md` is excluded for
+  the same reason in a sharper form: its entries flip PENDING to PASSED in place, so
+  union would leave one entry asserting both, silently, in the file `/prawduct:pr`
+  reads to decide whether live checks block a release. `reflections.md` is gitignored
+  and never merges at all.
+
+- **The `incoming-bugs/` drop-box is empty again.** The 2026-08-10 MixReport report
+  is filed as #465 — a fader-only level move is invisible in the mix report, via two
+  mechanisms (a stale `master_fader_db` making `delivered_true_peak_dbtp` equal the
+  bus number, and per-stem loudness / per-section masking being computed pre-fader
+  without saying so in the report). Cross-linked to #253 and #397; the source report
+  moved to `incoming-bugs/archives/` (the drop-box is gitignored, so that move is
+  local only).
+
+- **The arrangement-projection norm was re-affirmed, not retired** (`architecture.md`
+  → Direction). Its `Why` cited ARR-PROJ (#350), which has since shipped, so the
+  decay probe correctly asked for a decision — but the citation was *evidence for*
+  the norm rather than work it was waiting on. The `Why` now carries the rationale
+  with no tracked-work dependency, the provenance (#350 shipped 2026-06-22, #349
+  closed) moved to `Retroactivity` where it belongs, and a new `Status: steady-state`
+  line records the re-affirmation plus the one genuinely residual item: the flagship
+  projection path has still never run full-scale against real Live, scheduled under
+  #306. The Status line is marked **agent-proposed, pending owner veto** — the
+  2026-08-10 batch above it was owner-ratified and this one was not, and the
+  Statement is byte-identical to the ratified text, so a veto costs only that line.
+
+## 2026-08-11 — The effort:S backlog burns down: a guard override deleted, a gate that agreed with itself, and a DB that stops depending on your shell
+
+<!-- prawduct: type=fix | scope=effort-s-burndown | release=v1.9.0 -->
+
+**Operators: this release flips the MCP wire fingerprint.** Seven files inside
+`_FINGERPRINT_PATHS` changed, and `_compute_content_fingerprint` hashes bytes,
+so the comment-only pragma rewrites flip `__version__` alongside the behavioral
+ones. Re-vendor the Remote Script (`/ableton-mcp-install`) and quit/reopen Live
+before expecting the `duplicate_to_arrangement` fix below to do anything —
+until then the vendored script fails the version handshake.
+
+One branch working through every `effort:S` item open on the tracker. Chunks 1-2
+covered the PR #213 deferred-warning cluster and a sweep of prose the tree had
+outgrown; chunk 3 is two real bugs where a check disagreed with the thing it
+checked.
+
+- **`capture restamp` is gone** (#318). It moved a snapshot's `captured_at`
+  forward with no re-capture, durably disarming the replay staleness guard on
+  evidence nothing had checked. The two sanctioned exits already cover the
+  ground — a fresh capture (durable) and `--force-replay` (conscious revert,
+  which re-warns every build rather than switching the guard off). Deleting it
+  makes `migrate_snapshot`'s "only a real capture stamps" invariant exactly
+  true instead of approximately true.
+
+- **BREAKING (resolution semantics), `resolve_db_path`** (#327): with an
+  explicit `root=`, the git branch is now probed in the **song's own
+  directory** instead of the process cwd. This **remaps DB filenames for anyone
+  who has been running a song's `build.py` from a foreign cwd** — that shell
+  was minting `<slug>-<the-other-repo's-branch>.db` while every reader looked
+  for `<slug>-<songs-repo-branch>.db`, so one song silently owned two DBs. The
+  sibling push-state files are the sharp end, and by SHARING rather than
+  duplicating: `.last-push-state.json` / `.last-notes-push.json` have fixed
+  names and live in the song dir, which both DBs share — so two DBs wrote one
+  set of fingerprints, and a scoped `--changed` push compared one DB's clips
+  against the other DB's fingerprints. It is a resolution-semantics change,
+  not a pure bugfix: a DB written under the foreign name will not be found
+  under the new one. A runtime warning naming orphaned sibling DBs was tried and
+  **reverted**: under per-branch naming a routine `git switch -c` produces
+  exactly the same shape (a new DB name beside an older sibling), so it could
+  not tell a foreign-cwd orphan from an ordinary new branch without becoming
+  noise — and it sat inside a resolver that `provenance.auto_request` calls on
+  every mutating MCP tool call. `resolve_db_path` stays a pure resolver.
+  **If you have been building a song from another repo's checkout, look for a
+  `<slug>-<other-branch>.db` beside the new one before deleting anything:**
+  `build.py` regenerates authored content, but rows pulled from Live — and the
+  pull events arming the replay guard — live only in the DB that recorded them.
+  The legacy
+  `<slug>.db` fallback readers already carry is unchanged. Both root paths now
+  probe the same place, so `resolve_db_path(slug)` and `resolve_db_path(slug,
+  root=...)` agree by construction.
+
+- **`compat check --probe` stopped lying about ambiguity** (#326). The dry-run
+  cache key omitted `mode` and `case_sensitive`, and the probe never sent them,
+  so a query authored `mode='exact'` was searched with the browser's default
+  substring matcher and classified on a count the real loader would never
+  produce — refusing `kind_ambiguous` at the push gate on devices that load
+  perfectly. Both fields now ride the key and the wire. The second, quieter
+  half is closed too: two devices differing only in `mode` no longer collide on
+  one cache entry and share a match count.
+
+- **The BAK-7D2V closure note** (#317) was stale on two counts — it advertised
+  the superseded empty-diff re-stamp, and said "checks 7-8" where
+  `operator-verification.md` carries 7-9. Fixed on **closed issue #337**, not in
+  `.prawduct/backlog.md`. That file was frozen on 2026-08-10 as the migration's
+  source corpus with an explicit "preserve it verbatim" — it is what
+  `verify-migration` and any rollback read, so editing it would corrupt them.
+  The note migrated verbatim into #337, which is the record a future scrub
+  actually reads; the frozen copy stays wrong on purpose, as history.
+
+- **The screen-recording grant is now REQUESTED, not just reported** (#223).
+  `assert_capture_permission` preflighted but never called
+  `CGRequestScreenCaptureAccess`, and nothing else in the tool raises a TCC
+  dialog — so a denied grant was a dead end that sent the operator hunting
+  System Settings mid-capture. The actionable error survives the request on both
+  branches, deliberately: the grant is read at process launch, so granting
+  through the prompt does not enable a *running* process, and the relaunch
+  instruction stays load-bearing.
+
+- **New: `hallucinote overview-drift <slug>`** (#233) reports a `<slug>.md`
+  Structure table that has drifted from the form `build.py` materialized. The
+  generate-vs-warn question is **decided as warn**: both derived surfaces carry
+  composer prose (the table's Feel column, and `build.py`'s docstring in the
+  composer's own source), so regenerating them would clobber real work to fix a
+  bookkeeping problem. The canonical form is the DB — what `build.py` actually
+  materialized, and what every other reader already treats as true. It checks
+  **both** derived surfaces (the markdown table and `build.py`'s docstring
+  layout) and is wired into the scaffold's build close, so a song scaffolded
+  from now on checks itself on every build. **Songs scaffolded before this do
+  not get it automatically** — retrofitting means rewriting their `build.py`,
+  the clobbering this decision rejected — so they use the subcommand on demand.
+
+- **The analysis extract reaches inside racks** (#256). `_extract_song_structure`
+  walked only the top-level device chain, so a song built on Instrument or Audio
+  Effect Racks reported its rack *containers* and none of the signal path inside
+  them — while looking complete. It now descends `device_chains` recursively.
+  **This item was filed as blocked on upstream work and wasn't:** the gate was
+  real when written (2026-06-15), but DEEP-RACK-ADDR has since made
+  `device_chains` a true recursive tree (`parent_rack_device_id` self-referencing
+  through `devices`), so the data has been there. No Live probe and no schema
+  change were involved. Nested entries carry `rack_depth`, which is what keeps
+  them distinguishable from top-level siblings (`chain_id` is NOT NULL on every
+  device row, so it does not), and the depth cap is imported
+  from the wire-side resolver rather than restated. The prior lock test — which
+  pinned the exclusion and said in its own body "when nested-rack pull lands,
+  this test is the one to flip" — was flipped, and the agent-facing action tip
+  that taught the old limitation was corrected with it.
+
+- **Two decisions recorded rather than built.** `arrangement-model.md` now
+  carries the ARR-2S9D call (#274 — two energy correlates suffice; the spectral
+  one waits for logged friction and for the listening day) and a re-run of the
+  ARR-8P5K taxonomy coherence guard (#248), which found that STR-4C8N shipped a
+  **stereo lens for a dimension the taxonomy never named**, in the
+  measured-but-un-authorable half-built state the doc itself warns about. Spatial
+  image is now placed in the sound-design subsystem, its authoring half named
+  (STR-9P4M, gated), and the 2026-08-10 owner ruling — *no new lens that grades
+  or coaches* — written where a lens-adder will meet it.
+
+- **Also shipped, smaller but real:** spurious-clip detection after a
+  `duplicate_to_arrangement` now counts occurrences instead of testing a
+  start-time set, so a pre-existing clip sitting exactly where Live's B-24 split
+  emits its copy can no longer mask the surplus one (#264); `events.AUDIO_CAPTURED`
+  + `mutations.record_audio_capture` put capture timestamps into the audit log,
+  emitted server-side off the render status response and deduped on
+  `captures_dir` because the caller is a poll (#263); and tools now ignore their
+  own regenerable output where they write it — a blanket ignore for
+  whole-directory output (`captures/` — every take under it is regenerable),
+  a named list for the song dir, which also holds authored work (#303).
+  **`analysis/` is deliberately NOT self-ignored:** the root `.gitignore`
+  and `hallucinote.paths` both say MixReports there are meant to be
+  committed (`portable_path` exists precisely because they land in git),
+  while `init_workspace`'s root block carries `**/analysis/`. That
+  contradiction predates this branch and is the owner's to settle — it is
+  named in the code rather than resolved by whichever writer ran last. A confirmation lock pins that a `device_parameter`
+  envelope covered by its session clip stays on the sample-accurate path rather
+  than regressing to the ~2.5 Hz perform path, together with the note-on
+  ordering convention that makes per-phrase sample windows land right (#236).
+
+- **Waivers and citations** (#447, #445): all 21 legacy
+  `prawduct:ok-broad-except` pragmas migrated to the current form carrying a
+  per-catch reason; the four source citations into the frozen
+  `.prawduct/backlog.md` repointed at stable `id:PFX` handles (and dropped
+  entirely from the one user-facing error string). **#320** — the pre-split
+  layout in `project-preferences.md` — was fixed on this branch too, but
+  `develop` landed the same correction first, so this release ships nothing
+  for it and does not claim it.
+
+---
+
+## Older entries
+
+Everything shipped in **v1.8.6 and earlier** lives in
+[`change-log-archive.md`](change-log-archive.md), verbatim and unedited. It was moved
+there, not deleted — git carries the full history either way. Several archived entries
+share the date 2026-08-11 with entries kept above, so the release each one names, not
+its date, is what says where it lives.
+
+**Nothing release-pending is ever archived.** An entry with no `release=` key IS the
+release-pending marker (see the format note at the top of this file), so the roll only
+ever moves entries that already name the release that carried them. Rolling the log is
+a step of the release procedure — see `docs/release-process.md`.

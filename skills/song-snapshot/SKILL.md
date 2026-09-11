@@ -53,6 +53,8 @@ Run the capture in one command — it walks the live set over the MCP bridge, re
 
 This replaces the old by-hand "run each probe + assemble the dict" recipe — `assemble_snapshot_via_probes` (`src/hallucinote/capture.py`) does it deterministically: session globals, master chain, returns (+ mixer + devices), tracks (+ mixer + sends + devices), and the full recursive rack tree with dialed params filtered to non-defaults. A tool-side failure aborts loudly rather than writing a partial snapshot.
 
+**The playhead is parked at beat 0 first, and you don't have to remember it.** A parameter under an automation envelope reads at whatever value the envelope holds *at the playhead* — and after any render or performed-automation push the playhead sits at the END of the arrangement. Captured there, an end-of-song value becomes the device's dialed baseline, and `replay_capture` re-asserts it on every subsequent build: the value every envelope rides from is permanently redefined, and the diff shows it as an ordinary field change indistinguishable from a by-ear tweak. `capture execute` therefore reads the transport, seeks to beat 0 when it isn't there, and confirms the seek settled before probing anything. It **refuses** (exit 2) while the transport is rolling, or if the seek doesn't land. `--no-seek` opts out and warns; use it only when you mean to capture at the current playhead.
+
 (`capture_cli plan` still prints the probe sequence if you ever need to capture by hand.)
 
 ## Step 2 — Diff
@@ -65,9 +67,17 @@ Run the diff CLI. It prints the structured diff as JSON to stdout and a one-scre
   songs/<slug>/captured_session.refresh.json
 ```
 
-**If exit 0 (no changes):** the snapshot content already matches Live. Normally: tell the user it's up to date, delete the `.refresh` file, and stop.
+**If exit 0 (no changes):** the snapshot content already matches Live. Normally: tell the user it's up to date and stop. Delete the `.refresh` file **last**, after the empty-diff question below is settled — the bake path needs it, so deleting on the way past leaves nothing to bake.
 
-*Empty-diff bake (BAK-7D2V).* One corner needs more: if a prior **mix** `/ableton-pull` is still un-baked — e.g. you pulled a knob change, then hand-reverted it in Live, so the content matches again but `build.py` still **refuses** (`StaleSnapshotError`, because the guard is armed by the pull *events*, not by content) — bake the refresh you just captured so the guard disarms:
+*Empty-diff bake (BAK-7D2V).* One corner needs more: if a prior **mix** `/ableton-pull` is still un-baked — e.g. you pulled a knob change, then hand-reverted it in Live, so the content matches again but `build.py` still **refuses** (`StaleSnapshotError`, because the guard is armed by the pull *events*, not by content) — the fresh refresh can be baked over the canonical snapshot so the guard disarms.
+
+**Only offer this when a pull might be in play** (the user mentions a pull, or a build just refused). For a plain "did anything change?" check, just stop.
+
+Ask first: *"No content changed in the diff, but a prior pull may still be blocking `build.py` — bake the fresh capture to disarm it? (yes / no)"*
+
+**Write the refresh — never just move the timestamp.** An empty diff does NOT prove the on-disk snapshot carries everything replay will re-assert: the diff compares device identity, dialed parameters, and chain names, but the snapshot ALSO carries device sidechain sources, drum-pad mappings, and per-chain authored props (volume/pan/mute/solo/choke_group/out_note) that `replay_capture` re-asserts and the diff never looks at. A pull that touched only those fields produces an empty diff, so stamping the stale file forward would disarm the guard over old values and let the next build silently revert the by-ear work — exactly the failure this guard exists to prevent. The merge below takes the fresh capture as its base, so it carries those fields AND a fresh `captured_at`.
+
+On **yes**:
 
 ```bash
 "$PY" -m hallucinote.cli capture merge \
@@ -77,9 +87,7 @@ Run the diff CLI. It prints the structured diff as JSON to stdout and a one-scre
 rm songs/<slug>/captured_session.refresh.json
 ```
 
-**Write the refresh — never just move the timestamp.** An empty diff does NOT prove the on-disk snapshot carries everything replay will re-assert: the diff compares device identity, dialed parameters, and chain names, but the snapshot ALSO carries device sidechain sources, drum-pad mappings, and per-chain authored props (volume/pan/mute/solo/choke_group/out_note) that `replay_capture` re-asserts and the diff never looks at. A pull that touched only those fields produces an empty diff, so stamping the stale file forward would disarm the guard over old values and let the next build silently revert the by-ear work — exactly the failure this guard exists to prevent. The merge above takes the fresh capture as its base, so it carries those fields AND a fresh `captured_at`.
-
-Only offer this when a pull might be in play (the user mentions a pull, or a build just refused). Ask: *"No content changed in the diff, but a prior pull may still be blocking `build.py` — bake the fresh capture to disarm it? (yes / no)"* For a plain "did anything change?" check, just stop.
+On **no**: delete the `.refresh` file and stop.
 
 **If exit 1 (changes present):** show the user the stderr summary (the human one-screen format). Don't dump the full JSON unless they ask — it can be thousands of lines for a complex song.
 

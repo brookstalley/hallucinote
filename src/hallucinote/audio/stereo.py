@@ -96,12 +96,12 @@ def measure_stereo(audio: np.ndarray) -> StereoMetrics:
         loss_db = 20.0 * float(np.log10(mono_rms / stereo_rms))
 
     return StereoMetrics(
-        correlation=_correlation(left, right),
+        correlation=channel_correlation(left, right),
         mono_sum_loss_db=loss_db,
     )
 
 
-def _correlation(left: np.ndarray, right: np.ndarray) -> float:
+def channel_correlation(left: np.ndarray, right: np.ndarray) -> float:
     """Pearson correlation, with the degenerate cases decided rather than raised.
 
     A constant channel has zero variance, so Pearson is undefined. The honest

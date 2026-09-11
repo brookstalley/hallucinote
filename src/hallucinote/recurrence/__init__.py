@@ -4,9 +4,10 @@ The read side of the RECURRENCE/FORM dimension (the authoring side ships via
 ``Arrangement.motif`` / ``vary`` + ``generators.variations``). A pure SYMBOLIC,
 render-free lens — sibling to ``theory.lint`` (harmony), ``melody.lens`` (line), and
 ``performance.lens`` (feel) — that, given an in-memory ``Arrangement``, reports which
-registered motifs recur where and as which variation (transpose / augment / diminish
-/ invert / retrograde / fragment, + the bounded 2-op compositions the fixtures use),
-plus a motivic-economy summary. Info-only, never a verdict (ruler-not-stamp).
+registered motifs recur where and as which variation — the product of a pitch map
+(transpose / invert) with a time map (identity / augment·diminish / retrograde /
+fragment), so a composed recall like ``transpose +12 ∘ diminish ×2`` is recovered and
+named by the same search — plus a motivic-economy summary. Info-only, never a verdict (ruler-not-stamp).
 
 See ``.prawduct/artifacts/arrangement-model.md`` and the ARR-9K4T design.
 """
@@ -14,6 +15,7 @@ from __future__ import annotations
 
 from hallucinote.recurrence.economy import MotivicEconomy, summarize_economy
 from hallucinote.recurrence.lens import (
+    DEFAULT_MIN_RECALL_COVERAGE,
     MotifRecall,
     RecurrenceFinding,
     RecurrenceReport,
@@ -31,6 +33,7 @@ __all__ = [
     "SectionRecurrence",
     "RecurrenceReport",
     "SectionRecurrenceInput",
+    "DEFAULT_MIN_RECALL_COVERAGE",
     "analyze_recurrence",
     "analyze_arrangement",
     # economy

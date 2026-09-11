@@ -15,9 +15,9 @@ this module is DB-agnostic and does the work on the lists it is given.
 The MCP handler resolves each from the song DB and passes it in:
 ``declared_reverb_sends`` (``sends.intended_rt60_s``),
 ``declared_envelopes`` (automation to verify), ``declared_width_controls``
-(dialled stereo-width params), ``sections`` and ``declared_energy``. The
-join is always on capture ``surface_id``, which is why no DB import
-belongs here.
+(dialled stereo-width params), ``sections``, ``declared_energy`` and
+``declared_speech`` (the dialogue track and its turns). The join is always
+on capture ``surface_id``, which is why no DB import belongs here.
 
 When a declared analysis has no intent to work from, it is emitted as a
 structured ``skipped_analyses`` entry rather than silently absent — per
@@ -25,6 +25,7 @@ CLAUDE.md "Never silently drop a requirement."
 """
 from __future__ import annotations
 
+import dataclasses
 import json
 from collections import Counter
 from dataclasses import dataclass, replace
@@ -36,8 +37,9 @@ if TYPE_CHECKING:
     # pre-loaded from .io), but its "np.ndarray" annotations need the name.
     import numpy as np
 
+from ..features.types import Segment
 from ..paths import portable_path
-from .alignment import trim_to_common_length
+from .alignment import CaptureSpan, measure_capture_span, trim_to_common_length
 from .compare import diff_reports, ensure_comparable, resolve_baseline
 from .attribution import (
     band_attribution,
@@ -47,6 +49,15 @@ from .attribution import (
 from .io import CaptureSet, Surface, load_capture
 from .levels import apply_stem_gains, live_fader_db
 from .loudness import MIN_LOUDNESS_DURATION_S, measure_loudness
+from .imaging import measure_imaging
+from .integrity import SurfaceIntegrity, measure_integrity
+from .onsets import detect_onset_samples, to_mono
+from .phase import PhaseRelation, measure_phase_relations
+from .reconcile import (
+    SumReconciliation,
+    master_is_not_stem_sum,
+    reconcile_stem_sum,
+)
 from .stereo import measure_stereo
 from .timbre import measure_timbre
 from .cross_rhythm import (
@@ -57,9 +68,11 @@ from .cross_rhythm import (
 from .automation import DeclaredEnvelope, verify_envelope_realization
 from .density import section_onset_density
 from .energy import LOUDNESS, ONSET_DENSITY, SPECTRAL_CENTROID, realize_energy
+from .intelligibility import measure_intelligibility, sum_bed
 from .masking import analyze_masking_window
 from .report import (
     SCHEMA_VERSION,
+    _MEASUREMENT_BASIS,
     EnergyRealization,
     EnvelopeVerification,
     Finding,
@@ -73,6 +86,7 @@ from .report import (
     SectionEnergy,
     SectionMetrics,
     StemMetrics,
+    TurnIntelligibility,
     WidthRealization,
 )
 from .reverb import find_decay_onset, measure_return_rt60
@@ -85,6 +99,7 @@ from .section import (
     slice_audio,
 )
 from .timing import analyze_timing_window
+from .transients import analyze_transients_window
 
 
 # Product reporting floor for masking — pairs/bed below this masked fraction are
@@ -171,6 +186,30 @@ class DeclaredWidthControl:
     declared_display: str
 
 
+@dataclass(frozen=True)
+class DeclaredSpeech:
+    """The dialogue track, and where its lines are.
+
+    ``surface_id`` is the capture surface (``track:N``) that carries the
+    speech; ``turns_beats`` is one half-open ``(start_beat, end_beat)`` span
+    per spoken line in song-absolute beats, in arrangement order. The MCP
+    handler builds this from the named track's audio placements; a direct
+    caller constructs it by hand. Every other stem in the capture is the bed.
+    """
+    surface_id: str
+    turns_beats: tuple[tuple[float, float], ...]
+
+    def __post_init__(self) -> None:
+        if not self.surface_id:
+            raise ValueError("DeclaredSpeech.surface_id must name a capture surface")
+        for start, end in self.turns_beats:
+            if end <= start:
+                raise ValueError(
+                    f"DeclaredSpeech turn ({start}, {end}) must end after it "
+                    "starts — turns are half-open beat spans"
+                )
+
+
 def analyze_mix(
     captures_dir: Path | str,
     *,
@@ -179,29 +218,48 @@ def analyze_mix(
     declared_width_controls: Sequence[DeclaredWidthControl] = (),
     sections: Sequence[SectionWindow] = (),
     declared_energy: Sequence[SectionEnergy] = (),
+    declared_speech: DeclaredSpeech | None = None,
     tempo_map: Sequence[TempoSegment] = (),
     analyze_masking: bool = False,
     analyze_timing: bool = False,
     analyze_cross_rhythm: bool = False,
+    analyze_transients: bool = False,
+    analyze_imaging: bool = False,
+    analyze_integrity: bool = False,
     stem_gains: "Mapping[str, float] | None" = None,
     master_fader_volume: float | None = None,
+    master_fader_source: str | None = None,
+    master_fader_verified: bool = False,
     compare_to: int | Path | str | None = None,
     analysis_dir: Path | str | None = None,
 ) -> MixReport:
     """Run the audio-analysis MVP pipeline against a captures directory.
 
-    Four passes:
+    The MVP passes, which the optional lenses below have since been added
+    alongside rather than folded into — so this is the spine, not an inventory
+    (a count here restales every time a lens lands, and has):
 
-      1. Per-surface loudness — master, every stem, every return.
-      2. Master-bus overshoot detection + per-stem contribution
-         attribution.
-      3. Per return with a declared send: measure RT60 from the return's
-         own captured ring-out (Schroeder decay-tail, dry-source-free),
-         compare to declared. If none declared, emit a
-         ``skipped_analyses`` entry.
-      4. Per-section loudness — the pass-1 metrics scoped to each named
-         section window. If no sections are declared, emit a
-         ``skipped_analyses`` entry.
+      * Per-surface loudness — master, every stem, every return.
+      * Master-bus overshoot detection + per-stem contribution
+        attribution.
+      * Per return with a declared send: measure RT60 from the return's
+        own captured ring-out (Schroeder decay-tail, dry-source-free),
+        compare to declared. If none declared, emit a
+        ``skipped_analyses`` entry.
+      * Per-section loudness — the metrics above scoped to each named
+        section window. If no sections are declared, emit a
+        ``skipped_analyses`` entry.
+
+    Every ``analyze_*`` flag in the signature is one further lens, each one
+    emitting a ``skipped_analyses`` entry when it is off or cannot run — that
+    convention, not this list, is what tells a reader what did and did not
+    happen for a given report.
+
+    ``declared_speech`` turns on the one lens keyed to a track rather than a
+    flag: with a dialogue track and its turns declared, every section carries
+    the speech band over the bed per spoken line (``intelligibility``). It is
+    per-section like masking, so it needs ``sections``; without a declaration
+    the field is ``None`` and a skip entry says how to declare one.
 
     DB intent extraction is the handler's job: it walks
     ``sends.intended_rt60_s`` rows (for ``declared_reverb_sends``) and the
@@ -277,6 +335,22 @@ def analyze_mix(
     # No-op on already-equal-length synthetic fixtures.
     capture, alignment_report = trim_to_common_length(capture)
 
+    # Does the capture cover the span it CLAIMS to? The trim above reconciles the
+    # surfaces against each other; this reconciles the set against the manifest.
+    # It must run before BeatSampleMap, because the map's rescale is precisely
+    # what makes a length defect invisible (see its docstring: the rescale exists
+    # so a global tempo offset can't shift boundaries, and it cannot tell that
+    # apart from audio of the wrong length). Needs real tempo evidence, so it can
+    # decline — the caller names the decline rather than staying quiet.
+    capture_span, capture_span_skip = measure_capture_span(capture, tempo_map)
+    # Recorded on the PASSING path too: a check that only speaks when it fails is
+    # indistinguishable from one that never ran. AlignmentReport owns the whole
+    # `alignment` wire block, so it carries the result rather than the call site
+    # splicing it in.
+    alignment_report = dataclasses.replace(
+        alignment_report, capture_span=capture_span
+    )
+
     # One beat↔sample map for the whole capture, shared by overshoot rebeat-ing
     # and section windowing. Variable-tempo accurate when a tempo_map is
     # supplied; degenerates to the constant-tempo linear map otherwise.
@@ -295,9 +369,73 @@ def analyze_mix(
         tempo_map,
     )
 
-    master_metrics = _measure_surface(capture.master)
-    stem_metrics = [_measure_surface(s) for s in capture.stems]
-    return_metrics = [_measure_surface(r) for r in capture.returns]
+    master_metrics = _measure_surface(capture.master, imaging=analyze_imaging)
+    stem_metrics = [
+        _measure_surface(s, imaging=analyze_imaging) for s in capture.stems
+    ]
+    return_metrics = [
+        _measure_surface(r, imaging=analyze_imaging) for r in capture.returns
+    ]
+
+    # Render integrity runs FIRST among the render-level passes and its results
+    # sit beside the others rather than gating them. It is upstream in meaning,
+    # not in control flow: a click reads as an onset to the timing lens and a
+    # dropout reads as a dynamics move, so a reader who sees damage here knows
+    # to distrust the musical numbers — but suppressing those numbers would
+    # remove the evidence that makes the damage legible.
+    # Off by default, like every other analysis flag here: the pass runs onset
+    # detection on each surface and compares every stem pair, which is the most
+    # expensive thing in this function, and `analyze_mix` stays DB-agnostic while
+    # the handler decides what a given render is worth.
+    integrity_rows: list = []
+    phase_relations: list = []
+    sum_reconciliation = None
+    # An empty list IS silently absent unless something names it — this module's
+    # own convention, and the one thing these lenses exist to avoid. Collected
+    # here and merged into `skipped` once the reverb pass has created it.
+    integrity_skips: list[dict] = []
+    if not analyze_integrity:
+        integrity_skips.append({
+            "kind": "render_integrity",
+            "reason": "analyze_integrity=False — no defect, phase or "
+                      "reconciliation pass was run for this capture",
+        })
+    if not analyze_imaging:
+        integrity_skips.append({
+            "kind": "imaging",
+            "reason": "analyze_imaging=False — no per-surface or per-section "
+                      "soundstage reading was measured",
+        })
+    if analyze_integrity:
+        all_surfaces = [capture.master, *capture.stems, *capture.returns]
+        # Onsets are threaded in so a musical attack is not reported as a click.
+        # Without them every note lands in `discontinuities` — the detector says
+        # so itself via `checks_skipped`, but a report nobody can read is worse
+        # than the omission it warns about.
+        for surface in all_surfaces:
+            integrity_rows.append(
+                measure_integrity(
+                    surface.audio,
+                    sample_rate=surface.sample_rate,
+                    onset_samples=detect_onset_samples(
+                        to_mono(surface.audio), surface.sample_rate
+                    ),
+                    track_id=surface.track_id,
+                )
+            )
+        phase_relations = measure_phase_relations(
+            [(s.track_id, s.audio) for s in capture.stems],
+            sample_rate=capture.sample_rate,
+        )
+        # Returns are part of what reaches the master — a send is audible in the
+        # bus and absent from the dry stems — so excluding them would guarantee a
+        # residual that says nothing about whether the capture set is complete.
+        sum_reconciliation = reconcile_stem_sum(
+            [(s.track_id, s.audio) for s in (*capture.stems, *capture.returns)],
+            capture.master.audio,
+            sample_rate=capture.sample_rate,
+            stem_gains=stem_gains,
+        )
 
     # The master metrics are PRE master-fader — the HallucinoteAnalyzer taps the
     # master DEVICE CHAIN, before the master mixer volume. When the caller supplies
@@ -306,10 +444,43 @@ def analyze_mix(
     # clipping?" — the master fader is a linear gain after the captured chain.
     master_fader_db: float | None = None
     delivered_true_peak_dbtp: float | None = None
+    master_fader_note: str | None = None
     if master_fader_volume is not None:
         master_fader_db = live_fader_db(float(master_fader_volume))
         delivered_true_peak_dbtp = (
             master_metrics.loudness.true_peak_dbtp + master_fader_db
+        )
+        if not master_fader_verified:
+            # The delivered number rides this fader, so an unconfirmed fader
+            # makes it unconfirmed too — say so beside it rather than letting
+            # a stale value read as a measurement. An agent that trims the
+            # fader and re-analyzes otherwise sees the same delivered peak and
+            # trims again.
+            if master_fader_source == "song_db":
+                origin = "the value the song's DB declares"
+            elif master_fader_source:
+                origin = f"the value {master_fader_source} supplied"
+            else:
+                origin = "an unattributed declared value"
+            master_fader_note = (
+                f"master fader {float(master_fader_volume):.3f} is {origin}"
+                ", NOT a reading of the set that produced this render — "
+                "analysis runs server-side and never talks to Live, so a "
+                "fader moved in Live and not pulled back leaves "
+                "master_fader_db and delivered_true_peak_dbtp wrong by "
+                "exactly that drift. Confirm with ableton_session("
+                "action='info') before trusting the delivered peak; judge a "
+                "level move on the master-bus true peak + overshoot delta, "
+                "which is measured."
+            )
+
+    measurement_basis = dict(_MEASUREMENT_BASIS)
+    if stem_gains:
+        # Masking reconstructs mix balance by scaling each pre-fader stem by
+        # its DECLARED static fader gain (F1) — still pre-fader audio, and
+        # still blind to a fader move that never reached the DB.
+        measurement_basis["section_masking"] = (
+            "pre_fader_scaled_by_declared_static_fader_gains"
         )
 
     overshoot_windows = find_master_overshoots(
@@ -329,6 +500,7 @@ def analyze_mix(
         declared_sends=declared_reverb_sends,
         beat_map=beat_map,
     )
+    skipped.extend(integrity_skips)
 
     automation_verifications, automation_skips = _run_automation_verifications(
         capture=capture,
@@ -345,7 +517,10 @@ def analyze_mix(
         analyze_masking=analyze_masking,
         analyze_timing=analyze_timing,
         analyze_cross_rhythm=analyze_cross_rhythm,
+        analyze_transients=analyze_transients,
+        analyze_imaging=analyze_imaging,
         stem_gains=stem_gains or {},
+        declared_speech=declared_speech,
     )
     skipped.extend(section_skips)
 
@@ -357,13 +532,26 @@ def analyze_mix(
     )
     skipped.extend(width_skips)
 
+    if capture_span_skip is not None:
+        # An empty list IS silently absent unless something names it — this
+        # module's convention, and exactly the silence #491 was: the capture was
+        # a beat long and the report said nothing at all.
+        skipped.append({
+            "kind": "capture_span",
+            "reason": capture_span_skip,
+        })
+
     findings = _derive_findings(
+        integrity=integrity_rows,
+        phase_relations=phase_relations,
         master=master_metrics,
         stems=stem_metrics,
         overshoots=overshoots,
         reverbs=reverb_verifications,
         automation=automation_verifications,
         sections=sections,
+        capture_span=capture_span,
+        sum_reconciliation=sum_reconciliation,
     )
 
     report = MixReport(
@@ -383,10 +571,17 @@ def analyze_mix(
         skipped_analyses=skipped,
         energy_realization=energy_realization,
         alignment=alignment_report.to_json_dict(),
+        integrity=integrity_rows,
+        phase_relations=phase_relations,
+        sum_reconciliation=sum_reconciliation,
         db_seq=capture.db_seq,
         master_fader_volume=master_fader_volume,
         master_fader_db=master_fader_db,
         delivered_true_peak_dbtp=delivered_true_peak_dbtp,
+        master_fader_source=master_fader_source,
+        master_fader_verified=master_fader_verified,
+        master_fader_note=master_fader_note,
+        measurement_basis=measurement_basis,
     )
 
     if baseline is not None:
@@ -397,7 +592,7 @@ def analyze_mix(
     return report
 
 
-def _measure_surface(surface) -> StemMetrics:
+def _measure_surface(surface, *, imaging: bool = False) -> StemMetrics:
     loudness = measure_loudness(surface.audio, sr=surface.sample_rate)
     return StemMetrics(
         track_id=surface.track_id,
@@ -406,6 +601,11 @@ def _measure_surface(surface) -> StemMetrics:
         loudness=loudness,
         timbre=measure_timbre(surface.audio, surface.sample_rate),
         stereo=measure_stereo(surface.audio),
+        imaging=(
+            measure_imaging(surface.audio, sample_rate=surface.sample_rate)
+            if imaging
+            else None
+        ),
     )
 
 
@@ -659,7 +859,10 @@ def _measure_sections(
     analyze_masking: bool = False,
     analyze_timing: bool = False,
     analyze_cross_rhythm: bool = False,
+    analyze_transients: bool = False,
+    analyze_imaging: bool = False,
     stem_gains: Mapping[str, float] = {},
+    declared_speech: DeclaredSpeech | None = None,
 ) -> tuple[list[SectionMetrics], list[dict]]:
     """Measure per-surface loudness scoped to each named section window.
 
@@ -672,9 +875,13 @@ def _measure_sections(
     Empty ``sections`` produces one structured skip teaching the caller to
     declare sectional structure via ``create_section`` — symmetric with the
     reverb-verification skip.
+
+    ``declared_speech`` adds the intelligibility rows to every section: the
+    speech surface against the summed, mix-level bed of every other stem, per
+    turn that falls in the window. Its own skips name why it did not run.
     """
     if not sections:
-        return [], [{
+        skips: list[dict] = [{
             "kind": "section_windowed",
             "reason": (
                 "no sections declared — call create_section(name, "
@@ -682,10 +889,28 @@ def _measure_sections(
                 "/ bridge spans the analyzer can scope loudness to"
             ),
         }]
+        if declared_speech is None:
+            skips.append(_no_speech_declared_skip())
+        else:
+            skips.append({
+                "kind": "intelligibility",
+                "reason": (
+                    "intelligibility is measured per section and no sections "
+                    "are declared — call create_section(name, start_bar, "
+                    "end_bar) so each spoken turn is reported under the "
+                    "section it falls in"
+                ),
+            })
+        return [], skips
 
     n_samples = capture.master.audio.shape[0]
     per_section: list[SectionMetrics] = []
     skipped: list[dict] = []
+
+    speech_surfaces, speech_skips = _prepare_speech(
+        capture, declared_speech, stem_gains,
+    )
+    skipped.extend(speech_skips)
 
     for window in sections:
         sl = intersect_window(
@@ -751,6 +976,15 @@ def _measure_sections(
         phasing = []
         polymeter = []
         onset_density = None
+        # Low-band hit shape (thud vs punch). Level-blind in its differences
+        # and times, so it reads the raw pre-fader slices like timing; it needs
+        # no grid geometry (hits are picked on the envelope, not the grid).
+        transients = []
+        transient_skips = []
+        if analyze_transients:
+            tres = analyze_transients_window(sliced_stems, capture.sample_rate)
+            transients = tres.parts
+            transient_skips = tres.skipped
         if analyze_timing or analyze_cross_rhythm:
             geom = _window_grid_geometry(sl, capture, beat_map)
             if geom is not None:
@@ -785,14 +1019,25 @@ def _measure_sections(
                     polymeter = _measure_window_polymeter(
                         sliced_stems, capture, start_beat, bpm,
                     )
+        intelligibility: list[TurnIntelligibility] | None = None
+        if speech_surfaces is not None and declared_speech is not None:
+            intelligibility = _measure_window_intelligibility(
+                speech_surfaces, declared_speech, window, capture, beat_map,
+            )
         per_section.append(SectionMetrics(
             section_name=window.name,
             section_id=window.section_id,
             start_beat=window.start_beat,
             end_beat=window.end_beat,
-            master=_measure_window(capture.master, sl),
-            stems=[_measure_window(s, sl) for s in capture.stems],
-            returns=[_measure_window(r, sl) for r in capture.returns],
+            master=_measure_window(capture.master, sl, imaging=analyze_imaging),
+            stems=[
+                _measure_window(s, sl, imaging=analyze_imaging)
+                for s in capture.stems
+            ],
+            returns=[
+                _measure_window(r, sl, imaging=analyze_imaging)
+                for r in capture.returns
+            ],
             attribution=band_attribution(sliced_stems, capture.sample_rate),
             masking=masking_pairs,
             bed_masking=bed_masking,
@@ -800,10 +1045,122 @@ def _measure_sections(
             cross_rhythm=cross_rhythm,
             phasing=phasing,
             polymeter=polymeter,
+            transients=transients,
+            transient_skips=transient_skips,
             onset_density=onset_density,
+            intelligibility=intelligibility,
         ))
 
     return per_section, skipped
+
+
+def _no_speech_declared_skip() -> dict:
+    return {
+        "kind": "intelligibility",
+        "reason": (
+            "no speech track declared — pass speech_track=<track name> to "
+            "ableton_analysis(action='analyze' | 'start') to measure each "
+            "spoken turn's speech band (300-3400 Hz) over the bed, per section"
+        ),
+    }
+
+
+def _prepare_speech(
+    capture: CaptureSet,
+    declared_speech: DeclaredSpeech | None,
+    stem_gains: Mapping[str, float],
+) -> tuple[tuple[Surface, Surface] | None, list[dict]]:
+    """The speech surface and its bed, or ``None`` with the skip that says why.
+
+    The bed is every OTHER stem summed at mix level — the same F1 fader
+    reconstruction masking applies, because intelligibility is a relative
+    level read and a pre-fader bed would compare the voice against a balance
+    nobody mixed. Returns are not in the bed: the speech's own reverb send
+    would count against the line it belongs to. Built once per analysis; the
+    measurement slices per turn itself.
+    """
+    if declared_speech is None:
+        return None, [_no_speech_declared_skip()]
+    stems_by_id = {s.track_id: s for s in capture.stems}
+    speech = stems_by_id.get(declared_speech.surface_id)
+    if speech is None:
+        return None, [{
+            "kind": "intelligibility",
+            "reason": (
+                f"declared speech surface {declared_speech.surface_id!r} is "
+                f"not in this capture (stems present: {sorted(stems_by_id)}) "
+                "— render with the dialogue track captured, or name the "
+                "track that was"
+            ),
+        }]
+    if not declared_speech.turns_beats:
+        return None, [{
+            "kind": "intelligibility",
+            "reason": (
+                f"speech surface {declared_speech.surface_id!r} declares no "
+                "turns — place the line clips on the dialogue track's "
+                "arrangement (each audio placement is one turn) and analyze "
+                "again"
+            ),
+        }]
+    gained = apply_stem_gains(
+        [(s.track_id, s.audio) for s in capture.stems], stem_gains,
+    )
+    gained_by_id = dict(gained)
+    speech_gained = Surface(
+        track_id=speech.track_id,
+        surface_kind=speech.surface_kind,
+        surface_name=speech.surface_name,
+        audio=gained_by_id[speech.track_id],
+        sample_rate=speech.sample_rate,
+    )
+    bed = sum_bed(
+        [(tid, audio) for tid, audio in gained if tid != speech.track_id],
+        sample_rate=capture.sample_rate,
+        like=speech_gained.audio,
+    )
+    return (speech_gained, bed), []
+
+
+def _measure_window_intelligibility(
+    speech_surfaces: tuple[Surface, Surface],
+    declared_speech: DeclaredSpeech,
+    window: SectionWindow,
+    capture: CaptureSet,
+    beat_map: BeatSampleMap,
+) -> list[TurnIntelligibility]:
+    """The turns that fall in one section, measured and re-beated.
+
+    A turn is clipped to the section window and the captured span, so a line
+    that straddles a boundary is reported under both sections, each with the
+    part of it that is theirs; a turn with no overlap is not this section's.
+    ``turn_index`` keeps the DECLARED position so the same line can be
+    followed across sections, and the beats recorded are the clipped span.
+    """
+    speech, bed = speech_surfaces
+    sr = capture.sample_rate
+    lo_bound = max(window.start_beat, capture.start_at_beat)
+    hi_bound = min(window.end_beat, capture.stop_at_beat)
+    segments: list[Segment] = []
+    declared_index: list[int] = []
+    spans: list[tuple[float, float]] = []
+    for i, (start_beat, end_beat) in enumerate(declared_speech.turns_beats):
+        lo = max(start_beat, lo_bound)
+        hi = min(end_beat, hi_bound)
+        if hi <= lo:
+            continue
+        segments.append(Segment(
+            start_s=beat_map.beat_to_sample(lo) / sr,
+            end_s=beat_map.beat_to_sample(hi) / sr,
+            kind="turn",
+        ))
+        declared_index.append(i)
+        spans.append((lo, hi))
+    rows = measure_intelligibility(speech, bed, sr, turns=segments)
+    return [
+        replace(row, turn_index=idx, start_beat=lo, end_beat=hi)
+        for row, idx, (lo, hi) in zip(rows, declared_index, spans)
+    ]
 
 
 def _realize_energy(
@@ -991,7 +1348,9 @@ def _measure_window_polymeter(
     ]
 
 
-def _measure_window(surface: Surface, window_slice: WindowSlice) -> StemMetrics:
+def _measure_window(
+    surface: Surface, window_slice: WindowSlice, *, imaging: bool = False
+) -> StemMetrics:
     """Loudness of one surface over a clamped section window."""
     sliced = slice_audio(surface.audio, window_slice)
     loudness = measure_loudness(sliced, sr=surface.sample_rate)
@@ -1002,6 +1361,14 @@ def _measure_window(surface: Surface, window_slice: WindowSlice) -> StemMetrics:
         loudness=loudness,
         timbre=measure_timbre(sliced, surface.sample_rate),
         stereo=measure_stereo(sliced),
+        # Per-section too, like the two above: "the chorus goes wide and the
+        # verse is narrow" is the soundstage question people actually ask, and a
+        # whole-capture average is exactly the reading that cannot answer it.
+        imaging=(
+            measure_imaging(sliced, sample_rate=surface.sample_rate)
+            if imaging
+            else None
+        ),
     )
 
 
@@ -1028,6 +1395,10 @@ def _derive_findings(
     reverbs: list[ReverbVerification],
     automation: Sequence[EnvelopeVerification] = (),
     sections: Sequence[SectionWindow] = (),
+    integrity: Sequence[SurfaceIntegrity] = (),
+    phase_relations: Sequence[PhaseRelation] = (),
+    capture_span: CaptureSpan | None = None,
+    sum_reconciliation: "SumReconciliation | None" = None,
 ) -> list[Finding]:
     """Translate raw metrics into structured findings.
 
@@ -1039,6 +1410,9 @@ def _derive_findings(
         whose measured RT60 falls outside tolerance.
       - ``master_clipping_risk`` (info) — when master true-peak ≥ -0.1 dBTP
         but no overshoots crossed 0.
+      - ``capture_span_mismatch`` (warning) — the captured audio does not
+        cover the beat span the manifest declares, so every beat this report
+        cites is computed on a stretched map.
 
     When ``sections`` are declared, each ``master_overshoot`` finding's
     ``db_reference`` names the section the overshoot lands in
@@ -1051,6 +1425,44 @@ def _derive_findings(
     mutation proposals (the "fix" side) are P2 backlog.
     """
     findings: list[Finding] = []
+
+    # First, because it conditions how every other finding below should be read:
+    # if the capture does not cover the span it claims, the beat references those
+    # findings carry are offset by the excess.
+    if capture_span is not None and not capture_span.within_tolerance:
+        findings.append(Finding(
+            kind="capture_span_mismatch",
+            severity="warning",
+            subject="capture",
+            metric="span_beats",
+            observed=capture_span.declared_beats + capture_span.excess_beats,
+            expected=capture_span.declared_beats,
+            db_reference=capture_span.human_summary,
+        ))
+
+    # Before any master finding below, because it decides whether they mean
+    # anything: a master that is not the sum of its stems is not the mix, and
+    # every master number in this report describes something else. The 2026-09-10
+    # `alien` renders are the case — a soloed track put one stem on the bus, and
+    # the loudness, sharpness and imaging findings that followed all described
+    # that stem while naming the song.
+    disqualified = master_is_not_stem_sum(sum_reconciliation)
+    if disqualified is not None:
+        metric, observed, expected = disqualified
+        findings.append(Finding(
+            kind="master_not_stem_sum",
+            severity="blocking",
+            subject="master",
+            metric=metric,
+            observed=observed,
+            expected=expected,
+            db_reference=(
+                "the captured master is not the sum of the captured stems, so "
+                "every master measurement in this report describes something "
+                "other than the mix. Check for a soloed or muted track, a "
+                "track routed away from Main, or a missing stem, then re-render."
+            ),
+        ))
 
     for o in overshoots:
         section_name = _section_name_for_beat(o.start_beat, sections)
@@ -1159,12 +1571,64 @@ def _derive_findings(
                 db_reference=e.note,
             ))
 
+    # Render integrity. These describe DAMAGE, not intent, so unlike every other
+    # finding here they are not read against a declared value — `expected` is the
+    # clean reading. Severity stays at `warning`: the detectors are validated
+    # against two real renders plus a synthetic corpus, which is enough to report
+    # a defect and not enough to halt on one. `blocking` is deliberately unused
+    # until they have been through a broader corpus, because a wrong `blocking`
+    # on a healthy render is a worse failure than a missed defect — this family
+    # spent its first real-capture pass fixing exactly that class of error.
+    for row in integrity:
+        if row.clip_events:
+            findings.append(Finding(
+                kind="stem_clipping",
+                severity="warning",
+                subject=row.track_id,
+                metric="worst_clip_run_samples",
+                observed=float(row.worst_clip_run_samples),
+                expected=0.0,
+                db_reference=row.track_id,
+            ))
+        cuts = [d for d in row.dropouts if d.kind == "zero_run"]
+        if cuts:
+            findings.append(Finding(
+                kind="capture_dropout",
+                severity="warning",
+                subject=row.track_id,
+                metric="dropouts",
+                observed=float(len(cuts)),
+                expected=0.0,
+                db_reference=row.track_id,
+            ))
+        if row.discontinuities:
+            findings.append(Finding(
+                kind="discontinuity",
+                severity="warning",
+                subject=row.track_id,
+                metric="discontinuities",
+                observed=float(len(row.discontinuities)),
+                expected=0.0,
+                db_reference=row.track_id,
+            ))
+    for pair in phase_relations:
+        if pair.polarity_inverted:
+            findings.append(Finding(
+                kind="polarity_inversion",
+                severity="warning",
+                subject=f"{pair.track_id_a} x {pair.track_id_b}",
+                metric="correlation",
+                observed=pair.correlation,
+                expected=0.0,
+                db_reference=pair.track_id_a,
+            ))
     return findings
 
 
 __all__ = [
     "DeclaredEnvelope",
     "DeclaredReverbSend",
+    "DeclaredSpeech",
     "SectionWindow",
     "analyze_mix",
 ]

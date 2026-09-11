@@ -97,6 +97,19 @@ _analyze_action = register(
                     "reflect the state the seq names."
                 ),
             ),
+            ParamSpec(
+                name="speech_track",
+                type="str",
+                required=False,
+                description=(
+                    "Name of the track whose audio placements are spoken "
+                    "turns. When given, every section's report carries an "
+                    "intelligibility row per turn: the speech band "
+                    "(300-3400 Hz) of that track over the bed of every other "
+                    "stem, in dB and as a masked fraction — numbers only, "
+                    "no grade. Omit it and the field is null."
+                ),
+            ),
         ),
         handler=analysis_handlers.analyze_handler,
         runs_server_side=True,
@@ -136,7 +149,7 @@ _analyze_action = register(
             "Sync vs async: this synchronous 'analyze' is the one-call fast "
             "path for a quick few-surface capture. For a full-band song (many "
             "tracks + returns) or one with many declared sections — each adds "
-            "masking/timing/cross-rhythm passes — the full pipeline can exceed "
+            "masking/timing/cross-rhythm/transient passes — the full pipeline can exceed "
             "the 60s tool-call timeout and this call red-times-out (the report "
             "still lands on disk, but you're left polling for it). Use "
             "action='start' + 'status' for those.",
@@ -180,9 +193,12 @@ register(
             "tempo_map, time_signature_map, sections, cue_points, tracks, "
             "returns. Each track nests clips (with notes), arrangement_clips, "
             "devices (with parameters), and sends; each return nests devices.",
-            "Devices are top-level-chain only — nested rack chains aren't "
-            "flattened in (a song using Instrument/Audio-Effect Racks reports "
-            "the rack container, not the devices inside it).",
+            "Devices are flattened across nested rack chains to arbitrary "
+            "depth: a song using Instrument/Audio-Effect Racks reports the "
+            "rack container AND the devices inside it. Nested entries carry "
+            "rack_depth, which is what distinguishes them from top-level "
+            "siblings (chain_id is NOT NULL on every device row, so it does "
+            "not).",
             "Built for the musical-work eval judge's --db-extract input: when "
             "a request outran the compose/mix analyzers (a known-gap or novel "
             "result), save this extract to JSON and pass it so the judge can "

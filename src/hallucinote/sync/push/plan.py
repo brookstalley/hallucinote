@@ -6,7 +6,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import Any
 
-from hallucinote.db import mutations as M
+from hallucinote.capture import unreadable_sidechain_source_warning
+from hallucinote.db import mutations as M, queries as Q
 from hallucinote.db.connection import transaction
 
 from ._core import PushPlan
@@ -15,7 +16,11 @@ from .clips import plan_push_clips
 from .devices import plan_push_devices, plan_push_device_sidechain
 from .envelopes import plan_push_envelopes
 from .mix import plan_push_mix
-from .perform import plan_push_performed_automation, record_perform_result
+from .perform import (
+    PERFORM_OUTCOME_RECORDED,
+    plan_push_performed_automation,
+    record_perform_result,
+)
 from .routing import plan_push_routing
 from .scenes import plan_push_scenes
 from .tempo import plan_push_tempo_map, plan_push_time_signature_map
@@ -31,6 +36,27 @@ from .tracks import plan_push_song_returns, plan_push_song_tracks
 # :func:`plan_push_song`). ``None`` (either directly, or returned by the thunk)
 # keeps the pre-existing "no probe → no clear, loud alert" contract.
 LiveArrangementProbe = (
+    dict[int, list[dict[str, Any]]]
+    | Callable[[], dict[int, list[dict[str, Any]]] | None]
+    | None
+)
+
+
+# SMP-6V2K: the session-clip probe is either an already-materialized
+# ``{track_index: [clip, ...]}`` dict (tests / non-execute callers) or a ZERO-ARG
+# THUNK the clips phase calls at PLAN time, for the same reason the two below are
+# lazy: on a first push the Live tracks don't exist until the `tracks` phase has
+# run, so a map probed before it names different indices.
+#
+# The degradation direction is the OPPOSITE of the arrangement probe's, because
+# the two phases fail differently. Arrangement CLEARS, so "state unknown" must
+# not become "clear anyway" — an empty map blocks per track. The clips phase does
+# not clear: without a probe it conforms in place and plans no create and no
+# delete, which is already the non-destructive answer. So ``None`` — "no probe
+# taken" — is the safe degradation here, and it costs only the changed-file
+# detection and zero-call idempotency, both of which announce themselves with an
+# alert rather than acting on a guess.
+LiveSessionClipProbe = (
     dict[int, list[dict[str, Any]]]
     | Callable[[], dict[int, list[dict[str, Any]]] | None]
     | None
@@ -61,6 +87,20 @@ def resolve_live_arrangement_probe(
     Called from inside the arrangement phase's ``plan_fn``, i.e. once the
     `tracks` phase has created + linked every track, so the probe map is keyed
     by the SAME Live indices the planner resolves from ``ableton_links``.
+    """
+    if probe is None or isinstance(probe, dict):
+        return probe
+    return probe()
+
+
+def resolve_live_session_clip_probe(
+    probe: LiveSessionClipProbe,
+) -> dict[int, list[dict[str, Any]]] | None:
+    """Materialize a session-clip probe map, calling it if it's a thunk.
+
+    Called from inside the clips phase's ``plan_fn``, i.e. once the `tracks`
+    phase has created + linked every track, so the map is keyed by the SAME Live
+    indices the planner resolves from ``ableton_links``.
     """
     if probe is None or isinstance(probe, dict):
         return probe
@@ -256,6 +296,7 @@ def plan_push_song(
     perform_slowdown_factor: float = 1.0,
     live_arrangement_clips_by_track: LiveArrangementProbe = None,
     live_device_chains: LiveDeviceProbe = None,
+    live_session_clips_by_track: LiveSessionClipProbe = None,
 ) -> list[PushPhase]:
     """Master orchestration: return the fourteen phases of a full song push, in order.
 
@@ -341,6 +382,11 @@ def plan_push_song(
             name="clips",
             plan_fn=lambda: plan_push_clips(
                 conn, song_id=song_id, session_id=session_id,
+                # Resolved HERE (inside the thunk), not at plan_push_song time —
+                # the probe must see the tracks the `tracks` phase created.
+                live_session_clips_by_track=resolve_live_session_clip_probe(
+                    live_session_clips_by_track,
+                ),
             ),
             description="Create+populate every session clip (atomic create+notes per W3-C / Wave M+1-1).",
         ),
@@ -456,10 +502,9 @@ _LINK_KINDS: dict[str, tuple[str, str]] = {
 # Key kinds that have no DB binding to record but are valid acks — the planner
 # emits them and the agent reports success/failure, but hallucinote has nothing
 # to write. Membership here is a contract: every key kind the planner emits
-# MUST appear in `_LINK_KINDS`, `_ACK_ONLY_KINDS`, or the explicit
-# `perform_batch` branch in `apply_push_results` (ENV-9P4T per-arc
-# performed-state recording), or `apply_push_results` raises. This makes the
-# dispatch surface auditable: when
+# MUST appear in `_LINK_KINDS`, `_ACK_ONLY_KINDS`, or `_DEDICATED_BRANCH_KINDS`
+# (a branch in `apply_push_results` that reads the result payload itself), or
+# `apply_push_results` raises. This makes the dispatch surface auditable: when
 # a planner grows a new key kind, the developer is forced to declare its
 # resolution here, which surfaces silent-drop bugs at write time.
 _ACK_ONLY_KINDS: frozenset[str] = frozenset({
@@ -506,6 +551,7 @@ _ACK_ONLY_KINDS: frozenset[str] = frozenset({
     # Ack-only — same rationale as the track-routing keys (state originates from
     # the DB FK; no Live-side index to record back).
     "device_sidechain",
+    "device_sample",         # ableton_device(assign_sample) — re-callable, diffed against the probed sample path; nothing to bind
     # Chunk 4a (devices)
     "device_parameter",      # ableton_device(action='set_parameter') for tracks + returns (Wave M-4)
     # Nested preset param override (DEV-4P7R `param_overrides`, e.g. a `value_raw`
@@ -542,6 +588,22 @@ _ACK_ONLY_KINDS: frozenset[str] = frozenset({
     # duplicate landed); this op only rewrites content, so there's no new index
     # to record — ack-only. Distinct from the `arrangement_clip:` duplicate key.
     "arrangement_clip_notes",
+    # The post-apply pass that CONFORMS a placed AUDIO copy and bounds it to
+    # the span its placement authored — ableton_clip(action='set_property',
+    # location='arrangement') writing warping / warp_mode / gain / pitch /
+    # start_marker and then end_marker / loop_end, all keyed
+    # `arrangement_clip_region:{placement}:{property}`
+    # (arrangement.plan_push_arrangement_audio_regions). Ack-only for the same
+    # reason as `arrangement_clip_notes`: the copy's binding already exists (it
+    # is what the pass addresses), and a property write returns no new index.
+    #
+    # ONE key kind for the whole pass, conform included, and the property name
+    # is what tells the two halves apart. The kind is a RESULT contract — this
+    # write records no binding, and (push_execute) a refusal must not halt the
+    # phase, because a copy whose conform or region write Live refused is in
+    # exactly the state it was in before this pass existed. Splitting the kind
+    # would silently opt the conform half out of that second rule.
+    "arrangement_clip_region",
     # ARR-PROJ Chunk 2: the projection planner CLEARS a track's existing
     # arrangement clips before create+filling from the DB, emitting
     # ableton_clip(action='delete', location='arrangement') keyed
@@ -551,12 +613,41 @@ _ACK_ONLY_KINDS: frozenset[str] = frozenset({
     # apply_push_results raises on the unknown key prefix and HALTS the
     # arrangement phase before any clip is rebuilt.
     "arrangement_clip_clear",
+    # SMP-6V2K (audio clips): the conform surface an audio clip is
+    # materialized with — gain / pitch_coarse / pitch_fine / warping /
+    # warp_mode / start_marker / end_marker — written one property at a time
+    # via ableton_clip(action='set_property') and keyed
+    # `clip_conform:{clip_id}:{property}` (clips.py). Ack-only: the value
+    # ORIGINATES in the DB and a conform write records no Live-side index,
+    # exactly like the mixer `track_volume` / `device_parameter` keys above.
+    # The clip's own binding is recorded under `clip:` by the create.
+    "clip_conform",
+    # SMP-6V2K (audio clips): the destructive reconcile of a linked session
+    # slot — a row whose `audio_file` changed, or whose slot Live reports as
+    # holding a MIDI clip — is planned as an explicit
+    # ableton_clip(action='delete', location='session') keyed
+    # `clip_delete:{clip_id}` BEFORE the recreate, because `Clip.file_path` is
+    # read-only and `create_audio_clip` into an occupied slot is a hard error
+    # (clips.py `_recreate_audio_clip`). Ack-only, the session-view twin of
+    # `arrangement_clip_clear`: a delete records no binding, and the create that
+    # follows re-records the clip's link under `clip:` at the same slot index.
+    "clip_delete",
 })
 
 
+# Kinds resolved by a DEDICATED branch in `apply_push_results` — neither a link
+# binding nor a bare ack, because the result payload itself has to be read
+# (`perform_batch`'s per-arc state; the #536 sidechain-surface probe's
+# `has_input_routing`). Named once so the registry below and the static
+# emitted-kind guard both read the same list.
+_DEDICATED_BRANCH_KINDS: frozenset[str] = frozenset({
+    "perform_batch",
+    "device_sidechain_probe",
+})
+
 # SYN-8Q3F (c): the ONE registry of result key kinds the apply layer resolves —
-# `_LINK_KINDS` (binding writes) + `_ACK_ONLY_KINDS` (no DB write) + the
-# dedicated `perform_batch` branch. Three layers keep this exhaustive so the
+# `_LINK_KINDS` (binding writes) + `_ACK_ONLY_KINDS` (no DB write) +
+# `_DEDICATED_BRANCH_KINDS`. Three layers keep this exhaustive so the
 # twice-shipped unknown-kind halt class (`device_param_override` 2026-06-18,
 # `device_chain_props` 2026-06-20) stays closed:
 #   1. the static emitted-kind guard (test_push.py
@@ -569,8 +660,63 @@ _ACK_ONLY_KINDS: frozenset[str] = frozenset({
 #      (push_execute._apply_results) — state file written, request closed —
 #      instead of the raw traceback it used to be (contract artifact, V4).
 KNOWN_RESULT_KEY_KINDS: frozenset[str] = (
-    frozenset(_LINK_KINDS) | _ACK_ONLY_KINDS | frozenset({"perform_batch"})
+    frozenset(_LINK_KINDS) | _ACK_ONLY_KINDS | _DEDICATED_BRANCH_KINDS
 )
+
+
+def _describe_arc_outcome(arc: dict[str, Any], *, fingerprinted: bool) -> str:
+    """One perform arc, as a line an author can act on: which envelope, over
+    which beats, what happened to it, and how many values the pass actually
+    wrote. The write count is there because it is the number that separates a
+    real recording from a stale lane answering for one.
+
+    The verdict comes from the handler's own ``outcome`` where it is present,
+    not from whether a warning came back. Those two answer different questions:
+    an envelope deleted mid-cycle also produces a warning, and printing
+    UNVERIFIED for it would send the reader hunting a recording fault that
+    never happened. ``fingerprinted`` is the fallback for a server predating
+    the field, and is named for what it actually observed.
+    """
+    span = arc.get("span_beats") or []
+    where = (
+        f"[{float(span[0]):g}-{float(span[1]):g}] " if len(span) == 2 else ""
+    )
+    outcome = arc.get("outcome")
+    if outcome is None:
+        verdict = "recorded" if fingerprinted else "UNVERIFIED"
+    elif outcome == PERFORM_OUTCOME_RECORDED:
+        verdict = "recorded" if fingerprinted else "recorded, NOT FINGERPRINTED"
+    else:
+        verdict = str(outcome).upper()
+    return (
+        f"{arc.get('arc_id')} {where}{verdict} "
+        f"({arc.get('updates_written')} value writes)"
+    )
+
+
+def _device_and_parent_labels(
+    conn: sqlite3.Connection, device_id: str,
+) -> tuple[str, str]:
+    """``("<device display_name>", "<track|return|master> '<name>'")`` for one
+    device id — the NAMES an operator recognizes, not the Live indices a tool
+    result carries. Falls back to the id / ``"unknown parent"`` for a row that
+    has since been deleted, because a warning naming less is still better than
+    no warning."""
+    device = Q.get_device(conn, device_id)
+    device_label = str(device["display_name"]) if device is not None else device_id
+    chain = Q.get_device_parent_chain(conn, device_id)
+    if chain is None:
+        return device_label, "unknown parent"
+    if chain["parent_track_id"]:
+        track = Q.get_track(conn, chain["parent_track_id"])
+        if track is not None:
+            kind = "master" if track["kind"] == "master" else "track"
+            return device_label, f"{kind} {track['name']!r}"
+    if chain["parent_return_id"]:
+        ret = Q.get_return(conn, chain["parent_return_id"])
+        if ret is not None:
+            return device_label, f"return {ret['name']!r}"
+    return device_label, "unknown parent"
 
 
 def apply_push_results(
@@ -581,6 +727,7 @@ def apply_push_results(
     actor: str = "sync",
     request_id: str | None = None,
     reason: str | None = None,
+    notes_sink: Callable[[str], None] | None = None,
 ) -> list[str]:
     """After the agent runs the plan, feed structured results back here so the
     DB knows what's now in Ableton. Bindings are recorded in `ableton_links`
@@ -596,19 +743,39 @@ def apply_push_results(
         }
 
     Dispatch is table-driven: see `_LINK_KINDS` (writes a link binding),
-    `_ACK_ONLY_KINDS` (no DB write), and the `perform_batch` branch (per-arc
-    performed-automation state). An unknown kind raises `ValueError` so a new
-    planner-emitted key kind can't silently no-op past this layer.
+    `_ACK_ONLY_KINDS` (no DB write), and `_DEDICATED_BRANCH_KINDS` (a branch
+    that reads the result payload — `perform_batch`'s per-arc performed
+    automation state, `device_sidechain_probe`'s `has_input_routing`). An
+    unknown kind raises `ValueError` so a new planner-emitted key kind can't
+    silently no-op past this layer.
 
     Failed results (`ok=False`) are skipped — the agent layer is the source
     of truth for tool-side errors; hallucinote records nothing for them.
 
+    ``notes_sink`` receives operator-facing lines that are NOT problems — the
+    perform phase's per-arc roll-up, which is worth reading precisely when
+    nothing went wrong. The returned warnings ride the errors file, so a clean
+    push must not put anything there; without a second channel the choice is
+    between an accurate report that looks failed and a phase that spends
+    minutes of realtime and says only "ok (1 call)". The caller supplies the
+    benign channel it already has.
+
     Returns apply-layer warnings (empty when everything recorded cleanly).
-    Today these come from the `perform_batch` branch — for any arc whose
-    handler could NOT verify the write (`automation_state != 1`) the apply
-    layer records nothing for that arc and the warning says so (never a
-    silent skip; the next push retries just that arc). Callers must surface
-    them.
+    The returned list rides the ERRORS file, so only a genuine failure to record
+    belongs in it. The `device_sidechain_probe` branch is therefore NOT in it:
+    a device whose armed sidechain Live exposes no source surface for (#536)
+    recorded nothing wrong — the push materialized exactly what the DB authors —
+    so it goes to ``notes_sink``, the channel the push report prints as
+    "Warnings (push still OK)". That routing is the difference between the
+    operator seeing that a hand-set source is gone and not seeing it: the errors
+    file is not printed on a clean push, and a push carrying only this condition
+    IS clean. The warnings returned come from the `perform_batch` branch: for any arc the
+    handler could not confirm it recorded, the apply layer records nothing for that
+    arc and the warning says so (never a silent skip; the next push retries
+    just that arc). `record_perform_result` states the gate that decides
+    that — restating it here is how this paragraph went stale once already.
+    A degraded locate is warned about on the same channel. Callers must
+    surface them.
     """
     warnings: list[str] = []
     with transaction(conn):
@@ -621,6 +788,40 @@ def apply_push_results(
                 raise ValueError(f"push result missing 'key': {r!r}")
 
             if kind in _ACK_ONLY_KINDS:
+                continue
+
+            if kind == "device_sidechain_probe":
+                # #536: the device's sidechain is ARMED and the planner could
+                # not tell from the DB whether Live exposes a source surface for
+                # it. `has_input_routing: False` means it never can — so this
+                # push materialized the device armed and pointed at nothing, and
+                # any source the operator set by hand in Live is gone. Say so on
+                # the warnings channel (the push still succeeded; nothing here
+                # failed). `True` is the #374 Compressor path: stay silent.
+                res = r.get("result") or {}
+                if res.get("has_input_routing") is False:
+                    device_label, parent_label = _device_and_parent_labels(
+                        conn, db_id,
+                    )
+                    # The BENIGN channel, not the returned list. Nothing failed
+                    # here — the push materialized the device exactly as the DB
+                    # authors it — so this must not write the errors file, which
+                    # a clean push has to leave empty. It also has to be PRINTED:
+                    # the operator's only cue that a source they set by hand is
+                    # gone is the report's "Warnings (push still OK)" section,
+                    # which `notes_sink` feeds and the errors file does not.
+                    # Falls back to the returned list only when a caller gave no
+                    # sink, so the warning is never silently dropped.
+                    message = (
+                        "device_sidechain: "
+                        + unreadable_sidechain_source_warning(
+                            [f"{device_label!r} on {parent_label}"]
+                        )
+                    )
+                    if notes_sink is not None:
+                        notes_sink(message)
+                    else:
+                        warnings.append(message)
                 continue
 
             if kind == "perform_batch":
@@ -645,6 +846,7 @@ def apply_push_results(
                         "or the playhead moved; check record_mode in Live."
                     )
                 processed = 0
+                outcomes: list[str] = []
                 for arc in res.get("arcs", []):
                     arc_eid = arc.get("arc_id")
                     if not arc_eid:
@@ -663,7 +865,40 @@ def apply_push_results(
                     )
                     if perform_warning is not None:
                         warnings.append(perform_warning)
+                    outcomes.append(
+                        _describe_arc_outcome(
+                            arc, fingerprinted=perform_warning is None
+                        )
+                    )
                     processed += 1
+                # A realtime phase that spends minutes of wall clock and
+                # reports "ok (1 call)" gives the author nothing to act on —
+                # the divergence this names was found by ear, three passes
+                # late. Say what happened to every arc, not just the ones that
+                # failed, and say it on the benign channel so a clean push
+                # still reads as clean.
+                if outcomes and notes_sink is not None:
+                    notes_sink(
+                        "performed-automation: " + "; ".join(outcomes)
+                    )
+                # How the transport was positioned. A pass that ran on a
+                # degraded locate recorded against a start position nothing
+                # moved — it may well be right, and a per-arc verdict cannot
+                # say. The handler logs it, but that log is in Live; this is
+                # where the author looks.
+                if res.get("start_position_moved") is False:
+                    warnings.append(
+                        "perform_batch: the transport was positioned by "
+                        f"{res.get('locate_method')!r}, which moves the "
+                        "playhead but NOT Live's start playing position — "
+                        "playback was not guaranteed to begin at the span. "
+                        + (
+                            f"Reason: {res['locate_detail']} "
+                            if res.get("locate_detail") else ""
+                        )
+                        + "The arcs above recorded, but check the lanes "
+                        "landed where you authored them."
+                    )
                 # ENV-8K2R #4: planned-vs-returned cross-check. The handler
                 # reports `arc_count` = how many arcs it prepared (== the
                 # planner's queued count on the success path). If fewer per-arc

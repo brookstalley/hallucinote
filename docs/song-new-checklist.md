@@ -33,13 +33,17 @@ The must-have / should-have / nice-to-have grouping below is a **rough prior on
 how often a dimension turns out to be load-bearing**, not a priority order and
 not a required-fields list.
 
-**One consolidated turn, proposals not questions.** Everything undecided goes
-into a single message, each item carrying its reasoning and a recommendation so a
-one-word reaction settles it — *"I'd propose 132 BPM, here's the arithmetic"*,
-never *"what tempo?"*. A blank question is auto-accompaniment wearing a
-politeness costume: it looks collaborative and transfers zero expertise. Cheap,
-easy-to-revise choices are **shown** rather than asked; the artifact becomes the
-next proposal. Sequential Q&A is the anti-pattern.
+**Proposals, not questions — and one message per turn.** What you raise in a
+turn goes into a single message, each item carrying its reasoning and a
+recommendation so a one-word reaction settles it — *"I'd propose 132 BPM,
+here's the arithmetic"*, never *"what tempo?"*. A blank question is
+auto-accompaniment wearing a politeness costume: it looks collaborative and
+transfers zero expertise. Cheap, easy-to-revise choices are **shown** rather
+than asked; the artifact becomes the next proposal. Sequential Q&A is the
+anti-pattern — but so is treating the first turn as the only one. The
+conversation runs until the user hands off; what bounds each turn is the
+hearable unit (raise what decides it) and the status offer, both defined in
+[`collaboration-turn-model.md`](../.prawduct/artifacts/collaboration-turn-model.md).
 
 **Clear direction always wins.** Questions are for genuine gaps, never for
 choices the user already made. When open questions stop yielding direction ("you
@@ -71,6 +75,8 @@ What does the song evoke? What does it explore? What's it FOR (background music 
 At least one named reference; hybridization is fine. "Disco prog-metal," "lo-fi hip-hop," "ambient drone with field recordings."
 
 *Why it's must-have:* anchors a thousand other defaults — drum kit choices, harmonic vocabulary, mix density, swing/groove pocket, instrumentation. Without an anchor the agent has to ask everything else explicitly.
+
+*A named genre is a **loaded prompt** — it opens its domain rather than closing it.* "Make a rap song" implies a beat and a tempo range, a flow, lyrical content, sampled versus synthesized production, an era and a region. The move is to unpack what the word implies, state which implications you are taking as read so they are correctable in a word, and ask about the two or three whose answer would change the song most — not the whole list, and not a form. See [`collaboration-turn-model.md`](../.prawduct/artifacts/collaboration-turn-model.md).
 
 ### 3. Length and high-level structure
 
@@ -104,7 +110,7 @@ BPM range, swing/groove pocket, energy level. Often inferable from genre but wor
 
 ### 7. Time signature / meter
 
-4/4 default; flag and confirm anything else. Critical when the song wants meter changes — neon-feedback's 5/8 bridge-twist exposed Hallucinote's meter-ratchet refusal path. **The agent needs to know early whether to attempt non-4/4** (generators are 4/4-shaped within bars; non-4/4 sections need hand-authored patterns).
+4/4 default; flag and confirm anything else. Critical when the song wants meter changes — the DB records them, but only the bar-1 meter reaches Live, so the rest must be carried as felt groove (see `docs/song-authoring-conventions.md` → *Meter (4/4 vs. other)*). **The agent needs to know early whether to attempt non-4/4** (generators are 4/4-shaped within bars; non-4/4 sections need hand-authored patterns).
 
 ### 8. Harmonic strategy
 
@@ -128,7 +134,7 @@ Where's the peak? Slow build vs immediate engagement? Breakdown placement? Where
 
 ### 11. References / inspiration
 
-"Like X but with Y." A 1-line shortcut that often collapses 5 other answers into one. Worth asking explicitly because users often have a reference but don't volunteer it.
+"Like X but with Y." Worth asking explicitly because users often have a reference but don't volunteer it. A reference **opens** a domain rather than compressing it: naming an artist implies an era, a writing stance and a production world, and which of those the user actually means is the thing to find out. Unpack it, say what you're taking as read, and ask about the two or three that would change the song most — the same move as any [loaded prompt](../.prawduct/artifacts/collaboration-turn-model.md). Reading it as a shortcut that settles five other answers is what produces a build the user never asked for.
 
 ### 12. Hard constraints
 

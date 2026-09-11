@@ -43,7 +43,7 @@ def test_absolute_ref_passes_through_unchanged(tmp_path):
 
 def test_resolution_is_pure_no_filesystem_dependency(tmp_path):
     """The helper resolves references, it doesn't check existence — the
-    push-time existence check is CLP-AUD2 scope."""
+    clips phase checks the file exists at push time."""
     resolved = resolve_audio_path(tmp_path / "no-such-song", "assets/x.wav")
     assert resolved == tmp_path / "no-such-song" / "assets" / "x.wav"
 

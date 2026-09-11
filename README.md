@@ -11,7 +11,7 @@ Say what you're going for, and it gets built into a running Live set — `build.
 Then listen, change your mind, explore new ideas.
 Because the song is code in a git directory, trying the half-time bridge or a key change costs a branch and a minute: keep it, or throw it away and try the next one.
 
-Round-trip to Ableton, recording MIDI events in Ableton to pull back and work on in Hallucinote (no audio round trip... yet).
+Round-trip to Ableton: record MIDI in Ableton and pull it back to work on in Hallucinote. Audio clips are built to make the trip too — drop a sample into a slot and pull stages it into the song's build state for you to fold into `build.py` — at the maturity `docs/capability-truth.md` states (built, not yet verified against a real set); what Live *recorded* (a take) still can't be read back.
 
 ---
 
@@ -77,7 +77,7 @@ Want the bridge to hit harder?
 ## What to ask for
 
 - **Any genre, any shape.** Conceptual (*"a song about overcoming loss"*), musical (*"a Baroque prelude in G minor from a single broken-chord figuration"*), or stylistic (*"Duran Duran if they dropped acid with Black Sabbath"*).
-- **Under-specify on purpose.** Claude works out what your prompt leans on (`/hallucinote:song-brief`) — key, tempo, what a named turn means musically — and comes back **once** with proposals you can wave through or redirect in a word.
+- **Under-specify on purpose.** Claude works out what your prompt leans on (`/hallucinote:song-brief`) — key, tempo, what a named turn means musically — and brings you proposals you can wave through or redirect in a word. It keeps talking until you hand off, and once there is something worth hearing it offers to play it rather than building on past you.
 - **Share and fork.** A collaborator clones the directory; Hallucinote checks their plugins first and names anything missing.
 
 ## Status

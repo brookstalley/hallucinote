@@ -7,6 +7,8 @@ import threading
 import pytest
 
 from hallucinote_mcp.wire import (
+    VERSION_MISMATCH_CODE,
+    WORK_ESCALATED_CODE,
     FrameError,
     Request,
     Response,
@@ -238,6 +240,33 @@ def test_response_empty_warnings_omitted_from_dict():
     # None or empty tuple → no `warnings` key on the wire.
     assert "warnings" not in Response(ok=True, result=1, warnings=None).to_dict()
     assert "warnings" not in Response(ok=True, result=1, warnings=()).to_dict()
+
+
+def test_response_code_serializes_on_the_ok_path_too():
+    """``code`` is the machine-readable discriminator, and the case that
+    needs it most rides ``ok=True``: a main-thread escalation is a handle to
+    work that is STILL RUNNING inside Live. If ``code`` only survived on the
+    error path, a consumer would have no way to tell that handle from a
+    completed operation — and would record a write that has not landed."""
+    resp = Response(
+        ok=True,
+        result={"escalated": True, "job_id": "main_thread-abc"},
+        code=WORK_ESCALATED_CODE,
+    )
+    d = resp.to_dict()
+    assert d["ok"] is True
+    assert d["code"] == "work_escalated"
+    assert d["result"]["job_id"] == "main_thread-abc"
+
+
+def test_response_code_still_serializes_on_the_error_path():
+    d = Response(ok=False, error="drifted", code=VERSION_MISMATCH_CODE).to_dict()
+    assert d["code"] == "version_mismatch"
+
+
+def test_response_without_a_code_omits_the_key():
+    assert "code" not in Response(ok=True, result={"x": 1}).to_dict()
+    assert "code" not in Response(ok=False, error="bad").to_dict()
 
 
 # ---------- Framing ----------

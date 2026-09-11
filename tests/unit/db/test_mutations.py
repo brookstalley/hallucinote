@@ -1638,10 +1638,10 @@ def test_returns_schema_check_rejects_out_of_range_solo(conn, song):
 
 # ---------------------------------------------------------------------------
 # ENV-7G4K: envelope-target eligibility (supersedes the W10-F blanket refusal)
-# master/group hosts are perform-routed and creatable. ENV-9P4T: AUDIO hosts
-# are now creatable too — perform gives an audio track a continuous
-# arrangement ride (the per-clip session-audio-clip route stays CLP-AUD2,
-# refused at PUSH time). The master keeps a semantic send_level refusal.
+# master/group hosts are perform-routed and creatable. ENV-9P4T: audio hosts
+# are creatable too and route exactly like midi hosts — a covering audio
+# session clip takes the per-clip route, an uncovered ride performs.
+# The master keeps a semantic send_level refusal.
 # ---------------------------------------------------------------------------
 
 
@@ -2837,7 +2837,7 @@ def test_create_enum_envelope_idempotent_on_replay(conn, amp_device):
 
 def test_audio_field_domains_validated_at_authoring_time(conn):
     """CLP-AUD1 cumulative-Critic W3: LOM value domains teach at the mutator,
-    not at CLP-AUD2 push time inside Live."""
+    not at push time inside Live."""
     sid = M.create_song(conn, name="s")
     tid = M.create_track(conn, song_id=sid, track_index=1, name="Vox",
                          kind="audio")

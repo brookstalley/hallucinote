@@ -25,44 +25,20 @@ Chunk 1, "Done when") requires that lag to be within ± 64 samples of zero at
 48 kHz — i.e. ~1.3 ms — *after* the stem has been zero-padded to compensate
 for Live's reported PDC value. This file:
 
-1. Defines the alignment function (lives here for now; promotes to
-   ``src/hallucinote/audio/alignment.py`` in Chunk 3 when the analysis
-   package lands).
-2. Proves it returns exactly the lag we injected on synthetic stems.
-3. Documents the tolerance the in-Live test will assert against.
+1. Proves ``cross_correlation_peak_lag`` returns exactly the lag we injected
+   on synthetic stems.
+2. Documents the tolerance the in-Live test asserts against.
 """
 from __future__ import annotations
 
 import numpy as np
 import pytest
-from scipy.signal import correlate, correlation_lags
 
+from hallucinote.audio.alignment import (
+    PDC_TOLERANCE_SAMPLES,
+    cross_correlation_peak_lag,
+)
 from tests.unit.audio import fixtures
-
-# In-Live tolerance, in samples at 48 kHz. The build plan's Chunk 1 success
-# criterion: peak at zero lag ± 64 samples. About 1.3 ms — within one audio
-# buffer at typical session sizes (Live defaults to 128 / 256 / 512 buffers).
-PDC_TOLERANCE_SAMPLES = 64
-
-
-def cross_correlation_peak_lag(stem: np.ndarray, master: np.ndarray) -> int:
-    """Sample lag at which ``master`` is best explained by ``stem``.
-
-    Positive lag = master arrives later than stem (the expected PDC case).
-    Operates on the mono sum so stereo phase tricks don't bias the peak.
-    Both inputs must be stereo float arrays of equal length.
-    """
-    if stem.shape != master.shape:
-        raise ValueError(
-            f"stem {stem.shape} and master {master.shape} must match"
-        )
-    stem_mono = stem.mean(axis=1)
-    master_mono = master.mean(axis=1)
-    # SciPy's FFT-based correlate. mode='full' returns 2N-1 lags; we read
-    # the peak and convert its index to a signed lag in samples.
-    xcorr = correlate(master_mono, stem_mono, mode="full", method="fft")
-    lags = correlation_lags(master_mono.size, stem_mono.size, mode="full")
-    return int(lags[int(np.argmax(np.abs(xcorr)))])
 
 
 def test_zero_delay_returns_zero_lag():

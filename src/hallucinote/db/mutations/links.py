@@ -41,6 +41,15 @@ def reset_song_content(
     keys (W12-A). ``replay_capture`` re-runs after reset return the same
     UUIDs, and ``ableton_links`` stay pointed at valid targets.
 
+    For TRACKS that upsert key is a position, not an identity, and the system
+    renumbers positions (capture's dense rank around an excluded default
+    scaffold). So the UUID-survival property no longer rests on the key alone:
+    ``replay_capture`` reconciles tracks by NAME and calls ``reindex_tracks``
+    to carry each matched row to its new index before upserting, which is what
+    keeps a renumber from renaming one row and stranding another. A row the
+    snapshot no longer defines survives this reset AND that replay — it is
+    reported, and removed only by an operator running ``prune_track``.
+
     Wiped tables (scoped to this song):
 
     * ``sections``, ``tempo_map``, ``time_signature_map``, ``cue_points``

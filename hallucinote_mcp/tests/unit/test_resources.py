@@ -109,17 +109,32 @@ def test_error_recovery_guide_documents_render_capture_preconditions():
 def test_error_recovery_guide_documents_version_pin_recovery():
     """SYN-5C3J: the parallel-engine-dev pin recovery must be discoverable in
     the guide (the friction was reaching for it from scratch). Locks the
-    worktree + PYTHONPATH + preflight recipe and the no-`--pin`-flag rationale.
-    The subsection name is also cross-referenced by push_cli's recovery footer,
-    so this pins that link target too.
+    copy-the-vendored-package + PYTHONPATH + preflight recipe and the
+    no-`--pin`-flag rationale. The subsection name is also cross-referenced by
+    push_cli's recovery footer, so this pins that link target too.
     """
     content = _read_guide("error-recovery").lower()
     assert "engine version drift during a live compose session" in content, (
         "guide should carry the subsection push_cli's recovery footer links to"
     )
-    assert "git worktree add" in content
+    assert "remote scripts/hallucinote/hallucinote_mcp" in content, (
+        "the pin copies the package Live loaded — the guide must name that path"
+    )
     assert "pythonpath" in content
     assert "preflight" in content
+
+
+def test_error_recovery_guide_never_calls_the_fingerprint_a_commit():
+    """The `+<suffix>` is a content fingerprint, so any git-object recipe
+    against it is unfollowable — `git cat-file -t` rejects the value."""
+    content = _read_guide("error-recovery").lower()
+    assert "git worktree add" not in content
+    assert "git checkout" not in content
+    assert "the commit it was vendored from" not in content
+    assert "not a git commit" in content, (
+        "the guide should say plainly what the suffix is not — the wrong recipe "
+        "was reached for precisely because the string looks like a sha"
+    )
 
 
 def test_conventions_guide_documents_chain_rebuild_pattern():

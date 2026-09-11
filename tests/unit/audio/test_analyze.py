@@ -23,7 +23,16 @@ from hallucinote.audio import (
     TempoSegment,
     analyze_mix,
 )
-from hallucinote.audio.report import SCHEMA_VERSION
+from hallucinote.audio.analyze import _derive_findings
+from hallucinote.audio.reconcile import (
+    SumReconciliation,
+    master_is_not_stem_sum,
+)
+from hallucinote.audio.report import (
+    SCHEMA_VERSION,
+    LoudnessMetrics,
+    StemMetrics,
+)
 from hallucinote.audio.reverb import REVERB_TOLERANCE_FLOOR_S
 from hallucinote.paths import resolve_portable_path
 
@@ -407,7 +416,7 @@ def test_analyze_mix_verifies_declared_device_parameter_flip(tmp_path: Path):
         master_audio=stem.copy(),
         stop_at_beat=16.0,
     )
-    envs = [DeclaredEnvelope(
+    envs = [DeclaredEnvelope.from_pairs(
         target_surface_id="track:3",
         target_kind="device_parameter",
         parameter_path="Amp Type",
@@ -431,7 +440,7 @@ def test_analyze_mix_flags_unrealized_automation(tmp_path: Path):
         master_audio=flat.copy(),
         stop_at_beat=16.0,
     )
-    envs = [DeclaredEnvelope(
+    envs = [DeclaredEnvelope.from_pairs(
         target_surface_id="track:3",
         target_kind="device_parameter",
         parameter_path="Amp Type",
@@ -440,6 +449,35 @@ def test_analyze_mix_flags_unrealized_automation(tmp_path: Path):
     report = analyze_mix(captures_dir, declared_envelopes=envs)
     assert report.automation_verifications[0].realized is False
     assert any(f.kind == "automation_not_realized" for f in report.findings)
+
+
+def test_analyze_mix_reports_a_staircase_ramp_as_one_finding(tmp_path: Path):
+    """A 64-step staircase that did not land is ONE finding, not 64.
+
+    Per-step grading turned a finer, better-authored ramp into 64 warnings
+    against a flat stem, drowning the report — and the count moved with the
+    step size rather than with anything about the mix.
+    """
+    flat = sine(440.0, 4.0, amplitude=0.5)
+    captures_dir = _write_synthetic_capture(
+        tmp_path,
+        stems=[("track:3", "03 Rhythm Gtr", flat)],
+        master_audio=flat.copy(),
+        stop_at_beat=16.0,
+    )
+    envs = [DeclaredEnvelope(
+        target_surface_id="track:3",
+        target_kind="device_parameter",
+        parameter_path="Tone",
+        breakpoints=tuple(
+            (4.0 + i * (4.0 / 64), i / 64, "linear") for i in range(65)
+        ),
+    )]
+    report = analyze_mix(captures_dir, declared_envelopes=envs)
+    assert len(report.automation_verifications) == 1
+    assert report.automation_verifications[0].steps == 64
+    assert len([f for f in report.findings
+                if f.kind == "automation_not_realized"]) == 1
 
 
 def test_analyze_mix_verifies_declared_mixer_volume_on_master(tmp_path: Path):
@@ -460,7 +498,7 @@ def test_analyze_mix_verifies_declared_mixer_volume_on_master(tmp_path: Path):
         master_audio=master,
         stop_at_beat=16.0,
     )
-    envs = [DeclaredEnvelope(
+    envs = [DeclaredEnvelope.from_pairs(
         target_surface_id="track:1",
         target_kind="mixer_volume",
         parameter_path=None,
@@ -491,7 +529,7 @@ def test_analyze_mix_unrealized_mixer_volume_produces_finding(tmp_path: Path):
         master_audio=flat_master,
         stop_at_beat=16.0,
     )
-    envs = [DeclaredEnvelope(
+    envs = [DeclaredEnvelope.from_pairs(
         target_surface_id="track:1",
         target_kind="mixer_volume",
         parameter_path=None,
@@ -528,7 +566,7 @@ def test_analyze_mix_pan_prediction_uses_stem_gains(tmp_path: Path):
         master_audio=master,
         stop_at_beat=16.0,
     )
-    envs = [DeclaredEnvelope(
+    envs = [DeclaredEnvelope.from_pairs(
         target_surface_id="track:1",
         target_kind="mixer_pan",
         parameter_path=None,
@@ -611,6 +649,67 @@ def test_analyze_mix_muted_master_serializes_delivered_as_null(tmp_path: Path):
     assert parsed["master_fader_volume"] == 0.0
     assert parsed["master_fader_db"] is None
     assert parsed["delivered_true_peak_dbtp"] is None
+
+
+def test_analyze_mix_marks_an_unprobed_master_fader_unverified(tmp_path: Path):
+    """A fader value nothing confirmed against the render is not a measurement.
+
+    Analysis is server-side and never talks to Live, so the fader it applies is
+    whatever the song DB declares. When Live and the DB disagree — a trim made
+    in Live and never pulled back — `delivered_true_peak_dbtp` is wrong by
+    exactly that drift, and it reads as authoritative. The report has to say so
+    itself: an agent that trims the fader, re-renders, and sees the same
+    delivered peak trims again.
+    """
+    duration_s = 2.0
+    captures_dir = _write_synthetic_capture(
+        tmp_path,
+        stems=[("track:1", "01 Drums", calibrated_pink_noise(-26.0, duration_s))],
+        master_audio=calibrated_pink_noise(-20.0, duration_s),
+    )
+    report = analyze_mix(
+        captures_dir, master_fader_volume=0.70, master_fader_source="song_db",
+    )
+
+    assert report.master_fader_verified is False
+    assert report.master_fader_source == "song_db"
+    assert "not a reading of the set" in report.master_fader_note.lower()
+    assert "ableton_session" in report.master_fader_note
+    parsed = report.to_json_dict()
+    assert parsed["master_fader_verified"] is False
+    assert parsed["master_fader_note"] == report.master_fader_note
+
+
+def test_analyze_mix_says_in_the_report_which_numbers_are_pre_fader(tmp_path: Path):
+    """The pre-fader caveat belongs in the report, not only in skill prose.
+
+    A fader-only move leaves every per-stem and per-section row byte-identical.
+    Without this block that reads as "the level change did nothing" and the
+    next move is an EQ that was never needed.
+    """
+    duration_s = 2.0
+    captures_dir = _write_synthetic_capture(
+        tmp_path,
+        stems=[("track:1", "01 Drums", calibrated_pink_noise(-26.0, duration_s))],
+        master_audio=calibrated_pink_noise(-20.0, duration_s),
+    )
+    basis = analyze_mix(captures_dir).to_json_dict()["measurement_basis"]
+
+    assert basis["stem_loudness"] == "pre_fader"
+    assert basis["section_masking"] == "pre_fader"
+    assert basis["master"] == "pre_master_fader"
+    assert basis["delivered_true_peak_dbtp"] == "post_master_fader"
+    assert "fader-only" in basis["note"]
+
+    # Masking reconstructs mix balance from DECLARED static fader gains — still
+    # pre-fader audio, and the basis has to name that difference rather than
+    # letting the two cases share one label.
+    gained = analyze_mix(
+        captures_dir, analyze_masking=True, stem_gains={"track:1": 0.5},
+    ).to_json_dict()["measurement_basis"]
+    assert gained["section_masking"] == (
+        "pre_fader_scaled_by_declared_static_fader_gains"
+    )
 
 
 def test_analyze_mix_skips_when_no_automation_declared(tmp_path: Path):
@@ -1424,3 +1523,490 @@ def test_analyze_mix_report_carries_no_publishable_leak(tmp_path: Path):
             "analysis/ reports are git-tracked, so this ships to whoever "
             "clones the repo"
         )
+
+
+def test_analyze_mix_populates_section_transients_when_enabled(tmp_path: Path):
+    """With ``analyze_transients=True``, a covered section carries the low-band
+    hit shape of every stem with enough kick-class hits (a pad is omitted), and
+    it serializes under ``per_section[].transients``."""
+    from .fixtures import kick_onset, sine
+
+    kick = np.zeros((SAMPLE_RATE * 8, 2), dtype=np.float32)
+    one = kick_onset()
+    for i in range(16):
+        s = i * SAMPLE_RATE // 2
+        kick[s:s + one.shape[0]] += one
+    pad = sine(440.0, 8.0, amplitude=0.2)
+    captures_dir = _write_synthetic_capture(
+        tmp_path,
+        stems=[("track:1", "Kit", kick), ("track:2", "Pad", pad)],
+        master_audio=kick + pad,
+        start_at_beat=0.0,
+        stop_at_beat=16.0,
+    )
+    sections = [SectionWindow(name="verse", start_beat=0.0, end_beat=16.0)]
+
+    off = analyze_mix(captures_dir, sections=sections)
+    assert off.per_section[0].transients == []
+
+    on = analyze_mix(captures_dir, sections=sections, analyze_transients=True)
+    sec = on.per_section[0]
+    assert [t.track_id for t in sec.transients] == ["track:1"]
+    kit = sec.transients[0]
+    assert kit.hit_count == 16
+    assert kit.rise_ms > 0.0 and kit.t20_ms > 0.0
+    # the pad's absence is EXPLAINED, not silent
+    assert [s["track_id"] for s in sec.transient_skips] == ["track:2"]
+    assert sec.transient_skips[0]["kind"] in ("no_low_band_energy", "too_few_hits")
+
+    sj = on.to_json_dict()["per_section"][0]
+    j = sj["transients"]
+    assert len(j) == 1 and j[0]["track_id"] == "track:1"
+    assert isinstance(j[0]["click_minus_sub_db"], float)
+    assert isinstance(j[0]["attack_sub_40_100_db"], float)
+    assert isinstance(j[0]["hit_count"], int)
+    assert isinstance(j[0]["censored_t20_hits"], int)
+    assert sj["transient_skips"][0]["track_id"] == "track:2"
+
+
+def test_analyze_mix_populates_render_integrity_and_serializes_it(tmp_path: Path):
+    """The three render-level lenses populate and round-trip through JSON.
+
+    Integrity, phase and reconciliation describe the CAPTURE rather than a
+    section, so they sit at the top level beside ``alignment`` — and each must be
+    distinguishable from "did not run", which is why the pass is asserted present
+    rather than merely non-crashing.
+    """
+    from .fixtures import pink_noise, sine
+
+    bass = sine(80.0, 4.0, amplitude=0.3)
+    lead = pink_noise(4.0, rng=np.random.default_rng(3))
+    captures_dir = _write_synthetic_capture(
+        tmp_path,
+        stems=[("track:1", "Bass", bass), ("track:2", "Lead", lead)],
+        master_audio=(bass + lead).astype(np.float32),
+        start_at_beat=0.0,
+        stop_at_beat=8.0,
+    )
+
+    # Explicit: the flag defaults OFF, like every other analysis flag here,
+    # and the handler is what turns it on for a real render.
+    report = analyze_mix(
+        captures_dir, analyze_integrity=True, analyze_imaging=True
+    )
+
+    # One integrity row per captured surface, each naming what it measured.
+    measured = {row.track_id for row in report.integrity}
+    assert {"track:1", "track:2"} <= measured, measured
+    assert len(report.integrity) == 3, "master, and one row per stem"
+    assert all(not row.silent for row in report.integrity)
+
+    # A clean synthetic render carries no damage.
+    assert all(row.clip_events == [] for row in report.integrity)
+
+    # One phase relation for the single stem pair, and the lag carries its
+    # confidence so a coincidental peak is not read as device latency.
+    assert len(report.phase_relations) == 1
+    pair = report.phase_relations[0]
+    assert pair.skipped is None
+    # A sine and pink noise share no structure, so whatever lag the argmax found
+    # must arrive labelled as not worth believing.
+    assert 0.0 <= pair.lag_correlation <= 1.0
+    assert not pair.polarity_inverted
+
+    # The master IS the stem sum here, so reconciliation should find it faithful.
+    assert report.sum_reconciliation is not None
+    assert report.sum_reconciliation.skipped is None
+
+    payload = report.to_json_dict()
+    assert len(payload["integrity"]) == 3
+    assert len(payload["phase_relations"]) == 1
+    assert payload["sum_reconciliation"] is not None
+    assert payload["stems"][0]["imaging"] is not None
+    assert [b["band"] for b in payload["stems"][0]["imaging"]["bands"]]
+    # Valid JSON under strict mode is the contract every consumer relies on.
+    json.dumps(payload, allow_nan=False)
+
+
+def test_analyze_mix_can_skip_render_integrity(tmp_path: Path):
+    """``analyze_integrity=False`` leaves the three lists empty rather than
+    half-populated, so "off" and "clean" never look alike."""
+    from .fixtures import sine
+
+    tone = sine(220.0, 2.0, amplitude=0.3)
+    captures_dir = _write_synthetic_capture(
+        tmp_path,
+        stems=[("track:1", "Tone", tone)],
+        master_audio=tone,
+        start_at_beat=0.0,
+        stop_at_beat=4.0,
+    )
+
+    report = analyze_mix(captures_dir, analyze_integrity=False)
+
+    assert report.integrity == []
+    assert report.phase_relations == []
+    assert report.sum_reconciliation is None
+
+
+def test_per_section_stems_carry_imaging(tmp_path: Path):
+    """Imaging is measured per SECTION, not only whole-capture.
+
+    "The chorus goes wide and the verse is narrow" is the soundstage question
+    people actually ask, and a whole-capture average is precisely the reading
+    that cannot answer it. This pins that the section path populates the field
+    rather than leaving it None — the failure mode is silent, because a None
+    reads as "not measured" and nobody notices the sections never had one.
+    """
+    from .fixtures import sine
+
+    tone = sine(300.0, 8.0, amplitude=0.3)
+    captures_dir = _write_synthetic_capture(
+        tmp_path,
+        stems=[("track:1", "Tone", tone)],
+        master_audio=tone,
+        start_at_beat=0.0,
+        stop_at_beat=16.0,
+    )
+    sections = [
+        SectionWindow(name="verse", start_beat=0.0, end_beat=8.0),
+        SectionWindow(name="chorus", start_beat=8.0, end_beat=16.0),
+    ]
+
+    report = analyze_mix(captures_dir, sections=sections, analyze_imaging=True)
+
+    assert len(report.per_section) == 2
+    for section in report.per_section:
+        assert section.master.imaging is not None, section.section_name
+        for stem in section.stems:
+            assert stem.imaging is not None, (section.section_name, stem.track_id)
+
+    payload = report.to_json_dict()
+    assert payload["per_section"][0]["stems"][0]["imaging"] is not None
+
+
+def test_analyze_mix_passes_stem_gains_as_linear_gains(tmp_path: Path):
+    """The gain UNIT is a seam, and a seam is what nobody owns by default.
+
+    ``stem_gains`` carries LINEAR gains — the handler converts Live's normalized
+    fader value through the calibrated curve exactly once. A second conversion
+    inside the reconciliation mis-levelled a unity fader by +6 dB and a -14 dB
+    fader by -20 dB, and did it while ``gains_assumed_unity`` reported ``False``,
+    so the report asserted the levels were modelled while they were wrong.
+
+    Neither side's own tests could see it: the module's tests were
+    self-consistent in its own convention, and the analyze-level test passed no
+    gains at all. This one exercises the PRODUCTION argument shape — a non-unity
+    linear gain map — which is the only place the mismatch is visible.
+    """
+    from .fixtures import pink_noise, sine
+
+    bass = sine(80.0, 4.0, amplitude=0.4)
+    lead = pink_noise(4.0, rng=np.random.default_rng(9))
+    half = 10.0 ** (-6.0 / 20.0)
+    # The master is what Live would produce: each stem at its LINEAR gain.
+    master = (bass * half + lead).astype(np.float32)
+
+    captures_dir = _write_synthetic_capture(
+        tmp_path,
+        stems=[("track:1", "Bass", bass), ("track:2", "Lead", lead)],
+        master_audio=master,
+        start_at_beat=0.0,
+        stop_at_beat=8.0,
+    )
+
+    report = analyze_mix(
+        captures_dir,
+        analyze_integrity=True,
+        stem_gains={"track:1": half, "track:2": 1.0},
+    )
+
+    recon = report.sum_reconciliation
+    assert recon is not None
+    assert recon.gains_assumed_unity is False
+    # Interpreting these as normalized fader values instead would scale track:1
+    # by live_fader_gain(0.501) and blow the residual apart.
+    assert recon.residual_db < -20.0, recon
+    assert recon.gain_offset_db == pytest.approx(0.0, abs=1.0), recon
+
+
+# --- capture span mismatch (#491) ---------------------------------------------
+#
+# A capture of songs/alien covered 1.06 beats more audio than its manifest
+# declared. Every per-section number in the resulting mix report was computed on
+# the stretched span, a reverb peak was read as landing a beat after the moment
+# it actually landed, and the report said `status: ok` and nothing else. These
+# tests hold the report to speaking.
+
+ALIEN_BPM = 124.0
+
+
+def _span_capture_dir(
+    tmp_path: Path, *, declared_beats: float, captured_seconds: float
+) -> Path:
+    """A synthetic capture whose audio length and declared span can disagree."""
+    audio = calibrated_pink_noise(-26.0, captured_seconds)
+    return _write_synthetic_capture(
+        tmp_path,
+        stems=[("track:1", "01 Drums", calibrated_pink_noise(-26.0, captured_seconds))],
+        master_audio=audio,
+        start_at_beat=0.0,
+        stop_at_beat=declared_beats,
+        ring_out_beats=0.0,
+    )
+
+
+def test_analyze_mix_flags_a_capture_longer_than_its_declared_span(tmp_path: Path):
+    """The reported capture's own numbers, scaled down to a testable length: at
+    124 BPM a 40-beat span is 19.355 s, and audio of 19.868 s overruns it by the
+    same 1.06 beats the real capture did."""
+    declared_beats = 40.0
+    declared_s = declared_beats * 60 / ALIEN_BPM
+    captured_s = declared_s + 1.06 * 60 / ALIEN_BPM
+    captures_dir = _span_capture_dir(
+        tmp_path, declared_beats=declared_beats, captured_seconds=captured_s
+    )
+
+    report = analyze_mix(captures_dir, tempo_map=[TempoSegment(0.0, ALIEN_BPM)])
+
+    mismatches = [f for f in report.findings if f.kind == "capture_span_mismatch"]
+    assert len(mismatches) == 1
+    finding = mismatches[0]
+    assert finding.severity == "warning"
+    assert finding.subject == "capture"
+    assert finding.expected == pytest.approx(declared_beats)
+    assert finding.observed == pytest.approx(declared_beats + 1.06, abs=0.01)
+    # It must not claim to know WHICH end the extra audio is at.
+    assert "head or the tail" in (finding.db_reference or "")
+
+    span = report.alignment["capture_span"]
+    assert span["within_tolerance"] is False
+    assert span["excess_beats"] == pytest.approx(1.06, abs=0.01)
+
+
+def test_analyze_mix_is_silent_on_a_capture_that_spans_what_it_declares(
+    tmp_path: Path,
+):
+    """The healthy captures measured alongside the defective one sat inside 0.05
+    beats. No finding — but the numbers are still recorded, so a reader can tell
+    a passing check from one that never ran."""
+    declared_beats = 40.0
+    captures_dir = _span_capture_dir(
+        tmp_path,
+        declared_beats=declared_beats,
+        captured_seconds=declared_beats * 60 / ALIEN_BPM,
+    )
+
+    report = analyze_mix(captures_dir, tempo_map=[TempoSegment(0.0, ALIEN_BPM)])
+
+    assert [f for f in report.findings if f.kind == "capture_span_mismatch"] == []
+    span = report.alignment["capture_span"]
+    assert span["within_tolerance"] is True
+    assert span["excess_beats"] == pytest.approx(0.0, abs=0.01)
+    assert [
+        s for s in report.skipped_analyses if s["kind"] == "capture_span"
+    ] == []
+
+
+def test_analyze_mix_names_the_span_check_it_could_not_run(tmp_path: Path):
+    """Without a tempo map there is no wall-clock duration to compare against.
+    The check must say so rather than pass silently — the silence is the bug."""
+    captures_dir = _span_capture_dir(
+        tmp_path, declared_beats=40.0, captured_seconds=25.0
+    )
+
+    report = analyze_mix(captures_dir)
+
+    assert [f for f in report.findings if f.kind == "capture_span_mismatch"] == []
+    assert report.alignment["capture_span"] is None
+    skips = [
+        s for s in report.skipped_analyses if s["kind"] == "capture_span"
+    ]
+    assert len(skips) == 1
+    assert "no tempo_map rows" in skips[0]["reason"]
+
+
+def test_analyze_mix_names_the_push_gap_rather_than_blaming_the_capture(
+    tmp_path: Path,
+):
+    """A song declaring a tempo change renders at the bar-1 tempo today, so the
+    declared duration is not what was played. The report must say that is why it
+    could not check, not report the difference as a bad capture."""
+    captures_dir = _span_capture_dir(
+        tmp_path, declared_beats=120.0, captured_seconds=60.0
+    )
+
+    report = analyze_mix(
+        captures_dir,
+        tempo_map=[TempoSegment(0.0, 120.0), TempoSegment(60.0, 60.0)],
+    )
+
+    assert [f for f in report.findings if f.kind == "capture_span_mismatch"] == []
+    skips = [
+        s for s in report.skipped_analyses if s["kind"] == "capture_span"
+    ]
+    assert len(skips) == 1
+    assert "bar-1 tempo" in skips[0]["reason"]
+
+
+def test_every_skipped_analysis_entry_is_keyed_the_same_way(tmp_path: Path):
+    """`kind` is how a consumer selects a skip entry, and consumers index it
+    unguarded. Two entries were once keyed `analysis` instead; they never reached
+    a real report only because the MCP handler happens to enable both lenses, so
+    the inconsistency sat one default away from a KeyError in the reader. This
+    pins the shape across EVERY skip the pipeline can emit, rather than the few
+    a given test happens to trigger."""
+    captures_dir = _write_synthetic_capture(
+        tmp_path,
+        stems=[("track:1", "01 Drums", calibrated_pink_noise(-26.0, 2.0))],
+        master_audio=calibrated_pink_noise(-20.0, 2.0),
+    )
+
+    # Every lens off and nothing declared — the maximal-skip report.
+    report = analyze_mix(captures_dir)
+
+    assert report.skipped_analyses, "expected skips with nothing declared"
+    for entry in report.skipped_analyses:
+        assert "kind" in entry, f"skip entry missing 'kind': {entry}"
+        assert "reason" in entry, f"skip entry missing 'reason': {entry}"
+    assert {"render_integrity", "imaging", "capture_span"} <= {
+        e["kind"] for e in report.skipped_analyses
+    }
+
+
+def test_analyze_mix_flags_a_capture_shorter_than_its_declared_span(tmp_path: Path):
+    """The other end of the same defect, pinned end-to-end so the finding's
+    observed < expected ordering is held, not just the measurement's sign."""
+    declared_beats = 40.0
+    captured_s = (declared_beats - 1.0) * 60 / ALIEN_BPM
+    captures_dir = _span_capture_dir(
+        tmp_path, declared_beats=declared_beats, captured_seconds=captured_s
+    )
+
+    report = analyze_mix(captures_dir, tempo_map=[TempoSegment(0.0, ALIEN_BPM)])
+
+    mismatches = [f for f in report.findings if f.kind == "capture_span_mismatch"]
+    assert len(mismatches) == 1
+    assert mismatches[0].observed < mismatches[0].expected
+    assert report.alignment["capture_span"]["excess_beats"] == pytest.approx(
+        -1.0, abs=0.01
+    )
+
+
+def test_analyze_mix_distinguishes_a_missing_tempo_map_from_a_late_first_point(
+    tmp_path: Path,
+):
+    """Two declines an operator would act on differently must not read the same.
+    A song whose first tempo row is not at bar 1 HAS a usable map; telling the
+    operator it is missing sends them to the wrong place."""
+    captures_dir = _span_capture_dir(
+        tmp_path, declared_beats=40.0, captured_seconds=40 * 60 / ALIEN_BPM
+    )
+
+    absent = analyze_mix(captures_dir)
+    late = analyze_mix(captures_dir, tempo_map=[TempoSegment(16.0, ALIEN_BPM)])
+
+    def _reason(report):
+        entries = [
+            s for s in report.skipped_analyses if s["kind"] == "capture_span"
+        ]
+        assert len(entries) == 1
+        return entries[0]["reason"]
+
+    assert "no tempo_map rows" in _reason(absent)
+    assert "before the song's first tempo point" in _reason(late)
+
+
+# --- the stem-sum residual reaches a finding -----------------------------
+#
+# Regression for the 2026-09-10 `alien` incident: `sum_reconciliation` was
+# computed and serialized on every report and read by nothing, so three
+# renders made under a soloed track each shipped `render_status: ok` with a
+# master that was one stem.
+
+
+def _stem_metrics(track_id: str = "master") -> StemMetrics:
+    return StemMetrics(
+        track_id=track_id,
+        surface_kind="master" if track_id == "master" else "track",
+        surface_name="Main",
+        loudness=LoudnessMetrics(-12.0, -14.0, -8.0, -1.0),
+    )
+
+
+def _reconciliation(
+    *, correlation: float = 0.959,
+    gain_offset_db: float = -1.2,
+    skipped: str | None = None,
+) -> SumReconciliation:
+    return SumReconciliation(
+        residual_db=-18.0,
+        correlation=correlation,
+        best_lag_samples=64,
+        gain_offset_db=gain_offset_db,
+        band_residuals=[],
+        worst_offender=None,
+        skipped=skipped,
+    )
+
+
+def test_a_healthy_reconciliation_disqualifies_nothing():
+    assert master_is_not_stem_sum(_reconciliation()) is None
+
+
+def test_the_incident_correlation_disqualifies_the_master():
+    """The measured values from the faulty `alien` renders."""
+    verdict = master_is_not_stem_sum(
+        _reconciliation(correlation=0.159, gain_offset_db=-32.65)
+    )
+    assert verdict is not None
+    metric, observed, _expected = verdict
+    assert metric == "stem_sum_correlation"
+    assert observed == pytest.approx(0.159)
+
+
+def test_a_wild_gain_offset_disqualifies_even_when_correlated():
+    """A master that tracks the stem sum but sits 30 dB away from it is not
+    the mix either — one stem soloed correlates poorly, but a master captured
+    through the wrong tap can correlate well and be at the wrong level."""
+    verdict = master_is_not_stem_sum(
+        _reconciliation(correlation=0.98, gain_offset_db=-31.7)
+    )
+    assert verdict is not None
+    assert verdict[0] == "stem_sum_gain_offset_db"
+
+
+def test_a_skipped_reconciliation_is_not_a_disqualification():
+    """The lens declining to measure says nothing about whether the master is
+    the mix; treating it as failure would make every report that could not run
+    the lens unreadable."""
+    assert master_is_not_stem_sum(
+        _reconciliation(correlation=float("nan"), skipped="no_stems")
+    ) is None
+    assert master_is_not_stem_sum(None) is None
+
+
+def test_a_disqualified_master_produces_a_blocking_finding():
+    findings = _derive_findings(
+        master=_stem_metrics("master"),
+        stems=[],
+        overshoots=[],
+        reverbs=[],
+        sum_reconciliation=_reconciliation(correlation=0.159, gain_offset_db=-32.65),
+    )
+    hits = [f for f in findings if f.kind == "master_not_stem_sum"]
+    assert len(hits) == 1
+    assert hits[0].severity == "blocking"
+    assert hits[0].subject == "master"
+    assert hits[0].observed == pytest.approx(0.159)
+
+
+def test_a_healthy_reconciliation_produces_no_such_finding():
+    findings = _derive_findings(
+        master=_stem_metrics("master"),
+        stems=[],
+        overshoots=[],
+        reverbs=[],
+        sum_reconciliation=_reconciliation(),
+    )
+    assert not [f for f in findings if f.kind == "master_not_stem_sum"]

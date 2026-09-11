@@ -18,10 +18,15 @@ Tombstone protection for `device_sidechain_set` is already registered in
 guards the distinct claim that the snapshot value persists across an idempotent
 re-replay (the build.py rebuild loop).
 """
+from __future__ import annotations
 
 import pytest
 
-from hallucinote.capture import assemble_snapshot_via_probes, replay_capture
+from hallucinote.capture import (
+    assemble_snapshot_via_probes,
+    replay_capture,
+    unreadable_sidechain_source_warning,
+)
 from hallucinote.db import init_db, mutations as M, queries as Q  # noqa: F401
 from hallucinote.db import events as E
 
@@ -279,10 +284,20 @@ def test_unresolvable_source_raises(conn):
 # ---------------------------------------------------------------------------
 
 
-def _capture_probe(*, source="Kick", channel="Post FX", has_routing=True):
+def _capture_probe(
+    *, source="Kick", channel="Post FX", has_routing=True,
+    sc_on=None, device_class="Compressor",
+):
     """Fake probe: tracks 'Kick' (1) and 'Bass' (2); a Compressor on Bass whose
     input routing the test controls. Models the `get_input_routing` shape
-    (`has_input_routing` / `current_type` / `current_channel`) faithfully."""
+    (`has_input_routing` / `current_type` / `current_channel`) faithfully.
+
+    `sc_on` (None = the device exposes no such param) adds a canonical `S/C On`
+    parameter at the given raw value, shaped like the real `get_parameters`
+    entry (min/max/default_value/value_display), so the #536 arming predicate is
+    exercised against the same surface capture reads in Live. `device_class` is
+    the `class_display_name` — 'Multiband Dynamics' for the #536 case.
+    """
     def probe(tool, action, **params):
         if (tool, action) == ("ableton_session", "info"):
             return {"tempo": 120.0,
@@ -300,10 +315,16 @@ def _capture_probe(*, source="Kick", channel="Post FX", has_routing=True):
             if params.get("track_index") == 2:
                 return {"devices": [{"device_index": 1, "name": "Bass Comp",
                                      "class_name": "Compressor2",
-                                     "class_display_name": "Compressor"}]}
+                                     "class_display_name": device_class}]}
             return {"devices": []}
         if (tool, action) == ("ableton_device", "get_parameters"):
-            return {"parameters": []}
+            if sc_on is None:
+                return {"parameters": []}
+            return {"parameters": [{
+                "name": "S/C On", "value": float(sc_on), "default_value": 0.0,
+                "min": 0.0, "max": 1.0, "is_enum": False,
+                "value_display": "On" if sc_on else "Off",
+            }]}
         if (tool, action) == ("ableton_device", "get_input_routing"):
             if params.get("track_index") == 2 and params.get("device_index") == 1:
                 return {"has_input_routing": has_routing,
@@ -371,3 +392,86 @@ def test_capture_no_field_when_routing_unavailable():
     snap = assemble_snapshot_via_probes(_capture_probe(has_routing=False))
     dev = _bass_device(snap)
     assert "sidechain_source" not in dev
+
+
+# ---------------------------------------------------------------------------
+# #536: an ARMED sidechain on a device with no routing surface warns, and a
+# routing-CAPABLE device stays silent
+# ---------------------------------------------------------------------------
+
+_UNREADABLE = "sidechain source NOT machine-readable"
+
+
+def _unreadable_warnings(recwarn):
+    return [
+        str(w.message) for w in recwarn.list
+        if issubclass(w.category, UserWarning) and _UNREADABLE in str(w.message)
+    ]
+
+
+def test_capture_warns_when_armed_sidechain_has_no_routing_surface():
+    """#536 (`alien` track 3, Multiband Dynamics): `S/C On == 1` meets
+    `has_input_routing == false`. The source exists only in Live's UI, so the
+    snapshot cannot carry it and the next build.py rebuild materializes the
+    device armed and pointed at nothing. That loss must be SAID, naming the
+    track and the device, and saying what will happen plus what to do."""
+    with pytest.warns(UserWarning, match=_UNREADABLE) as caught:
+        snap = assemble_snapshot_via_probes(_capture_probe(
+            has_routing=False, sc_on=1.0, device_class="Multiband Dynamics",
+        ))
+    msg = str(caught[0].message)
+    assert "'Bass Comp'" in msg          # the device, by name
+    assert "track 'Bass'" in msg         # the track, by name
+    assert "build.py" in msg             # what will happen
+    assert "Re-set the source by hand" in msg   # what to do
+    # Pinned against the SHARED text, not a paraphrase: push's device_sidechain
+    # phase emits the same sentence under a "device_sidechain: " prefix.
+    assert msg == "capture: " + unreadable_sidechain_source_warning(
+        ["'Bass Comp' on track 'Bass'"]
+    )
+    # Capture still completes, and nothing fabricated a source.
+    dev = _bass_device(snap)
+    assert "sidechain_source" not in dev
+    assert dev["params_dialed"]["S/C On"]["normalized"] == 1.0
+
+
+def test_capture_stays_silent_for_routing_capable_device(recwarn):
+    """The NEGATIVE case, as load-bearing as the warning: a device that DOES
+    expose input routing is #374's shipped author→push→pull path (the Compressor
+    common case), where the source round-trips. A warning here would train the
+    operator to ignore every one of them."""
+    snap = assemble_snapshot_via_probes(_capture_probe(sc_on=1.0))
+    assert _unreadable_warnings(recwarn) == []
+    assert _bass_device(snap)["sidechain_source"] == "Kick"
+
+
+def test_capture_stays_silent_when_sidechain_is_not_armed(recwarn):
+    """No routing surface and the sidechain OFF is not a loss — there is no
+    source to lose. Pinned so the predicate stays a conjunction of both halves
+    rather than degrading into "this device has no routing surface"."""
+    assemble_snapshot_via_probes(_capture_probe(
+        has_routing=False, sc_on=0.0, device_class="Multiband Dynamics",
+    ))
+    assert _unreadable_warnings(recwarn) == []
+
+
+def test_capture_stays_silent_with_no_sidechain_param_at_all(recwarn):
+    """A device with no sidechain-enable parameter (an EQ, a reverb) and no
+    routing surface — the overwhelming majority of devices in any set — is the
+    noise case that would swamp the signal."""
+    assemble_snapshot_via_probes(_capture_probe(has_routing=False))
+    assert _unreadable_warnings(recwarn) == []
+
+
+def test_capture_records_nothing_new_in_the_snapshot(recwarn):
+    """The condition is REPORTED, not persisted: no new key lands on the device
+    entry (see the report's snapshot-recording decision). A device entry gains a
+    field only where the snapshot schema already documents one, so the warning
+    cannot quietly become a format change."""
+    with pytest.warns(UserWarning, match=_UNREADABLE):
+        snap = assemble_snapshot_via_probes(_capture_probe(
+            has_routing=False, sc_on=1.0, device_class="Multiband Dynamics",
+        ))
+    assert set(_bass_device(snap)) == {
+        "index", "class", "class_name", "name", "params_dialed",
+    }

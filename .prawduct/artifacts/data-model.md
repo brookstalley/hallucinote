@@ -33,7 +33,7 @@ the migration is a reinterpretation rather than a rewrite.
 
 Two invariants make that future affordable, and both are absolute:
 
-- **All writes go through mutators** (`db/mutations/`). No raw SQL in callers, ever.
+- **All writes go through mutators** (`db/mutations/`). No write SQL in callers.
 - **Every mutator emits exactly one event.** `_emit` is the only path.
 
 A caller that reaches around the mutators doesn't just skip an audit row — it makes the
@@ -74,12 +74,30 @@ Ratified 2026-08-10. These bind future work; the narrative above describes it.
   made it, and a binary blob you must back up rather than version. Every recoverable
   failure in [`architecture.md`](architecture.md)'s runtime table descends from this
   choice, and so does everything valuable about "a song is a git repo".
+  **Not in tension with the score's authority over Live.** Mutator docstrings say
+  the DB records what the song *is* — a within-song meter map, for instance, even
+  where Live cannot render it. That is a claim about the DB versus the *set*, and
+  it stands: the score is authored, the set is projected from it, and projection
+  limits are enforced at push. This norm is a claim about the DB versus `build.py`
+  and the snapshot, and it stands too: the DB is rebuilt from them, never the
+  other way round. Both readings are live because they answer different questions
+  — what is this song, and where does this song's text live.
 
-- **All writes go through mutators (`db/mutations/`); no raw SQL in callers, ever.**
+- **All writes go through mutators (`db/mutations/`); no write SQL in callers.**
   Why: a caller that reaches around the mutators does not merely skip an audit row — it
   makes the event log a *lie*, and a log that is wrong in unknown places is worse than no
   log, because every future reader trusts it. This is the one failure this design cannot
   absorb.
+  Scope: **writes**. Reads may use `conn.execute` directly — a `SELECT` cannot make the
+  log lie, and the norm's original "no raw SQL in callers, *ever*" was wider than the why
+  above justifies. Narrowed by owner ruling 2026-09-08 (JANITOR-2026-09 R1), the first
+  Norm Health sweep, which measured 22 sites outside `db/`: 5 writes and 17 reads.
+  Bounded exception (writes): **`markdown_refs.py`** writes `markdown_refs` and
+  `markdown_refs_fts` with raw SQL, and does not emit events. It is a projection rebuilt
+  from disk, not a domain mutation — the audit-side event (`MARKDOWN_REF_RECORDED`) fires
+  when a file is authored, and reindex is the read-side index. The reasoning is stated at
+  that module's docstring; it is recorded here so a *second* such bypass has a boundary to
+  be measured against rather than a precedent to point at.
 
 - **Every mutator emits exactly one event, in the same transaction as its state change.**
   `_emit` is the only path.

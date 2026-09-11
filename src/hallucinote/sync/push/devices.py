@@ -3,11 +3,16 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from dataclasses import dataclass
+from pathlib import Path
 
 from hallucinote.analyzer_identity import is_analyzer_device
+from hallucinote.capture import is_sidechain_enable_param
 from hallucinote.db import queries as Q
+from hallucinote.paths import resolve_audio_path, same_file_path, song_dir_for_conn
 
 from ._core import PushPlan, ToolCall, build_node_addr
+from .probe import linked_device_parents
 
 # SYN-RACK-PRESET-RELINK: a browser_path whose leaf is a preset FILE (.adg rack
 # preset / .adv device preset) names loadable preset CONTENT, so the load handler
@@ -83,6 +88,371 @@ def classify_load_target(
     return _LOAD_TARGET_ABSENT, None
 
 
+def live_device_at(
+    live_devices_by_parent: dict[tuple[str, int], list[dict]] | None,
+    *,
+    parent_kind: str,
+    parent_index: int | None,
+    position: int,
+) -> dict | None:
+    """The probed Live device sitting at ``position``, or ``None`` for "no
+    probe data about it".
+
+    ``None`` is deliberately the answer to every uncertainty — no probe was
+    supplied, the parent was not in it, the chain does not run that deep. The
+    sample diff reads it as "cannot compare", which emits the assignment; the
+    alternative (treating absence as "no sample there") would silently skip a
+    device whose chain simply was not readable.
+
+    Separate from :func:`classify_load_target`, which walks the same list to
+    answer a different question and must keep its three verdicts apart: there,
+    "cannot determine" REFUSES, because a load that guesses wrong doubles the
+    signal chain. Here a re-assignment is harmless, so uncertainty collapses to
+    one answer.
+    """
+    if live_devices_by_parent is None or parent_index is None:
+        return None
+    live_devices = live_devices_by_parent.get((parent_kind, parent_index))
+    if live_devices is None:
+        return None
+    for d in live_devices:
+        if is_analyzer_device(d):
+            continue
+        if d.get("device_index") == position:
+            return d
+    return None
+
+
+def _resolve_device_sample(
+    conn: sqlite3.Connection, ref: str, *, where: str,
+) -> tuple[Path | None, str | None]:
+    """Resolve a ``devices.audio_file`` reference to the absolute path the wire
+    takes, or say why it cannot be — ``(path, None)`` or ``(None, reason)``.
+
+    The sampler sibling of the clips phase's audio resolution, and refusing on
+    the same two grounds: a connection with no database file on disk (so a
+    song-relative reference has no anchor), and a file that is not there. A
+    sampler pushed with nothing to play is a phase reporting OK on a track that
+    will be silent, which is what the sync boundary contract exists to prevent.
+    """
+    song_dir = song_dir_for_conn(conn)
+    if song_dir is None:
+        return None, (
+            f"{where}: audio_file={ref!r} names a sample, but this connection "
+            "has no database file on disk, so there is no song directory to "
+            "resolve a song-relative reference against. Open the song's DB "
+            "through init_db(<song dir>/<slug>.db) and re-plan."
+        )
+    resolved = resolve_audio_path(song_dir, ref)
+    if not resolved.is_file():
+        return None, (
+            f"{where}: its sample is not on disk — audio_file={ref!r} resolves "
+            f"to {resolved} against song directory {song_dir}. The device was "
+            "NOT pushed (a sampler with nothing loaded plays silence)."
+        )
+    return resolved, None
+
+
+def _emit_sample_assignment(
+    plan: PushPlan,
+    conn: sqlite3.Connection,
+    *,
+    device: sqlite3.Row,
+    parent_kv: dict[str, object],
+    device_index: int,
+    device_path: list[dict[str, int]] | None,
+    parent_kind: str,
+    parent_name: str,
+    live_device: dict | None,
+) -> bool:
+    """Emit `assign_sample` for a device whose row names one, diffing against
+    what Live already plays. Returns False when the device is BLOCKED and the
+    caller should emit nothing further for it.
+
+    Ordered BEFORE the parameter writes: probe row 18 recorded that
+    ``replace_sample`` assigns the file, not whether it resets the device's
+    parameters, so the assignment goes first — which is correct either way,
+    where the reverse would silently undo a dialed `S Start` if it does.
+
+    Two refusals, both of them the DB describing something Live cannot
+    materialize, and both :meth:`PushPlan.blocked` so the push report says the
+    song did not get what it asked for:
+
+    * the probe says this device has no sample slot (no ``sample_file_path``
+      key at all — see the MCP handler's ``_sample_surface``). Capability comes
+      from the probe rather than a list of sampler class names, so a sampler
+      nobody enumerated still works;
+    * the file is not resolvable or not on disk.
+
+    Without probe data the assignment is emitted unconditionally: it is
+    re-callable, so re-assigning a sample Live already carries costs a call and
+    changes nothing, while skipping one it does not carry leaves the track
+    silent.
+    """
+    keys = device.keys()
+    ref = device["audio_file"] if "audio_file" in keys else None
+    if not ref:
+        return True
+    nested_note = f" (nested depth {len(device_path)})" if device_path else ""
+    where = (
+        f"devices: {device['display_name']!r}{nested_note} on {parent_kind} "
+        f"{parent_name!r}"
+    )
+    if live_device is not None and "sample_file_path" not in live_device:
+        live_class = (
+            live_device.get("class_display_name")
+            or live_device.get("class_name")
+            or "?"
+        )
+        plan.blocked(
+            f"{where}: the DB assigns the sample {ref!r}, but the device at "
+            f"that position in Live is {live_class!r}, which has no sample "
+            "slot. Only a sampler instrument takes one (Simpler, and Live's "
+            "Sampler). Nothing was pushed for this device. Fix: author a "
+            "Simpler at this position, or drop audio_file from the device row."
+        )
+        return False
+    resolved, reason = _resolve_device_sample(conn, str(ref), where=where)
+    if resolved is None:
+        plan.blocked(reason or f"{where}: sample could not be resolved")
+        return False
+    live_path = (live_device or {}).get("sample_file_path")
+    if live_path and same_file_path(resolved, Path(str(live_path))):
+        return True
+    args: dict[str, object] = {
+        "action": "assign_sample",
+        **parent_kv,
+        "device_index": device_index,
+        # ABSOLUTE by contract — the wire refuses a relative path, and Live
+        # resolves nothing against a working directory.
+        "sample_path": str(resolved),
+    }
+    if device_path:
+        args["device_path"] = device_path
+    plan.add(ToolCall(
+        tool="ableton_device",
+        args=args,
+        key=f"device_sample:{device['id']}",
+        purpose=(
+            f"{parent_name} / {device['display_name']}{nested_note} "
+            f"plays {ref}"
+        ),
+    ))
+    return True
+
+
+def build_device_load_args(
+    device: sqlite3.Row,
+    *,
+    parent_kv: dict[str, object],
+    parent_kind: str,
+    parent_name: str,
+) -> tuple[dict[str, object], list[str]]:
+    """Build the ``ableton_device(action='load')`` kwargs for ONE DB device row,
+    plus any diagnostic notes the identity resolution produced.
+
+    The single place the DB's three load selectors — ``preset_query`` (portable),
+    ``preset_uri`` (per-machine), ``browser_path`` (fallback identity, and a
+    STANDALONE selector when its leaf is a ``.adg``/``.adv`` preset file) — are
+    turned into wire args. Two callers need the identical answer and must never
+    drift apart: the push planner's load emission, and
+    :mod:`hallucinote.sync.chain_rebuild`, which reloads the same device after
+    demolishing the chain around it. A rebuild that resolved a device's identity
+    differently from push would reload a DIFFERENT device than the one it
+    deleted, which is the one failure the rebuild exists to prevent.
+
+    Live 12.4 has no public reorder API — a load always lands at the END of the
+    destination chain, so no ``position`` is emitted. Order comes from loading in
+    ascending DB ``position``. The destination is the parent's MAIN chain, a
+    node-itself address (``terminal == parent_kind``); nested devices are never
+    loaded, they arrive with the rack preset (DEEP-RACK-ADDR §3c).
+    """
+    notes: list[str] = []
+    load_args: dict[str, object] = {
+        "action": "load",
+        "node": build_node_addr(parent_kv, terminal=parent_kind),
+        "kind": device["kind"],
+    }
+    # Arc 7-tail / E3 (W13-A v1.0): the captured browser path is a fallback
+    # identity for the cross-machine "same plugin, different catalog id" case.
+    # Threaded alongside whichever of preset_query / preset_uri is emitted — the
+    # load handler uses it when the per-machine FileId in preset_uri doesn't
+    # resolve. Extracted once up front so every branch below can attach it.
+    browser_path_raw = (
+        device["browser_path_json"]
+        if "browser_path_json" in device.keys() else None
+    )
+    browser_path_value: list[str] | None = None
+    if browser_path_raw is not None:
+        try:
+            browser_path_value = json.loads(browser_path_raw)
+        except (json.JSONDecodeError, TypeError) as exc:
+            notes.append(
+                f"device {device['display_name']!r} on {parent_kind} "
+                f"{parent_name!r}: stored browser_path is not valid "
+                f"JSON ({exc}); loading without the fallback identity "
+                "path — cross-machine FileId mismatch will fail"
+            )
+    # Sweep B: preset_query (portable) takes precedence over preset_uri
+    # (per-machine). The MCP load handler refuses if both are set, so
+    # exactly one is chosen here. Composer's expressed preference wins.
+    preset_query_raw = (
+        device["preset_query"] if "preset_query" in device.keys() else None
+    )
+    if preset_query_raw is not None:
+        try:
+            load_args["preset_query"] = json.loads(preset_query_raw)
+        except (json.JSONDecodeError, TypeError) as exc:
+            notes.append(
+                f"device {device['display_name']!r} on {parent_kind} "
+                f"{parent_name!r}: stored preset_query is not valid JSON "
+                f"({exc}); falling back to preset_uri / kind-only load"
+            )
+            if device["preset_uri"] is not None:
+                load_args["preset_uri"] = device["preset_uri"]
+                if browser_path_value is not None:
+                    load_args["browser_path"] = browser_path_value
+            elif browser_path_value is not None and (
+                _browser_path_names_preset_file(browser_path_value)
+            ):
+                # Corrupt preset_query + no preset_uri: still honor a
+                # standalone preset-file browser_path, or the rack loads
+                # EMPTY — the same SYN-RACK-PRESET-RELINK gap the main elif
+                # below closes for the (common) no-preset_query case.
+                load_args["browser_path"] = browser_path_value
+    elif device["preset_uri"] is not None:
+        load_args["preset_uri"] = device["preset_uri"]
+        if browser_path_value is not None:
+            load_args["browser_path"] = browser_path_value
+    elif browser_path_value is not None and _browser_path_names_preset_file(
+        browser_path_value
+    ):
+        # SYN-RACK-PRESET-RELINK: no preset_query / preset_uri, but a captured
+        # browser_path whose leaf is a preset FILE (.adg/.adv). The load handler
+        # honors that as a STANDALONE selector (loads the preset content, not a
+        # bare class). This is the common /song-snapshot case: capture can't
+        # probe preset_uri, so a rack preset's only identity is its
+        # browser_path — without emitting it the device loaded as an empty rack
+        # (0 chains) and every nested param write failed. Only emit it
+        # standalone for a preset FILE; a built-in-device browser_path (no
+        # extension) stays kind-only (the handler refuses a standalone
+        # non-preset-file browser_path).
+        load_args["browser_path"] = browser_path_value
+    return load_args, notes
+
+
+# DEV-5R8Q: the occupied-slot refusal's remedy sentence, shared by the two
+# refusal messages and by `skills/ableton-push/SKILL.md`'s halt entry. Before
+# `chain-rebuild` existed the refusal could only tell the operator to accept
+# Live's order (re-snapshot) or fix it by hand; the rebuild is the third answer
+# and the only one that makes the DB's order true without losing the downstream
+# devices' dialed state.
+def _rebuild_remedy(parent_kind: str, parent_name: str, position: int) -> str:
+    """The occupied-slot refusal's third remedy, addressed at ONE parent.
+
+    Rendered rather than stored as a constant because the command's parent
+    argument differs per parent kind (the master is a singleton flag, a
+    track/return is named), and a refusal that names a command the operator
+    cannot paste is not a remedy.
+    """
+    where = (
+        "--master" if parent_kind == "master"
+        else f"--{parent_kind} {parent_name!r}"
+    )
+    return (
+        f"run `hallucinote chain-rebuild --song <slug> {where} "
+        f"--from-position {position}` — it captures the chain, rebuilds it in "
+        f"the DB's order and restores every downstream device's parameters "
+        f"(the same orchestration `push execute --reconcile-chains` runs for "
+        f"you)"
+    )
+
+
+@dataclass(frozen=True)
+class OccupiedSlot:
+    """One parent whose DB-authored chain collides with Live's at a position.
+
+    ``from_position`` is the SHALLOWEST colliding position on that parent — the
+    point a chain rebuild has to start from, because everything at or below it
+    must come out before the DB's order can be re-established.
+    """
+    parent_kind: str          # 'track' | 'return' | 'master'
+    parent_index: int         # Live index; 0 for the master singleton
+    parent_name: str
+    from_position: int
+    occupant_class: str
+
+
+def occupied_slots(
+    conn: sqlite3.Connection,
+    *,
+    song_id: str,
+    session_id: str,
+    live_devices_by_parent: dict[tuple[str, int], list[dict]],
+) -> list[OccupiedSlot]:
+    """Every parent where :func:`plan_push_devices` would hit the
+    ``_LOAD_TARGET_PRESENT`` refusal, with the position the rebuild must start at.
+
+    This is the occupied-slot branch's condition, lifted out so the reconcile
+    caller (``push execute --reconcile-chains``) fires on EXACTLY what the
+    planner refuses on — one rule, two readers. Answering it here rather than
+    inside the planner is forced by the plan/dispatch split: a rebuild is a
+    read-then-write sequence (probe params, journal, delete, load, restore) and
+    a ``PushPlan`` is a flat call list built before anything is dispatched, so
+    the rebuild has to run BEFORE the devices phase plans, not inside it. Once
+    it has, the planner sees a linked, in-order chain and emits no load at all.
+
+    ``_LOAD_TARGET_UNKNOWN`` is deliberately NOT included: a chain that could
+    not be read is one a rebuild must not touch, since the capture it would
+    journal is the same read that just failed.
+    """
+    targets: dict[tuple[str, int], OccupiedSlot] = {}
+    tracks, returns, master = linked_device_parents(
+        conn, song_id=song_id, session_id=session_id,
+    )
+    for parents, parent_kind, get_devices_fn in (
+        (tracks, "track", Q.get_devices_for_track),
+        (returns, "return", Q.get_devices_for_return),
+        (master, "master", Q.get_devices_for_track),
+    ):
+        for parent in parents:
+            ableton_index = parent["ableton_index"]
+            for db_dev in get_devices_fn(conn, parent["db_id"]):
+                if db_dev["kind"] == "placeholder" or is_analyzer_device(db_dev):
+                    continue
+                if Q.get_ableton_link(
+                    conn, session_id=session_id,
+                    db_kind="device", db_id=db_dev["id"],
+                ) is not None:
+                    continue
+                verdict, occupant = classify_load_target(
+                    live_devices_by_parent,
+                    parent_kind=parent_kind,
+                    parent_index=ableton_index,
+                    position=db_dev["position"],
+                )
+                if verdict != _LOAD_TARGET_PRESENT:
+                    continue
+                key = (parent_kind, ableton_index)
+                found = OccupiedSlot(
+                    parent_kind=parent_kind,
+                    parent_index=ableton_index,
+                    parent_name=parent["name"],
+                    from_position=db_dev["position"],
+                    occupant_class=(
+                        (occupant or {}).get("class_display_name")
+                        or (occupant or {}).get("class_name")
+                        or "?"
+                    ),
+                )
+                prior = targets.get(key)
+                if prior is None or found.from_position < prior.from_position:
+                    targets[key] = found
+    return sorted(
+        targets.values(), key=lambda t: (t.parent_kind, t.parent_index),
+    )
+
+
 def plan_push_devices(
     conn: sqlite3.Connection,
     *,
@@ -102,7 +472,11 @@ def plan_push_devices(
          diagnostic note — parameter writes for that device wait for the
          executor's same-pass convergence re-plan (SYN-9F2L), which re-runs
          this planner once the link has landed.
-      3. For each linked device, emit
+      3. For each linked device whose row carries `audio_file`, emit
+         `ableton_device(action='assign_sample', ...)` BEFORE that device's
+         parameter writes — a sampler is handed its file first, then dialed.
+         See `_emit_sample_assignment` for the diff and the two refusals.
+      4. For each linked device, emit
          `ableton_device(action='set_parameter', ...)` per dialed param,
          choosing the wire form by what the DB stored (SYN-9F2L):
            * captured enum items → `value_type='enum'` with the display string
@@ -118,7 +492,7 @@ def plan_push_devices(
          A refused display write is retried once by the executor (as enum, or
          with the DB's normalized value) — see push_execute's set_parameter
          fallback.
-      4. DEEP-RACK-ADDR: for each linked top-level RACK device, recurse its
+      5. DEEP-RACK-ADDR: for each linked top-level RACK device, recurse its
          nested chains and emit `set_parameter` with the canonical `device_path`
          for every nested device's dialed params (to arbitrary depth). Nested
          devices are NOT loaded — they arrive with the rack preset — so push
@@ -314,10 +688,14 @@ def _emit_device_calls(
                 f"the DB has no link to it, so this device could not be matched "
                 f"to what is there. Live has no reorder API: a load would "
                 f"APPEND a second copy and silently double the chain. Nothing "
-                f"was pushed for this track. Fix: run `push_cli probe-and-link "
-                f"<session> --song <slug> --probe` to bind the chain that is "
-                f"already there, or re-snapshot the set (/song-snapshot) so the "
-                f"DB describes it, then re-run execute."
+                f"was pushed for this track. Three fixes, in the order to try "
+                f"them: run `push_cli probe-and-link <session> --song <slug> "
+                f"--probe` to bind the chain that is already there; or "
+                f"re-snapshot the set (/song-snapshot) so the DB describes what "
+                f"Live has; or, when the DB's ORDER is the one you want and "
+                f"Live's is wrong, "
+                + _rebuild_remedy(parent_kind, parent_name, device["position"])
+                + ". Then re-run execute."
             )
             return
         if verdict == _LOAD_TARGET_UNKNOWN:
@@ -331,89 +709,12 @@ def _emit_device_calls(
                 f"Fix: re-run `execute --probe` once Live answers (idempotent)."
             )
             return
-        # Wave M-4: unified ableton_device(action='load') replaces the
-        # legacy fork's load_device / load_device_on_return narrow tools.
-        # The handler accepts a Live device class name as `kind` and an
-        # optional Live browser URI as `preset_uri`. Live 12.4 has no
-        # public reorder API — devices always land at the END of the
-        # destination chain, so the planner does not emit `position`.
-        # If the DB chain order needs to be enforced, push devices in the
-        # order they appear in the chain (position-asc) and Live's
-        # tail-append will match.
-        # Top-level load: the destination is the parent's main device chain, a
-        # node-itself address (terminal == parent_kind). Push never loads NESTED
-        # devices — they arrive with the rack preset (DEEP-RACK-ADDR §3c).
-        load_args = {
-            "action": "load",
-            "node": build_node_addr(parent_kv, terminal=parent_kind),
-            "kind": device["kind"],
-        }
-        # Arc 7-tail / E3 (W13-A v1.0): the captured browser path is a
-        # fallback identity for the cross-machine "same plugin, different
-        # catalog id" case. Threaded alongside whichever of preset_query
-        # / preset_uri the planner emits — the load handler uses it when
-        # the per-machine FileId in preset_uri doesn't resolve. Extracted
-        # once at the top so every branch below can attach it.
-        browser_path_raw = (
-            device["browser_path_json"]
-            if "browser_path_json" in device.keys() else None
+        load_args, load_notes = build_device_load_args(
+            device, parent_kv=parent_kv, parent_kind=parent_kind,
+            parent_name=parent_name,
         )
-        browser_path_value: list[str] | None = None
-        if browser_path_raw is not None:
-            try:
-                browser_path_value = json.loads(browser_path_raw)
-            except (json.JSONDecodeError, TypeError) as exc:
-                plan.warn(
-                    f"device {device['display_name']!r} on {parent_kind} "
-                    f"{parent_name!r}: stored browser_path is not valid "
-                    f"JSON ({exc}); loading without the fallback identity "
-                    "path — cross-machine FileId mismatch will fail"
-                )
-        # Sweep B: preset_query (portable) takes precedence over preset_uri
-        # (per-machine). The MCP load handler refuses if both are set, so
-        # the planner must pick one. Composer's expressed preference wins.
-        preset_query_raw = (
-            device["preset_query"] if "preset_query" in device.keys() else None
-        )
-        if preset_query_raw is not None:
-            try:
-                load_args["preset_query"] = json.loads(preset_query_raw)
-            except (json.JSONDecodeError, TypeError) as exc:
-                plan.warn(
-                    f"device {device['display_name']!r} on {parent_kind} "
-                    f"{parent_name!r}: stored preset_query is not valid JSON "
-                    f"({exc}); falling back to preset_uri / kind-only load"
-                )
-                if device["preset_uri"] is not None:
-                    load_args["preset_uri"] = device["preset_uri"]
-                    if browser_path_value is not None:
-                        load_args["browser_path"] = browser_path_value
-                elif browser_path_value is not None and (
-                    _browser_path_names_preset_file(browser_path_value)
-                ):
-                    # Corrupt preset_query + no preset_uri: still honor a
-                    # standalone preset-file browser_path, or the rack loads
-                    # EMPTY — the same SYN-RACK-PRESET-RELINK gap the main elif
-                    # below closes for the (common) no-preset_query case.
-                    load_args["browser_path"] = browser_path_value
-        elif device["preset_uri"] is not None:
-            load_args["preset_uri"] = device["preset_uri"]
-            if browser_path_value is not None:
-                load_args["browser_path"] = browser_path_value
-        elif browser_path_value is not None and _browser_path_names_preset_file(
-            browser_path_value
-        ):
-            # SYN-RACK-PRESET-RELINK: no preset_query / preset_uri, but a
-            # captured browser_path whose leaf is a preset FILE (.adg/.adv). The
-            # load handler now honors that as a STANDALONE selector (loads the
-            # preset content, not a bare class). This is the common
-            # /song-snapshot case: capture can't probe preset_uri, so a rack
-            # preset's only identity is its browser_path — without emitting it
-            # the device loaded as an empty rack (0 chains) and every nested
-            # param write failed. Only emit it standalone for a preset FILE; a
-            # built-in-device browser_path (no extension) stays kind-only (the
-            # handler refuses a standalone non-preset-file browser_path).
-            load_args["browser_path"] = browser_path_value
+        for note in load_notes:
+            plan.warn(note)
         plan.add(ToolCall(
             tool="ableton_device",
             args=load_args,
@@ -430,6 +731,25 @@ def _emit_device_calls(
         )
         return
 
+    # SMP-6V2K: the sample comes before the params — see `_emit_sample_assignment`
+    # for why the order is load-bearing. A blocked assignment stops this device
+    # entirely: dialing `S Start` on a sampler holding nothing is dialing air.
+    if not _emit_sample_assignment(
+        plan, conn,
+        device=device,
+        parent_kv=parent_kv,
+        device_index=device_at,
+        device_path=None,
+        parent_kind=parent_kind,
+        parent_name=parent_name,
+        live_device=live_device_at(
+            live_devices_by_parent,
+            parent_kind=parent_kind,
+            parent_index=0 if parent_kind == "master" else parent_at,
+            position=device["position"],
+        ),
+    ):
+        return
     _emit_param_writes(
         plan, conn,
         device=device,
@@ -679,6 +999,21 @@ def _emit_nested_param_writes(
             if nested["kind"] == "placeholder" or is_analyzer_device(nested):
                 continue
             device_path = Q.get_device_nesting_path(conn, nested["id"])
+            # A sampler inside a rack gets its file the same way a top-level one
+            # does, addressed by its device_path. `live_device=None` because the
+            # chain probe reads only top-level devices: nothing about a nested
+            # device is known, so the assignment is emitted rather than diffed.
+            if not _emit_sample_assignment(
+                plan, conn,
+                device=nested,
+                parent_kv=parent_kv,
+                device_index=top_device_index,
+                device_path=device_path,
+                parent_kind=parent_kind,
+                parent_name=parent_name,
+                live_device=None,
+            ):
+                continue
             _emit_param_writes(
                 plan, conn,
                 device=nested,
@@ -764,6 +1099,28 @@ def _emit_chain_property_calls(
     ))
 
 
+def sidechain_armed_in_db(
+    conn: sqlite3.Connection, device_id: str,
+) -> bool:
+    """True when the DB's stored parameters show this device's sidechain ENABLED.
+
+    Only DIALED parameters are stored (defaults are implied by absence), so an
+    absent enable param means off. A stored one is read off whichever numeric
+    channel carries it — ``value_normalized`` / ``value_raw`` — falling back to
+    the display string for an enum-shaped row with no numeric form.
+    """
+    for row in Q.get_device_parameters(conn, device_id):
+        if not is_sidechain_enable_param(row["name"]):
+            continue
+        keys = row.keys()
+        for field in ("value_normalized", "value_raw"):
+            if field in keys and row[field] is not None:
+                return float(row[field]) > 0.5
+        display = str(row["value_display"] or "").strip().lower()
+        return display in {"on", "1", "true", "enabled", "yes"}
+    return False
+
+
 def plan_push_device_sidechain(
     conn: sqlite3.Connection,
     *,
@@ -784,6 +1141,13 @@ def plan_push_device_sidechain(
     to record back. A device whose source FK doesn't resolve to a song track is
     ALERTed (operator-actionable); an unlinked device is deferred to the
     devices-convergence re-plan.
+
+    #536: the phase also emits a READ — ``get_input_routing``, keyed
+    ``device_sidechain_probe:<device id>`` — for each device whose sidechain is
+    ARMED but carries no source. ``has_input_routing`` is a Live fact the DB
+    cannot hold, and it is the only thing that separates "the source is simply
+    unset" from "the source can never be captured, so this push just erased it";
+    ``apply_push_results`` turns a ``False`` into the operator warning.
     """
     plan = PushPlan()
     by_id = {t["id"]: t for t in Q.get_tracks_for_song(conn, song_id)}
@@ -796,7 +1160,43 @@ def plan_push_device_sidechain(
             if "sidechain_source_track_id" in keys else None
         )
         if src_id is None:
-            return  # no sidechain source authored on this device
+            # No source authored. Usually nothing to do — but #536: a device
+            # whose sidechain is ARMED and which exposes no input-routing
+            # surface can never HAVE a captured source, so this rebuild
+            # materializes it armed and pointed at nothing, silently undoing
+            # whatever the operator set by hand in Live. Whether the surface
+            # exists is a LIVE fact (`has_input_routing`), not a DB one, so ask
+            # Live for it and let the apply step say so. Asking only for armed
+            # devices is what keeps the Compressor path (#374, the common case)
+            # silent: a warning that fired there would train the operator to
+            # ignore all of them.
+            if not sidechain_armed_in_db(conn, device["id"]):
+                return
+            device_at = Q.get_ableton_link(
+                conn, session_id=session_id, db_kind="device", db_id=device["id"]
+            )
+            if device_at is None:
+                plan.warn(
+                    f"device {device['display_name']!r} on {parent_kind} "
+                    f"{parent_name!r} not linked yet; sidechain-surface check "
+                    "deferred to the devices-convergence re-plan"
+                )
+                return
+            plan.add(ToolCall(
+                tool="ableton_device",
+                args={
+                    **parent_kv,
+                    "action": "get_input_routing",
+                    "device_index": device_at,
+                },
+                key=f"device_sidechain_probe:{device['id']}",
+                purpose=(
+                    f"check whether {device['display_name']!r} on {parent_kind} "
+                    f"{parent_name!r} exposes a sidechain SOURCE surface — its "
+                    "sidechain is armed but the DB carries no source"
+                ),
+            ))
+            return
         src = by_id.get(src_id)
         if src is None:
             plan.alert(

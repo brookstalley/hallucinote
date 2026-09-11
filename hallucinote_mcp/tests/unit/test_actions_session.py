@@ -209,6 +209,8 @@ _EXPECTED_ACTIONS = {
     "stop",
     "seek",
     "back_to_arrangement",
+    "bout_status",
+    "abandon_bout",
     "snapshot",
     "revert",
     "list_snapshots",
@@ -565,7 +567,13 @@ def test_seek_acquires_live_state_lock(loaded_session_actions):
         context=ctx,
     )
     assert resp.ok is True
-    assert recording.events == ["acquire", "release"]
+    # The handler takes the lock, and gives back every acquire it made. There
+    # is more than one because the shared locate primitive takes it too (the
+    # RLock is re-entrant on purpose); what must never drift is the balance —
+    # an unbalanced seek would strand the lock against every cue caller.
+    assert recording.events[0] == "acquire"
+    assert recording.events[-1] == "release"
+    assert recording.events.count("acquire") == recording.events.count("release")
 
 
 # ---------- back_to_arrangement ----------
@@ -964,3 +972,96 @@ def test_introspect_empty_target_raises_teaching_error(loaded_session_actions):
     )
     assert resp.ok is False
     assert "non-empty" in (resp.error or "")
+
+
+# ---------------------------------------------------------------------------
+# #471 — seek moves the START PLAYING POSITION, not only the playhead
+# ---------------------------------------------------------------------------
+
+
+class _StartPositionSong(FakeSong):
+    """A Song shaped like Live's: the playhead and the start playing position
+    are separate, and only ``CuePoint.jump()`` moves the second."""
+
+    def __init__(self, *, start_position: float = 351.3, has_cue_api: bool = True):
+        super().__init__()
+        self.start_position = float(start_position)
+        self.cue_points: list[Any] = []
+        self.last_event_time = 4096.0
+        if not has_cue_api:
+            self.set_or_delete_cue = None
+
+    def set_or_delete_cue(self) -> None:
+        at = self.current_song_time
+        for i, cue in enumerate(self.cue_points):
+            if abs(cue.time - at) < 1e-6:
+                del self.cue_points[i]
+                return
+        self.cue_points.append(_SessionCue(self, at))
+
+    def start_playing(self) -> None:
+        self.current_song_time = self.start_position
+        super().start_playing()
+
+
+class _SessionCue:
+    def __init__(self, song: _StartPositionSong, time_: float):
+        self._song = song
+        self.time = float(time_)
+        self.name = ""
+
+    def jump(self) -> None:
+        self._song.start_position = self.time
+        self._song.current_song_time = self.time
+
+
+def test_seek_then_play_actually_begins_where_it_was_told(loaded_session_actions):
+    """The read-back workflow that diagnosed #471 depends on this. A seek that
+    moved only the playhead read back perfectly and then played from wherever
+    play was last pressed, so every parameter sampled after it described the
+    wrong beat."""
+    ctx = FakeLiveContext(song=_StartPositionSong(start_position=351.3))
+
+    resp = dispatch(
+        Request(tool="ableton_session", action="seek", params={"bar": 3}),
+        context=ctx,
+    )
+
+    assert resp.ok is True
+    assert resp.result["start_position_moved"] is True
+    ctx.song.start_playing()
+    assert ctx.song.current_song_time == pytest.approx(8.0)
+
+
+def test_seek_reports_a_degraded_locate_rather_than_claiming_one(
+    loaded_session_actions,
+):
+    """A Live with no cue-toggle surface cannot have its start position moved.
+    The playhead still lands, and the caller is told which of the two it got —
+    a silent downgrade is what made this class of bug invisible."""
+    ctx = FakeLiveContext(
+        song=_StartPositionSong(start_position=351.3, has_cue_api=False)
+    )
+
+    resp = dispatch(
+        Request(tool="ableton_session", action="seek", params={"bar": 3}),
+        context=ctx,
+    )
+
+    assert resp.ok is True
+    assert resp.result["start_position_moved"] is False
+    assert resp.result["locate_method"] == "playhead_only"
+    assert "set_or_delete_cue" in resp.result["locate_detail"]
+    assert ctx.song.current_song_time == pytest.approx(8.0)
+
+
+def test_the_play_note_no_longer_promises_seek_then_play_locates(
+    loaded_session_actions,
+):
+    """The note used to tell operators that seek-then-play locates-and-plays,
+    and cited the render capture as relying on it. Both halves were false, and
+    the note is read at exactly the moment someone is debugging this."""
+    from hallucinote_mcp.handlers.session import _PLAY_SEMANTICS_NOTE
+
+    assert "START PLAYING POSITION" in _PLAY_SEMANTICS_NOTE
+    assert "locates-and-plays" not in _PLAY_SEMANTICS_NOTE

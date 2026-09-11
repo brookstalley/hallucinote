@@ -84,8 +84,12 @@ register(
             "Returns old + read-back values. A refusal from Live (read-only "
             "property, invalid value) is a structured error — settability is "
             "itself a probe finding. value may be {\"$path\": ...} for "
-            "LOM-object properties. CAN MUTATE the Live set — probe in "
-            "scratch sets."
+            "LOM-object properties. value is polymorphic (int/float/bool/"
+            "str/list/dict); a string that parses as a JSON literal is "
+            "converted to it, so numeric properties get a number even from a "
+            "client that sends everything as text — unless the property "
+            "already holds a string, where the text is kept verbatim. "
+            "CAN MUTATE the Live set — probe in scratch sets."
         ),
         params=(
             ParamSpec(name="path", type="str"),

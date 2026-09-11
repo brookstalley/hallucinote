@@ -16,6 +16,7 @@ from ._core import (
     _touches,
     _uuid,
 )
+from .arrangement import DEFAULT_BAR_RULER, _validate_bar_ruler
 
 
 # ---------------------------------------------------------------------------
@@ -34,6 +35,7 @@ def create_section(
     color: int | None = None,
     notes_md: str | None = None,
     energy: float | None = None,
+    bar_ruler: str = DEFAULT_BAR_RULER,
     actor: str = "system",
     request_id: str | None = None,
     reason: str | None = None,
@@ -44,13 +46,23 @@ def create_section(
     ``energy`` is the authored per-section intensity intent (0..1 ordinal,
     ARR-7M3D) — NULL when undeclared. It is excluded from the energy-realization
     correlation when NULL, never coerced to a value.
+
+    ``bar_ruler`` records which ruler produced ``start_bar`` / ``end_bar``:
+    ``'uniform'`` when they were accumulated against a single ``beats_per_bar``,
+    ``'map'`` when they were authored against the song's ``time_signature_map``.
+    The default is ``'map'`` so a new writer is correct without knowing the rule
+    exists — only uniform accumulation needs to declare itself, and only one
+    module in the tree does it. Re-stamped on the update branch too, so
+    rewriting a ``build.py`` corrects a stale ``'uniform'`` rather than leaving
+    the row asserting a ruler it no longer used.
     """
     _require_bar_floor("start_bar", start_bar)
     if end_bar <= start_bar:
         raise ValueError(f"end_bar ({end_bar}) must exceed start_bar ({start_bar})")
+    _validate_bar_ruler(bar_ruler)
     actor, request_id = _resolve_actor_and_request(actor, request_id)
     existing = conn.execute(
-        """SELECT id, end_bar, color, notes_md, energy FROM sections
+        """SELECT id, end_bar, color, notes_md, energy, bar_ruler FROM sections
            WHERE song_id = ? AND name = ? AND start_bar = ?""",
         (song_id, name, start_bar),
     ).fetchone()
@@ -58,22 +70,23 @@ def create_section(
         sid = existing["id"]
         if (
             existing["end_bar"], existing["color"], existing["notes_md"],
-            existing["energy"],
+            existing["energy"], existing["bar_ruler"],
         ) == (
-            end_bar, color, notes_md, energy,
+            end_bar, color, notes_md, energy, bar_ruler,
         ):
             _record_touch_if_session("section", sid)
             return MutatorResult(sid, "unchanged")
         conn.execute(
             """UPDATE sections SET end_bar = ?, color = ?, notes_md = ?,
-                   energy = ?
+                   energy = ?, bar_ruler = ?
                WHERE id = ?""",
-            (end_bar, color, notes_md, energy, sid),
+            (end_bar, color, notes_md, energy, bar_ruler, sid),
         )
         _emit(
             conn, E.SECTION_UPDATED,
             {"section_id": sid, "changes": {"end_bar": end_bar,
-             "color": color, "notes_md": notes_md, "energy": energy}},
+             "color": color, "notes_md": notes_md, "energy": energy,
+             "bar_ruler": bar_ruler}},
             song_id=song_id, actor=actor, request_id=request_id, reason=reason,
         )
         _touch_song(conn, song_id)
@@ -82,9 +95,11 @@ def create_section(
     sid = _uuid()
     conn.execute(
         """INSERT INTO sections
-               (id, song_id, name, start_bar, end_bar, color, notes_md, energy)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-        (sid, song_id, name, start_bar, end_bar, color, notes_md, energy),
+               (id, song_id, name, start_bar, end_bar, color, notes_md, energy,
+                bar_ruler)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (sid, song_id, name, start_bar, end_bar, color, notes_md, energy,
+         bar_ruler),
     )
     _emit(
         conn,
@@ -97,6 +112,7 @@ def create_section(
             "color": color,
             "notes_md": notes_md,
             "energy": energy,
+            "bar_ruler": bar_ruler,
         },
         song_id=song_id,
         actor=actor,
@@ -351,46 +367,22 @@ def add_time_signature_point(
     request_id: str | None = None,
     reason: str | None = None,
 ) -> str:
-    """Add a meter change at `start_bar` (numerator/denominator)."""
+    """Add a meter change at `start_bar` (numerator/denominator).
+
+    Within-song meter changes ARE recordable. The song's meter is a property
+    of the authored work; Live's ability to render it is a materialization
+    detail, so the limit belongs to the projection, not to the source of
+    truth. Live 12.4 exposes only a single global signature (no
+    `song_signature` automation target_kind), so `plan_push_time_signature_map`
+    pushes the bar-1 row and warns loudly about the rest — that warn is the
+    one place the reach limit is stated.
+    """
     if numerator <= 0 or denominator <= 0:
         raise ValueError(
             f"numerator/denominator must be positive, got {numerator}/{denominator}"
         )
     _require_bar_floor("start_bar", start_bar)
     actor, request_id = _resolve_actor_and_request(actor, request_id)
-    # W10-H: refuse to author meter changes after bar 1. Live 12.4's MCP
-    # has no `song_signature` automation target_kind, so within-song meter
-    # ratchets can't reach Live. Per user 2026-05-19, ship loud refusal at
-    # both DB-mutator and planner layers (dual-layer pattern matching D2);
-    # punt the working impl to v1.1 (per-bar-arrangement-clip workaround).
-    # Idempotent re-adds at start_bar > 1.0 only fail if no row exists yet —
-    # if a row at this position already exists with matching values, the
-    # upsert path below returns "unchanged" silently (no new state).
-    # Guard fires only for start_bar > 1.0 — the policy is "no within-song
-    # ratchet"; bar-1 is the global meter (always allowed) and start_bar < 1.0
-    # is already rejected above by _require_bar_floor with a teaching error
-    # (the schema CHECK is the redundant backstop). The W12-A idempotency
-    # contract is preserved: if a row at
-    # this position already exists with matching values, we still fall
-    # through to the upsert path which returns "unchanged".
-    if start_bar > 1.0:
-        existing_at_pos = conn.execute(
-            """SELECT id, numerator, denominator FROM time_signature_map
-               WHERE song_id = ? AND start_bar = ?""",
-            (song_id, start_bar),
-        ).fetchone()
-        if existing_at_pos is None or (
-            existing_at_pos["numerator"], existing_at_pos["denominator"]
-        ) != (numerator, denominator):
-            raise ValueError(
-                f"add_time_signature_point: refusing to author meter at "
-                f"start_bar={start_bar} — Live 12.4's MCP has no "
-                f"`song_signature` automation target_kind, so within-song "
-                f"meter ratchets can't reach Live. Use a single global "
-                f"meter (one row at start_bar=1.0) for v1; the per-bar-"
-                f"arrangement-clip workaround is v1.1 scope (W10-H/v1.1). "
-                f"See ableton://guides/gaps for the LOM constraint."
-            )
     existing = conn.execute(
         """SELECT id, numerator, denominator FROM time_signature_map
            WHERE song_id = ? AND start_bar = ?""",
@@ -469,24 +461,11 @@ def update_time_signature_point(
             f"denominator must be positive, got {changes['denominator']}"
         )
     row = conn.execute(
-        """SELECT song_id, start_bar FROM time_signature_map WHERE id = ?""",
+        """SELECT song_id FROM time_signature_map WHERE id = ?""",
         (point_id,),
     ).fetchone()
     if row is None:
         return
-    # W10-H: updates to post-bar-1 rows are refused for the same reason
-    # adds are (no MCP path for per-bar meter automation). Updates at
-    # bar 1 are fine — that's the global meter. Pre-bar-1 rows shouldn't
-    # exist (schema CHECK rejects start_bar < 1.0), but if one does,
-    # refuse out of paranoia.
-    if row["start_bar"] != 1.0:
-        raise ValueError(
-            f"update_time_signature_point: refusing to update meter at "
-            f"start_bar={row['start_bar']} — Live 12.4's MCP has no "
-            f"`song_signature` automation target_kind, so within-song "
-            f"meter ratchets can't reach Live. Use a single global meter "
-            f"(one row at start_bar=1.0) for v1. See ableton://guides/gaps."
-        )
     sets = [f"{k} = ?" for k in changes]
     vals = list(changes.values()) + [point_id]
     conn.execute(

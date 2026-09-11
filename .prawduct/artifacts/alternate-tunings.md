@@ -3,7 +3,7 @@ artifact: requirements
 feature: alternate-tunings (MICROTUNE)
 status: ready
 discovery_date: 2026-06-16
-build_plan: .prawduct/artifacts/plans/MICROTUNE/build-plan.md
+build_plan: .prawduct/artifacts/plans/MICROTUNE/archive/build-plan.md
 ---
 
 # Requirements — Composing in alternate tuning systems (MICROTUNE)
@@ -60,7 +60,7 @@ Sources: [Song.tuning_system](https://docs.cycling74.com/apiref/lom/song/) ·
 ## 4. The user-confirmed product decisions
 
 1. **Integer-MIDI notes** — no fractional/cents note storage (that would be a different
-   feature, "Route B" per-note pitch bend).
+   feature, "Route B" per-note pitch bend — which §8 records as unreachable on this API).
 2. **Acquisition is pull-from-Live, LOM-only** — no external-file ingest, no supply-a-path
    fallback. The composer loads the tuning in Live; Hallucinote reads it and caches a
    reconstructed `.ascl`.
@@ -121,8 +121,14 @@ source the mapper, writer, and verify all read. No `.ascl` parser ships (pull-fr
   Max for Live or per-voice pitch bend… the DB representation makes it possible").
 - **Backlog M4L item** names Max for Live as the long-term escape hatch for LOM gaps — a
   *different* path; MICROTUNE is LOM-native and does not depend on it.
-- **Route B (per-note pitch bend)** via `note_expression` already works for small expressive
-  detuning — complementary, not superseded.
+- **Route B (per-note pitch bend) via `note_expression` does NOT exist and never did.**
+  Recorded here as prior art when it was believed to work; settled 2026-09-10 (#515,
+  `research-envelope-lom-gaps.md`): `Clip.envelope_for_note` never shipped, and Live's Python
+  API exposes no per-note expression surface under **any** name, so a polyphonic per-note
+  detune has no route at all. That is permanent rather than pending a Live update. A
+  *monophonic* line's detune can ride a `device_parameter` envelope on the instrument's pitch
+  parameter; polyphonic microtonality over this API needs Max for Live, which is the
+  different path named two bullets up.
 
 ## 9. Open questions / what raises confidence to High
 

@@ -348,3 +348,55 @@ def test_verify_arrangement_cli_exit_codes(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(vcli, "verify_song_arrangement", lambda conn, **k: bad)
     assert vcli.main(["--db", str(db), sess]) == 1
     assert "diverged" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# Audio placements: presence is checked, only the NOTE compare is skipped
+# ---------------------------------------------------------------------------
+
+
+def _setup_one_audio_placement(conn, song, session, *, start_bar=1.0):
+    M.add_time_signature_point(conn, song_id=song, start_bar=1.0, numerator=4, denominator=4)
+    tid = M.create_track(conn, song_id=song, track_index=1, name="Stems", kind="audio")
+    M.link_db_to_ableton(conn, session_id=session, db_kind="track", db_id=tid, ableton_index=1)
+    cid = M.create_audio_clip(
+        conn, track_id=tid, slot=1, length_beats=16.0,
+        audio_file="assets/line.wav", name="line",
+    )
+    M.add_arrangement_clip(conn, song_id=song, track_id=tid, clip_id=cid,
+                           start_bar=start_bar, end_bar=start_bar + 4.0)
+    return tid, cid
+
+
+def test_dropped_audio_placement_is_missing_clip_not_clean(conn, song, session):
+    """A DROPPED audio placement must halt the push-time assert.
+
+    `skipped_audio` is a _CLEAN status, and the audio branch used to `continue`
+    with it BEFORE the presence check — so `missing_clip` was unreachable for
+    audio and a placement the per-lane clear removed and the rebuild failed to
+    restore left `faithful` True. Audio placements now materialize through that
+    same clear-then-rebuild projection, so this is a live failure mode, not a
+    hypothetical: it is exactly how a track loses its timeline while the phase
+    reports success.
+    """
+    _setup_one_audio_placement(conn, song, session)
+    report = verify_song_arrangement(          # Live reports NO clips on the lane
+        conn, song_id=song, session_id=session, send_fn=make_send_fn({1: []}),
+    )
+    assert [r.status for r in report.results] == ["missing_clip"]
+    assert not report.faithful
+    assert report.has_corruption()
+
+
+def test_present_audio_placement_is_clean_without_a_note_compare(conn, song, session):
+    """The other half: an audio clip that IS there stays clean. Skipping the
+    note comparison is correct — an audio clip has no notes — and must not be
+    confused with skipping the presence check."""
+    _setup_one_audio_placement(conn, song, session)
+    live = {1: [{"arrangement_clip_index": 1, "start_beats": 0.0, "notes": []}]}
+    report = verify_song_arrangement(
+        conn, song_id=song, session_id=session, send_fn=make_send_fn(live),
+    )
+    assert [r.status for r in report.results] == ["skipped_audio"]
+    assert report.faithful
+    assert not report.has_corruption()

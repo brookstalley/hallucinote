@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import json
 import socket
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -93,14 +94,14 @@ def read_cache(path: Path | None = None) -> dict | None:
     except (json.JSONDecodeError, OSError) as exc:
         raise ValueError(
             f"inventory cache at {p} is unreadable ({exc}); refresh it with "
-            "`python -m hallucinote.inventory refresh`"
+            '`"<python>" -m hallucinote.cli inventory refresh`'
         ) from exc
     if not isinstance(data, dict) or data.get("schema_version") != SCHEMA_VERSION:
         raise ValueError(
             f"inventory cache at {p} has schema_version "
             f"{data.get('schema_version') if isinstance(data, dict) else '?'} "
             f"(expected {SCHEMA_VERSION}); refresh it with "
-            "`python -m hallucinote.inventory refresh`"
+            '`"<python>" -m hallucinote.cli inventory refresh`'
         )
     return data
 
@@ -168,8 +169,18 @@ def _resolve_send_fn() -> Callable:
     """Lazy resolver for the MCP client send fn (mirrors push_cli/push_execute
     so importing this module never requires ``hallucinote_mcp`` to be
     installed — only :func:`refresh` does)."""
-    from hallucinote_mcp import client as _client  # type: ignore[import-not-found]
-    return _client.send
+    # Escalation-aware: a call that outruns Live's main-thread ceiling comes
+    # back ok=True carrying a job handle, and reading that as the call's result
+    # books work that has not landed. Resolving through the shared helper is
+    # what makes that true here without this module knowing the contract.
+    from hallucinote.sync.live_escalation import (
+        resolve_client_send,
+        stderr_progress,
+    )
+
+    return resolve_client_send(
+        progress_fn=stderr_progress,
+    )
 
 
 def _inventory_call(
@@ -329,7 +340,7 @@ def refresh(
 
 def _main(argv: list[str]) -> int:
     if not argv or argv[0] != "refresh":
-        print("usage: python -m hallucinote.inventory refresh")
+        print('usage: "<python>" -m hallucinote.cli inventory refresh')
         return 2
     cache = refresh()
     p = cache_path()
@@ -350,5 +361,4 @@ def _main(argv: list[str]) -> int:
 
 
 if __name__ == "__main__":
-    import sys
     raise SystemExit(_main(sys.argv[1:]))

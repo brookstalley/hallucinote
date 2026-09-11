@@ -55,7 +55,8 @@ When changing this surface:
     arc-results — `apply_push_results`' `perform_batch` branch iterates
     `result["arcs"]` and correlates each to its envelope by the opaque
     `arc_id` the handler echoes back (NOT by the call key), recording each
-    arc's performed-state independently on its own `automation_state`.
+    arc's performed-state independently on its own `outcome` (with
+    `automation_state` + `updates_written` as the floor for an older server).
   - `PushPlan` carries four channels: `calls` (dispatched), `notes`
     (diagnostic — "nothing to push", "not linked yet"; NOT surfaced to the
     operator), `alerts` (SYN-9F2L — operator-actionable, non-fatal warnings),
@@ -73,6 +74,9 @@ When changing this surface:
 When changing this surface:
 - Any signature change breaks the agent integration. Document in the build
   plan + chunk handoff.
+- A planner may render into the song's derived-audio cache (`assets/derived/`, content-
+  addressed, idempotent, never Live) so a planned create names an existing file — the
+  one bounded exception to planner purity, recorded in `sync-boundary-contract.md`.
 - New result kinds need both a planner emitter and an `apply_push_results`
   branch.
 - MCP result fields a planner relies on (e.g. `cue_create_batch`'s
@@ -116,6 +120,21 @@ When changing this surface:
   - `pull_cli.py` is the JSON-over-stdio bridge the skill calls: `plan`
     emits the PullPlan, `apply` consumes plan + results and returns an
     `ApplyResult` summary.
+  - **`pull_cli` has TWO output channels, and both are contract.** *stdout* is
+    the machine-parseable JSON report. *stderr* carries human/contract text
+    that the consumer **MUST relay to the user**, not merely log or discard:
+    `_warn_durability_if_mix_layer` prints the BAK-7D2V durability contract
+    there whenever the apply staged mix-layer state the next `build.py` replay
+    would revert, and the WFL-7Q2N session auto-select echo goes there too.
+    A wrapper that consumes stdout and drops stderr silently swallows the
+    message telling the user their pull must be baked or the next build
+    refuses — which reintroduces exactly the surprise BAK-7D2V exists to
+    remove. The split is deliberate (stderr keeps the contract text out of the
+    JSON wrappers parse), not an accident of logging.
+  - **House pattern, not a `pull_cli` quirk:** `capture_cli diff` has the same
+    two-channel shape (structured JSON to stdout, human summary to stderr).
+    Treat "stdout = machine, stderr = a message for the human that the
+    consumer relays" as the convention for every CLI seam here.
   - `pull_cli execute <domain> <session_id>` (Arc 3 / C3) is the
     in-process one-shot that collapses plan + probe + apply into one
     pass — does NOT touch the JSON bridge. Uses the same MCP TCP seam
@@ -128,6 +147,10 @@ When changing this surface:
   docstring; the skill is responsible for normalizing raw MCP responses to it.
 - Three-way merge is deferred. If you re-open conflict policy, update both
   this doc and the pull.py module docstring together.
+- **Adding, moving, or silencing anything on stderr changes the contract.**
+  A new consumer must relay it; moving contract text to stdout breaks JSON
+  parsers; dropping it re-opens the silent-revert surprise. If you add a new
+  stderr message, say here whether it is contract (relay) or diagnostic (log).
 
 ### Event Kinds + Payloads (`src/hallucinote/db/events.py`)
 
@@ -151,6 +174,22 @@ When changing this surface:
 - **Contract**: Bindings are `(session_id, db_kind, db_id) -> ableton_index`.
   `db_kind` ∈ `mutations.ABLETON_LINK_KINDS`. Multiple sessions per song are
   intentional — a song can be bound to several Live sets without aliasing.
+- **`ableton_index` is the index LIVE answers to, never the DB's own ordinal.**
+  For `db_kind="device"` that means the **physical** `device_index` — what
+  `plan_push_devices` hands `set_parameter` — and *not* the device's DB
+  `position`. The two are equal only while every unauthored device in the chain
+  sits after the authored ones, which for the `HallucinoteAnalyzer` means while
+  the tap is terminal. A chain rebuild temporarily breaks that: the analyzer
+  survives the demolish at the HEAD, so position *q* answers to index *q+1*.
+  Writing the position there is how authored values reached the neighbouring
+  device through `push execute --only devices` (RELBLK-0910, the same wrong-device
+  class as #532 one layer out). A producer that has only positions to hand must
+  read the live chain and map, as `chain_rebuild._logical_chain` does; it must not
+  assume the two numbers agree.
+  *Why this is written here rather than left to the producer:* the defect arrived
+  through exactly this ambiguity — "index" read as "ordinal" — in a function whose
+  own name says `link_db_to_ableton`, and nothing at the boundary said which
+  number it meant.
 
 When adding a new `db_kind`:
 - Extend `mutations.ABLETON_LINK_KINDS`.
@@ -187,8 +226,17 @@ When changing this surface:
 - **Consumers**: `audio/io.py` `load_capture` → `analyze_mix` (stamps `db_seq`
   into the MixReport), `resolve_baseline` (seq → report resolution),
   `hallucinote/takes.py` `recency_key` (retention ordering — see Deleter),
-  and `tools/make_demo_media.py` `master_wav`/`untrustworthy` — the only
-  consumer outside `src/`, and the only one whose output is **published**.
+  `tools/make_demo_media.py` `master_wav`/`untrustworthy` — the only
+  consumer outside `src/`, and the only one whose output is **published** —
+  and `server._record_audio_capture_event` (AUD-5M8H), which reads
+  `song_slug` + `db_seq` + `len(tracks)` off the render STATUS response to
+  append the `AUDIO_CAPTURED` audit event. That one is best-effort by
+  contract: it must never fail a render that succeeded, and it dedupes on
+  `captures_dir` because it fires from a poll the agent repeats. **It also
+  performs WSP-3R7K's captures self-ignore** — a second, unrelated deliverable
+  riding the same `state == done` trigger, named here because the function
+  name does not: relocating or dropping the audit event takes the self-ignore
+  with it unless someone reads for it.
   It reads `master.filename` (never `absolute_path`, which records the
   authoring machine's layout), plus the three trust flags below.
 - **The trust flags bind every consumer, and hardest on the published one.**
@@ -200,6 +248,56 @@ When changing this surface:
   `make_demo_media` refuses on an explicit bad value and requires
   `--allow-incomplete` to override. **Absence is not failure** — manifests
   predating these fields omit them and must still be readable.
+- **`mixer_state` and `muted_tracks` record the mix the capture was made
+  under**, one row per track AND per return, in the manifest's own surface
+  vocabulary (`surface_kind` / `surface_index` / `surface_name` / `track_id`,
+  so a row joins to the stem entry it explains): `solo`, `mute` and the
+  normalized fader `volume`. **`solo` and `mute` are `null`, never `false`,
+  when Live did not present the attribute** — and a null refuses the render,
+  because a guard that cannot see the mixer must say so rather than pass
+  everything. Returns are in because a return is a
+  Track in Live and carries solo like any other — soloing one silences every
+  regular track's direct output. Unlike the trust
+  flags above they do not describe the capture's fidelity — the capture is
+  faithful; they describe whether the thing captured was the song. A report is
+  read long after Live has moved on, so without them a surprising master can
+  only be diagnosed by probing a session that no longer holds the state that
+  produced it. **Surface** `solo` cannot be true here: a soloed track or return is
+  refused before the transport rolls, because solo silences everything else and
+  the master bus then carries a fraction of the song while every unsoloed stem
+  captures silence. A mute is not refused — it is a plausible authoring choice for one
+  render — so `muted_tracks` names them and the render proceeds. Absence is
+  not failure here either: manifests predating these fields omit them.
+- **`soloed_chains` is the one solo that DOES reach the file**, and it is the
+  reason the sentence above says *surface* solo. A soloed rack **chain**
+  silences its sibling chains inside one rack rather than the song, so the
+  master bus still carries every track and the render **warns** instead of
+  refusing (owner decision, 2026-09-10). It appears in two representations,
+  and a consumer should know which to join on:
+  - `mixer_state[].soloed_chains` — **structured**, the machine-readable one:
+    `{device_position, device_name, chain_index, chain_name, solo}` per entry,
+    already keyed to the row's surface. Join on this. **`solo` is `true` or
+    `null`, never `false`** — same rule as the surface flags beside it, and for
+    a sharper reason: an entry is only listed when the chain is soloed OR did
+    not answer, so `null` means UNKNOWN and a consumer must not read the
+    entry's presence as a confirmed solo.
+  - a top-level `soloed_chains` — the same information as **prose strings**,
+    one per soloed chain, for a reader rather than a parser. The render result
+    also carries a single `warning` string built from them, which is what
+    reaches an operator through `Job.status_result`.
+
+  **`device_position` and `chain_index` are PHYSICAL Live positions, not DB
+  ordinals**, and the position is read BEFORE `ensure_analyzers_loaded` appends
+  the analyzer — so a `device_position` here will not match a post-render chain
+  read that includes the tap. Scope: a top-level rack's MAIN chains, on TRACKS and RETURNS
+  only. A rack nested inside another rack's chain is not walked; a rack's RETURN
+  chains are not read (they carry `solo` like any other chain); chain mute and
+  chain volume are not read; and **the master strip is not walked at all**,
+  though `master.wav` is a captured stem — so a rack on the master with a soloed
+  chain is invisible here (tracked at #552, which explains why the master
+  needs its own case rather than another row). A consumer diagnosing a surprising master from `solo`/`mute`/`volume`
+  alone will miss a rack that rendered as a fraction of itself. Absence is not
+  failure: manifests predating this field omit it.
 - **Deleter**: `hallucinote/takes.py` (`plan_sweep`/`execute_sweep`), driven
   automatically from `server._sweep_stale_takes` at render start and manually
   from `hallucinote captures prune`. This is the manifest's only *destructive*

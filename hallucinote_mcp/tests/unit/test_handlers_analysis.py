@@ -258,6 +258,16 @@ def test_analyze_handler_writes_nothing_publishable_into_the_tracked_tree(
                 "analysis/ is checked in, so this ships with the repo"
             )
 
+    # WSP-3R7K reversal, pinned. `analysis/` must NOT get a blanket `*`
+    # .gitignore. It was briefly given one, which quietly made the very reports
+    # this test asserts are publishable uncommittable — and nothing asserted its
+    # absence, which is how that could land silently. A future whole-directory
+    # self-ignore sweep would otherwise re-add the call and the suite stay green.
+    assert not (song_dir / "analysis" / ".gitignore").exists(), (
+        "analysis/ is tracked on purpose — a directory-local `*` here beats the "
+        "root .gitignore and drops committed MixReports out of git"
+    )
+
 
 def test_analyze_handler_writes_status_json_error_on_failure(
     synthetic_song: Path, monkeypatch,
@@ -813,7 +823,13 @@ def test_collect_declared_envelopes_resolves_surfaces(synthetic_song: Path):
     by_kind = {e.target_kind: e for e in declared}
     assert by_kind["device_parameter"].target_surface_id == "track:3"
     assert by_kind["device_parameter"].parameter_path == "Amp Type"
-    assert by_kind["device_parameter"].breakpoints == ((0.0, 0.0), (8.0, 1.0))
+    # The fixture writes curve_kind="hold"; this assertion passing WITH 'hold'
+    # present is the positive evidence the curve survives the MCP boundary —
+    # dropping it there is what left the verifier unable to tell a step from
+    # a ramp.
+    assert by_kind["device_parameter"].breakpoints == (
+        (0.0, 0.0, "hold"), (8.0, 1.0, "hold"),
+    )
     assert by_kind["send_level"].target_surface_id == "return:1"
     assert by_kind["mixer_volume"].target_surface_id == "track:3"
 
@@ -1153,7 +1169,7 @@ def _seed_full_song(db_path: Path, slug: str) -> None:
             conn, song_id=song_id, track_index=1, name="Lead"
         )
         clip_id = M.create_clip(
-            conn, track_id=track_id, slot=0, length_beats=4.0, name="riff"
+            conn, track_id=track_id, slot=1, length_beats=4.0, name="riff"
         )
         M.insert_notes(
             conn,
@@ -1242,17 +1258,21 @@ def test_extract_returns_full_nested_structure(populated_song: str):
     assert extract["returns"][0]["devices"] == []
 
 
-def test_extract_flattens_top_level_chain_only_excludes_nested_rack(
-    tmp_path: Path, monkeypatch
-):
-    """DEV-4X2N: pin the documented top-level-only exclusion. The extract walks
-    devices via get_devices_for_track/_return, which DON'T recurse into nested
-    rack chains (gap #17b / DEV-7K4H). A song using an Audio Effect Rack reports
-    the rack CONTAINER but not the devices inside it. This test fails the day a
-    regression starts dropping (or starts flattening) rack containers — the
-    _seed_full_song fixture has only a top-level chain, so the exclusion was
-    previously unpinned. When nested-rack pull lands, this test is the one to
-    flip (and the handler docstring's caveat with it).
+def test_extract_flattens_nested_rack_devices(tmp_path: Path, monkeypatch):
+    """DEV-4X2N: the extract now descends into nested rack chains.
+
+    FLIPPED 2026-08-11, as this test's earlier version said to do ("when
+    nested-rack pull lands, this test is the one to flip"). It previously pinned
+    the top-level-only exclusion, which was correct while the DB modelled only
+    one rack level. DEEP-RACK-ADDR since made `device_chains` a real recursive
+    tree (`parent_rack_device_id` self-referencing through `devices`), so the
+    exclusion stopped being a limitation and became a silent omission: a song
+    built on Instrument or Audio Effect Racks reported its rack containers and
+    none of the signal path inside them, while the extract looked complete.
+
+    The rack container is still reported — flattening reaches the contents, it
+    does not replace them — and nested entries carry `rack_depth`, which is what
+    tells them from top-level siblings (`chain_id` is NOT NULL on every row).
     """
     slug = "nested-rack-song"
     song_dir = tmp_path / "songs" / slug
@@ -1288,8 +1308,103 @@ def test_extract_flattens_top_level_chain_only_excludes_nested_rack(
     result = analysis_handlers.extract_structure_handler(None, song_slug=slug)
     devices = result["extract"]["tracks"][0]["devices"]
     names = [d["display_name"] for d in devices]
-    assert names == ["Audio Effect Rack"]  # container reported
-    assert "Inner Reverb" not in names     # inner device excluded (top-level only)
+    assert names == ["Audio Effect Rack", "Inner Reverb"], (
+        "the rack container must still be reported AND its contents reached"
+    )
+
+    inner = next(d for d in devices if d["display_name"] == "Inner Reverb")
+    assert inner["rack_depth"] == 1, "a nested device must stay distinguishable"
+    assert inner["chain_id"] == nested_chain
+    container = next(d for d in devices if d["display_name"] == "Audio Effect Rack")
+    assert "rack_depth" not in container, "top-level devices carry no depth marker"
+
+
+def test_extract_flattens_racks_nested_more_than_one_level(
+    tmp_path: Path, monkeypatch
+):
+    """The recursion is the point: a rack inside a rack.
+
+    One level of nesting would pass against a one-level-only implementation —
+    which is exactly what `get_device_chains_for_rack_device` gives you if you
+    call it without recursing. This pins the descent itself.
+    """
+    slug = "deep-rack-song"
+    song_dir = tmp_path / "songs" / slug
+    song_dir.mkdir(parents=True)
+    db_path = song_dir / f"{slug}.db"
+    conn = init_db(db_path)
+    try:
+        song_id = M.create_song(conn, name=slug, title="Deep Rack")
+        track_id = M.create_track(conn, song_id=song_id, track_index=1, name="Lead")
+        top_chain = M.create_device_chain(conn, parent_track_id=track_id, position=0)
+        outer = M.create_device(
+            conn, chain_id=top_chain, position=1,
+            kind="Audio Effect Rack", display_name="Outer Rack",
+        )
+        mid_chain = M.create_device_chain(
+            conn, parent_rack_device_id=outer, position=0
+        )
+        inner_rack = M.create_device(
+            conn, chain_id=mid_chain, position=1,
+            kind="Audio Effect Rack", display_name="Inner Rack",
+        )
+        deep_chain = M.create_device_chain(
+            conn, parent_rack_device_id=inner_rack, position=0
+        )
+        M.create_device(
+            conn, chain_id=deep_chain, position=1,
+            kind="Reverb", display_name="Deep Reverb",
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    monkeypatch.setattr(
+        analysis_handlers, "resolve_db_path", lambda s, **_: db_path
+    )
+    result = analysis_handlers.extract_structure_handler(None, song_slug=slug)
+    devices = result["extract"]["tracks"][0]["devices"]
+    by_name = {d["display_name"]: d for d in devices}
+
+    assert set(by_name) == {"Outer Rack", "Inner Rack", "Deep Reverb"}
+    assert by_name["Inner Rack"]["rack_depth"] == 1
+    assert by_name["Deep Reverb"]["rack_depth"] == 2, (
+        "a device two racks deep must be reached, and its depth reported"
+    )
+
+
+def test_extract_flattens_nested_devices_on_returns_too(tmp_path: Path, monkeypatch):
+    """A width control or reverb inside a rack on a RETURN bus is an ordinary
+    move; collecting only track racks would make it invisible rather than
+    skipped — a silent drop that reads as "nothing there"."""
+    slug = "return-rack-song"
+    song_dir = tmp_path / "songs" / slug
+    song_dir.mkdir(parents=True)
+    db_path = song_dir / f"{slug}.db"
+    conn = init_db(db_path)
+    try:
+        song_id = M.create_song(conn, name=slug, title="Return Rack")
+        ret_id = M.create_return(conn, song_id=song_id, position=1, name="Verb")
+        chain = M.create_device_chain(conn, parent_return_id=ret_id, position=0)
+        rack = M.create_device(
+            conn, chain_id=chain, position=1,
+            kind="Audio Effect Rack", display_name="Bus Rack",
+        )
+        nested = M.create_device_chain(conn, parent_rack_device_id=rack, position=0)
+        M.create_device(
+            conn, chain_id=nested, position=1,
+            kind="Reverb", display_name="Bus Reverb",
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    monkeypatch.setattr(
+        analysis_handlers, "resolve_db_path", lambda s, **_: db_path
+    )
+    result = analysis_handlers.extract_structure_handler(None, song_slug=slug)
+    names = [d["display_name"] for d in result["extract"]["returns"][0]["devices"]]
+    assert names == ["Bus Rack", "Bus Reverb"]
 
 
 def test_extract_includes_exact_note_timings(populated_song: str):
@@ -1400,6 +1515,9 @@ def test_analyze_handler_compare_to_seq_end_to_end(synthetic_song: Path):
     assert result["summary"]["compare_to"] == {
         "baseline_ref": baseline_result["report_path"],
         "significant_delta_count": 0,
+        # counted separately from the surface-level number so a many-sectioned
+        # song's routine churn can't swamp the headline
+        "significant_section_delta_count": 0,
         "overshoot_delta": 0,
         "added_surfaces": [],
         "missing_surfaces": [],
@@ -1657,3 +1775,60 @@ def test_analysis_names_both_workspaces_when_two_hold_the_song(
         assert str(root.resolve()) in msg, msg
     assert "HALLUCINOTE_SONGS_ROOT" in msg, msg
     assert "--reset" not in msg, msg
+
+
+def test_analyze_handler_summary_carries_the_master_refusal(synthetic_song: Path):
+    """The refusal must reach the SUMMARY, not only the report JSON.
+
+    The two significant-delta counts are what a summary reader acts on, and a
+    disqualified comparison makes them SMALLER because the master rows were
+    withheld — so without this key a refused comparison reads as a quieter
+    render, which is the opposite of the truth. Exercised through the handler
+    because `server_side/analysis.py` copies a fixed key set: a compare-level
+    test cannot see a key that copier drops.
+
+    The baseline side is the one tampered with here: it needs no control over
+    what the analyzer measures, and it is the case that outlives the bad
+    capture — a stored report stays the baseline until a newer one replaces it.
+    """
+    first = _write_captures(
+        synthetic_song / "captures" / "20260610T030000Z",
+        song_slug="test-song",
+    )
+    _tag_manifest_db_seq(first, 1)
+    baseline_result = analysis_handlers.analyze_handler(
+        None, song_slug="test-song", captures_dir=str(first),
+    )
+
+    baseline_path = Path(baseline_result["report_path"])
+    baseline_doc = json.loads(baseline_path.read_text(encoding="utf-8"))
+    baseline_doc["findings"].append({
+        "kind": "master_not_stem_sum",
+        "severity": "blocking",
+        "subject": "master",
+        "metric": "stem_sum_correlation",
+        "observed": 0.159,
+        "expected": 0.5,
+        "db_reference": "the captured master is not the sum of the captured stems",
+    })
+    baseline_path.write_text(json.dumps(baseline_doc), encoding="utf-8")
+
+    second = _write_captures(
+        synthetic_song / "captures" / "20260610T040000Z",
+        song_slug="test-song",
+    )
+    _tag_manifest_db_seq(second, 2)
+    result = analysis_handlers.analyze_handler(
+        None, song_slug="test-song", captures_dir=str(second), compare_to=1,
+    )
+
+    refused = result["summary"]["compare_to"]["master_deltas_refused"]
+    assert refused["reason"] == "master_not_stem_sum"
+    assert refused["side"] == "baseline"
+    assert refused["observed"] == pytest.approx(0.159)
+
+    # And the report itself withheld the master rows the summary now explains.
+    report = json.loads(Path(result["report_path"]).read_text(encoding="utf-8"))
+    assert not [
+        d for d in report["compare_to"]["deltas"] if d["track_id"] == "master"
+    ]

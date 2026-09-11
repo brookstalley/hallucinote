@@ -5,6 +5,56 @@ Incident narratives and how-to-apply guidance for the rules in
 heading here matches one there (a rule with no narrative simply has no entry here).
 **Never delete an entry here** — this is the long-term memory the index points at.
 
+## A norm sweep must ask WHICH SIDE moved — the remedy for statement drift is the opposite of the remedy for code drift
+
+The first Norm Health sweep (2026-09-08) measured ten norms: six clean, four with
+distance, and the four split evenly by cause — which is the finding, because a sweep that
+assumes one cause gets half its remedies backwards.
+
+**Statement drift (2).** "No raw SQL in callers, EVER" — its own stated why is that a
+caller reaching around the mutators makes the event log a lie, which a `SELECT` cannot do.
+Seventeen read sites were violations of nothing; the wording had outgrown its
+justification. The `sync.*` row said the layer never invokes MCP while seven modules
+called `client.send` — and `sync-boundary-contract.md` had *already ratified* an Executor
+whose job is exactly that. The row was narrower than the design its own sibling artifact
+held.
+
+**Code drift (2).** `kit.py` imported `hallucinote.db.queries`, making the purity norm
+false at the point it was meant to pay. Five modules lacked the future import, on a row
+carrying an unacted-on "promote to a ruff rule" note.
+
+**How to apply.** Ask whether the norm's why reaches the sites it condemns. If it does not,
+the statement moved and the fix is an owner-ruled amendment citing its authority. If it
+does, the code moved and the fix is code. Then watch yourself: this same sweep's Critic
+caught it narrowing the future-import norm from "every module" to "every module that has
+code" to excuse two files a two-line fix would have closed — the amendment cited no ruling
+while every sibling amendment cited one, which is the signature. Being the one who wrote
+the rule above does not exempt you from it.
+
+## An archived record is not a live surface — path-shaped exemptions go stale the moment you archive
+
+`test_collaboration_norm_parity` exempted one plan by exact path
+(`plans/COLLAB-TURN/build-plan.md`, "carries the sweep's own target list") and exempted
+`.prawduct/artifacts/archive/` by prefix. Archiving that plan moved it to
+`plans/COLLAB-TURN/archive/build-plan.md`, matching neither, and the lock failed on a file
+stamped "archived — no longer maintained. Do not edit."
+
+Both exemptions were the same rule wearing two shapes. Stating it once as
+`"/archive/" in path` covers every archive location, including ones the archival tool has
+not invented yet.
+
+**The corollary, which cost a second mistake.** When the sweep then repointed ~130 dangling
+path citations, the same rule applied in reverse: citations inside *live* artifacts were
+fixed, citations inside archived records were left alone, and `backlog.md` and
+`change-log-archive.md` — both frozen history — had to be reverted after a first pass
+rewrote them. "Do not rewrite the record" binds the person tidying up as much as the person
+being tidied after.
+
+**Related mechanical trap.** `git ls-files --cached` lists the index, so a file moved but
+not yet staged appears at its old path and `read_text` raises `FileNotFoundError` — a scan
+that walks tracked files must skip paths with no file, or it crashes on any mid-rename
+tree instead of failing honestly.
+
 ## Threading a new param means making the test doubles faithful — not weakening tests
 
 ENV-8K2R #5 added `ToolCall.read_timeout` (forwarded to `client.send`) and ENV-2T9K added `plan_push_song(perform_slowdown_factor=...)`. Two 1-arg doubles broke — `_make_send_fn`'s `send(req)` and a `plan_without_scenes(conn, *, song_id, session_id)` monkeypatch. Both were resolved by widening the double to the real contract (`send(req, *, read_timeout=None)` recording the value; `plan_without_scenes(..., **kwargs)` forwarding through), and the `send` double additionally grew the `arc_count` field the real handler returns so the new apply-layer cross-check (#4) was exercised. The executor's own forwarding was written to pass the new kwarg ONLY when set, so the *non*-perform path still hits 1-arg doubles untouched — pick the conditional at the production boundary, the faithful-signature widening at the test boundary.
@@ -66,6 +116,8 @@ C7 (timing analyzer) almost shipped two bugs that only a calibration pass expose
 
 **How to apply.** (1) Build a tiny calibration script that runs representative inputs through the real analyzer and prints the metrics; eyeball them against what the music *is* before locking assertions. (2) Choose fixtures for *detection accuracy*, not convenience — a synthetic transient with an instant attack tests the analyzer's math; the real-world detection-accuracy limit (slow-attack instruments) becomes a documented caveat, not silent fixture bias. (3) Prefer robust statistics (median over mean) and robustness-to-constant-offset designs (measure tightness/relative timing, not absolute) when the front-end has systematic error. (4) Treat a user's "can it do X?" as a design stress-test — answer it by running X, not by reasoning about X.
 
+**Defect-detector sharpening (negative controls).** A detector's dangerous failure is the false positive, and a hand-built corpus contains only the shapes its author already imagined. Two lenses shipped one each, both accusing healthy audio, and neither was reachable synthetically: clipping keyed on amplitude when captured stems are pre-fader float32 (a healthy part peaking at +6.30 dBFS drew 7970 phantom clip runs — clipping is a FLAT TOP, not a loud one), and every uncorrelated stem pair reported a confident lag because a cross-correlation always peaks somewhere. Ask for a real capture, then ask again for a known-CLEAN one; proving the detector stays SILENT is the harder and more valuable half.
+
 ## A staleness/version signature must be content-derived, never hand-bumped
 
 The masking-arc backlog item "surface the loaded `analyzer_signature` so a stale MCP server is obvious" pointed at an existing field — but reading the code showed that field is a hardcoded capture-device label (`"hallucinote-analyzer-v1"` in `render.py`) that never moves when analysis-pipeline code changes. It structurally cannot detect staleness. The cheap fix (a hand-bumped `__version__`) has the identical defect. The correct fix hashes the `hallucinote/audio/` package source, frozen at import (= the code the subprocess actually loaded) and compared against a per-call disk recompute (`audio/codeversion.py`). The freeze-at-import-vs-recompute split is the load-bearing part: hashing only on-disk source would report "fresh" while the process runs old code. Aligns with "prefer structural fixes over patches."
@@ -117,6 +169,28 @@ The fakes that DON'T simulate wrapper recreation still pass when `is` is used �
 
 **Diagnostic discipline**: when a handler writes a transport-coupled property, always include `target`, `last_observed`, and `prior` in any error response. The "each call observes the previous call's target" race pattern is visible in 30 seconds with these fields, invisible without them.
 
+## Arming Live's record STARTS the transport — so position before you arm
+
+Found by operator verification, and it could not have been found any other way. The #471 fix positioned the transport AFTER the record-mode settle, on the reasoning that "arming is the last thing that could disturb the playhead". Arming does not disturb the playhead; it starts it.
+
+The consequence was total and silent. The locate settled against a playhead moving away from it, landing wherever it happened to be — a real pass reported having "parked the playhead at beat 8.392 rather than 8". The cue toggle fires at the transport's actual position, so an imprecise one cannot be placed safely, and the borrow path correctly refused every time: every locate degraded to `playhead_only`, and the fix was inert while reporting itself accurately. The first live pass wrote 21 values and recorded no lane at all (`automation_state: 0`, read-back flat at the endpoint value).
+
+Two measurements settled the shape of the fix. `song.record_mode = True` at beat 0 → playhead 2.768 at +1.0s, 8.402 at +1.5s, `is_playing: True`. And `stop` → `record_mode` goes back to False, so stopping between the arm and the locate is not available. The order has to be: quiet the transport, locate the start position, THEN arm — the arm rolls from the start position the locate just set, which is where the pass wants it anyway.
+
+After the reorder, on the same set: `locate_method: temporary_cue`, `start_position_moved: true`, 21 writes, `outcome: recorded`, and a read-back that ramps 0.315 → 0.859 instead of sitting flat.
+
+The general form: **before ordering a setup sequence, ask of each step what it does to the thing the NEXT step measures.** A step whose name sounds passive ("arm", "enable", "select") can be the one that moves the world.
+
+## An honest read-back of the wrong property is the hardest bug to see
+
+`song.current_song_time` is the playhead. `start_playing()` and `continue_playing()` roll from Live's separate START PLAYING POSITION, which that write does not move — the LOM exposes no writable property for it at all; `CuePoint.jump()` is the one surface that moves it ("when not playing, simply move the start playing position").
+
+The two agree on a set nobody has listened to, and part company the moment a human presses play in the arrangement. So seek-then-play was only ever coincidentally correct, and the whole class hides behind "it works on my test set". Issue #471: a perform pass sought to the span start, read it back honestly, played, and rolled from beat 351 — three passes in one day, each reporting success, each recording nothing, found by ear from a stale reverb wash. The same two lines were in the render capture path and asserted as a guarantee in `ableton_session(action='play')`'s operator-facing note.
+
+The sibling rule above (trust the side effect, not the getter read-back) was already followed here: `perform_batch` had a worker-thread settle-poll on `current_song_time`, and it passed every time, because the locate really had landed. A settle-verify on the wrong property is indistinguishable from a correct one.
+
+Two habits. At design time, ask what property the BEHAVIOUR reads, not whether your write took. At code time, prefer a check on the realized effect — where the transport ACTUALLY is after play — because that one holds even when the mechanism is defeated by something nobody has seen yet. `handlers/_transport.py` is the shared primitive; `test_handlers_transport.py`'s fake keeps the two fields separate so a bare `current_song_time` write fails every test in it.
+
 ## Unit fakes that mirror an *assumed* Live API give false confidence
 
 The 2026-05-17 push session shipped five handler fixes (the B-1/B-2/B-10/B-11/B-12 bug bucket; original triage doc deleted in the v0.9.0 hygiene sweep — `git log -- .prawduct/artifacts/bug-triage.md` recovers it) that each had passing unit tests. The fakes mirrored what we *thought* Live exposed: collection appends preserved identity, `set_or_delete_cue` accepted a time argument, `Track.load_device` existed, etc. Real Live 12.4 differs on every count. The unit suite never saw the divergence.
@@ -124,6 +198,14 @@ The 2026-05-17 push session shipped five handler fixes (the B-1/B-2/B-10/B-11/B-
 **Required for any handler that wraps a Live API operation**: at least one of (a) a fake that simulates the *quirk* (wrapper recreation, no-arg signatures, missing methods), or (b) an integration smoke test run against a real Live instance. Smoke tests cost ~30s wall-clock per release; they catch a class of bugs the unit suite literally cannot see.
 
 Track potential smoke-test coverage in a `tests/integration/test_live_smoke.py` file. Don't gate on it for every PR (too slow); gate on it for "ready to release" / pre-merge of large refactors.
+
+## A recorded "can't" is a dated claim — re-verify (platform OR code) before designing around it
+
+Internal stale docstring flavor — This session: "Python can't call MCP tools directly" (a docstring in `capture.py`/`capture_cli.py`) was FALSE — the engine already calls Live via `hallucinote_mcp.client.send` (`push_cli`/`pull_cli execute` drive it with no agent), and the false belief had shaped an entire agent-orchestrated capture design (nearly led to building a "new bridge" that already existed).
+
+Probe-over-recall corollary — We live-probed `DeviceParameter.default_value` and found it exists but *raises* on some quantized params — a nuance pure reasoning would have missed.
+
+Read-SHAPE corollary — MICROTUNE (verify-api, 2026-06-19): the Cycling '74 ref typed Live's `TuningSystem.note_tunings` as "dictionary"; we refused to guess and shipped `read.py`'s extraction as a `raise`-ing stub with a fixture test pinning the held contract. When a real tuning (Wendy Carlos gamma) was finally loadable, the probe showed the shape was BOTH simpler AND *different* from the doc — a flat `list[float]` (degree-indexed, unison at `[0]`, period excluded), and `reference_pitch` a standard 12-key anchor, not a dict. A guessed dict-shape would have passed its own unit tests (the fake encodes the guess — see the NODE-ADDR test-trap learning below) while being silently wrong about pitch. The loud stub cost one extra session of waiting for Live; the wrong guess would have cost a corrupted tuning shipped green. Stubbing-loud-until-probed is the cheap insurance.
 
 ## A shipped "can't" is a dated snapshot — re-probe a challenged capability verdict before defending it
 
@@ -484,6 +566,107 @@ SNP-MIX-CLUSTER's plan used `## Chunk C — MIX-3S7P close-out`. `verify-chunk-r
 
 **How to apply.** (1) Author build-plan chunk headings as `### Chunk <id>: <name>` (h3, colon after the id) and Status checkboxes as `- [ ] Chunk <id>: <name>` from the start — not `## Chunk X — …`. (2) When a verifier complains despite text that looks right, stop tuning the text and check what the verifier actually keys on (heading LEVEL, a delimiter char) — read the resolver, don't guess. (3) `verify-chunk-refs` is exit-0 advisory, so a wrong heading form silently gives the plan zero chunk-ref coverage — it won't block, it just stops protecting you.
 
+**Two consumers, and the stakes are gate-weakening, not cosmetic (2026-07-20).** `lib/critic_mode.py`'s `**Critic mode:**` reader folds onto the same `_chunk_section_lines` walk, so a wrong heading form silently disables per-chunk Critic-mode overrides too — both parsers fail by quietly doing nothing, which is why this went unnoticed from 2026-07-04 to 2026-07-20 despite the learning already existing. **The trap when you REPAIR headings mid-plan:** fixing them wakes the mode reader, and spent `- **Critic mode:** chunk` lines on already-built chunks immediately go live — `infer-critic-mode` starts returning `chunk|plan-override`, which would demote a `Type: cumulative-final` chunk to a Goals-1-3 pass and skip the run the PR gate needs. So after repairing headings: delete the mode pins from chunks that are already built and reviewed, and re-run `prawduct-hook infer-critic-mode` to confirm inference resumed. Also expect the repair to surface previously-invisible broken file refs — `verify-chunk-refs` had never actually run.
+
+## In a git worktree, pin `pythonpath` in pytest config — a bare `pytest` silently tests the PRIMARY checkout
+
+This repo is installed editable via plain-path `.pth` files (`__editable__.hallucinote*.pth` → `<primary>/src` + `<primary>/hallucinote_mcp/src`). A `pytest` run in a worktree resolves `hallucinote`/`hallucinote_mcp` through those `.pth` entries → it imports the PRIMARY checkout's code, not the worktree's, and reports green against the wrong tree. The trap is silent for edits to EXISTING functions (a no-PYTHONPATH run passes against the old behavior); it only surfaces by accident when a test imports a brand-new symbol (ImportError). Every prawduct hook that shells `python -m pytest` (test-status, test-evidence, the Stop gate) hits this too. Fix structurally: add `pythonpath = ["src", "hallucinote_mcp/src"]` to the ROOT `[tool.pytest.ini_options]` and `pythonpath = ["src", "../src"]` to `hallucinote_mcp/pyproject.toml` (paths are relative to each config's rootdir; pytest front-inserts them so they win over the `.pth`). Then a bare `pytest` is correct-by-default in any worktree, and a no-op in the primary dir. Do NOT `pip install -e` inside the worktree — it repoints the SHARED editable install at the worktree and the live `--plugin-dir` MCP server would start serving worktree code, defeating the isolation. (NODE-ADDR build, 2026-06-15)
+
+## A handler-signature migration must grep `<handler>(` across ALL source — a wire/sync-scoped consumer census misses in-process callers
+
+When you change a handler's signature (e.g. NODE-ADDR flipped the device handlers from flat `track_index/device_index/device_path` to a single `node`), the consumers are NOT just the wire schema + the push/pull planners that *build wire args*. Code that calls the handler FUNCTION directly, in-process, also breaks — and a consumer census scoped to "the wire boundary" silently misses them. NODE-ADDR's Explore census mapped actions/handlers/push but missed: `analyzer/setup.py` (loads the analyzer + sets its Port/EmitPort params via `device_handlers.set_parameter_handler`/`load_handler`), `handlers/render.py` (arms analyzers the same way), and the pull planner that *emits* a `get_parameters` wire call. They surfaced only when the FULL suite ran (render/analyzer_setup test files failed with `TypeError: got an unexpected keyword argument 'track_index'`). Lesson: for any handler-signature change, `grep -rn '<handler_name>(' <all source>` (both packages) BEFORE declaring the migration scoped, and run the whole suite — not just the obviously-related test files — to flush out in-process callers. Bonus: a schema-arg-parity canary (a test asserting a planner's emitted args are all registered schema params, like `test_plan_pull_device_parameters_args_match_mcp_get_parameters_schema`) catches producer/schema drift instantly and is worth more than another happy-path unit test. (NODE-ADDR wire flip, 2026-06-15)
+
+## Load a device INTO a rack chain with `Chain.insert_device`, not `browser.load_item` — and a fake that models an unverified Live mechanism ships broken code GREEN
+
+Two coupled lessons from the NODE-ADDR chain-load bug (Live-verified 2026-06-15). (1) THE API: `browser.load_item` ONLY ever appends to the *track's main device chain* — setting `rack.view.selected_chain` AND/OR `song.view.select_device(appointed)` does NOT redirect it (verified on a real set: the device silently landed at the track top level, leaving a stray, twice). To load a device into a rack/drum chain at ANY depth, call `Chain.insert_device(<browser display name>, index=-1)` — it takes the same name `kind` already carries (multi-word like "EQ Eight" works), handles empty AND non-empty chains, and returns the new Device. When unsure how a Live operation works, `ableton_probe describe` the object and READ its methods before assuming a mechanism — that is exactly how `insert_device` surfaced after two wrong guesses (`selected_chain`, then `select_device`). (2) THE TEST TRAP — the more dangerous half: this shipped GREEN because the unit fake asserted `rack.view.selected_chain is chain` and then appended to the chain — baking in the assumption that Live honors `selected_chain`, which it doesn't. A fake that encodes how an EXTERNAL system RESPONDS, when that response is the behavior under test, proves nothing until the assumption is operator-verified; cite the operator-verification check in the fake, or treat the green as unproven. The runtime post-condition that FAILS LOUD on a no-op load ("did not append") is the backstop that actually caught it in Live — keep those guards. (NODE-ADDR chain-load fix, 2026-06-15)
+
+## Presence — even a change-listener — is NOT settability: probe the WRITE path with an actual `set` before classifying a feature buildable
+
+Across NODE-ADDR Chunks D/E/F, LOM probes turned 2 of 3 "buildable" feature chunks into hard walls — the trap was trusting *presence* (or the settability heuristic) over a real write. (1) A macro `DeviceParameter.name` HAS an `add_name_listener` (the probe-findings settability heuristic says "value-bearing primitive + listener ⇒ read/write"), yet `set …parameters[1].name='x'` raises `AttributeError: property of 'DeviceParameter' object has no setter` — macro custom NAMES are read-only (they ride the preset). The listener heuristic is a HINT, not proof; for anything load-bearing on a schema/handler decision, actually `ableton_probe(action='set', …)` it on a scratch set and read the result (settability "is itself a finding" — the probe tool's own words). (2) Chain key/velocity/chain-select ZONES aren't even present — a `Chain` describe (even on a chain-select selector rack) has no `key_range`/`velocity_range`/`chain_select_range`; the Zone editor is UI-only and `/song-snapshot` can't capture it either ⇒ `UNSUPPORTED_IN_LIVE`. (3) Conversely, macro VALUES needed no new code — they ARE `DeviceParameters` (parameters[1..8]) already authored by the existing `device_parameters` feature. Lesson: for a probe-gated feature chunk, probe the exact WRITE path (a real `set`/method call, not `describe` presence) BEFORE designing schema/handler — it routinely collapses a planned "flip stub→handler" into a one-cell matrix correction (names/zones → wall) or a no-op (values → already covered), saving a handler built against an API that doesn't exist. Use the `client.send` bridge directly (`Request('ableton_probe','set',{path,value})`) when the MCP tool layer is flaky — same transport push/pull use. (NODE-ADDR Chunks D/E/F, 2026-06-16)
+
+## A param's CAPTURE discriminator must be PROBED on the live witness, not assumed from its name/behavior
+
+DEV-4P7R (value_raw channel) almost shipped with the wrong discriminator. The bug class is a quantized, non-monotonic-display, non-[0,1]-range device param (Wavetable `LFO 1 S. Rate`: raw 8.0 → "1/2", range [0,21]). I planned to gate the capture/pull auto-emit on `is_quantized` — the natural-seeming signal for "stepped musical-division param." Probing the live witness (`ableton_probe get …parameters[76].is_quantized` on the running swell set) returned **False** — `is_quantized` is False on the very param the fix targets (Live reserves it for params that expose `value_items`; this one is continuous-with-a-step-display). The correct discriminator is structural and probe-confirmed: **raw range ≠ [0,1]** (for any such non-enum param the normalized channel is pushed AS raw and mis-dials, and the display may be non-monotonic, so the raw value is the only always-correct channel). Lesson: before choosing the predicate that routes a param down a capture/push channel, `ableton_probe get` the candidate attribute on the actual witness — a one-call check overturned an assumption that would have made the auto-emit silently never fire on the bug it fixes. Sibling of the NODE-ADDR "presence is not settability — probe the write path" lesson: here it's "the obvious attribute is not the discriminator — probe the read." (DEV-4P7R, 2026-06-17)
+
+## A bug report's proposed fixes may be PARTIALLY shipped by a later, unrelated feature — check each sub-fix against the code, not just the item's existence
+
+When picking a backlog bug whose report proposes multiple fixes (1/2/3), grep the CURRENT code against EACH proposed sub-fix before sizing — a later unrelated feature may have already shipped some of them. PSH-3H8M ("perform_batch hangs indefinitely") proposed watchdog + hard-ceiling + pre-perform-reset; ENV-2T9K's tempo-reduction work had since shipped the span-proportional wall-clock CEILING (so it no longer hangs FOREVER) and the reset already did stop+reseek — leaving only the FAST watchdog + the loop/punch clear as the real residual. Same session, RND-2R9K's functional half ("breaks relink") was already shipped by SYN-RENDER-RELINK, leaving only name hygiene. Twice in one session a `stage: ready` item was 60-80% done, and in BOTH the headline severity named the already-mitigated part. Read the code against each sub-claim, reframe the residual honestly, regroom impact — don't rebuild what shipped. Sibling of "ready items may already be shipped" (which is about the WHOLE item); this is the same trap one level down, at the sub-fix. (PSH-3H8M / RND-2R9K, 2026-06-21)
+
+## A Live-side change OUTSIDE `_FINGERPRINT_PATHS` ships silently — the handshake won't tell you to re-vendor
+
+When you change Remote-Script-executed code that is NOT under `_FINGERPRINT_PATHS` (`wire/schema/dispatcher/actions/handlers/remote_script`) — e.g. `analyzer/setup.py`, which runs Live-side via `runs_on_worker=True` + `run_on_main` — the server content fingerprint does NOT flip, so `/ableton-mcp-install` and the version handshake report `matched` even against a STALE vendored Remote Script that lacks your change. Do NOT trust the version match to signal that a re-vendor is needed: force it (relaunch dev-mode so running==disk → `/ableton-mcp-install` → reopen Live, which caches Control Surface modules at startup) and say so explicitly in the operator-verification entry, because the usual "fingerprint flips → re-vendor" reminder is silent here. (RND-2R9K, 2026-06-21)
+
+## A test asserting ambient git state is green on `push:` and red on `pull_request:` — CI checks PRs out DETACHED
+
+`actions/checkout` checks a `pull_request` event out at the detached merge commit, so `git symbolic-ref --short HEAD` exits non-zero and any branch-name probe legitimately returns nothing; a `push:` run checks out a real branch ref and passes. A test that reads the AMBIENT checkout (`assert "branch" in provenance_metadata()`) therefore passes locally and on every develop push, and only goes red the first time it runs in PR context — this one hid from 2026-05-21 to 2026-07-20. Fix the TEST, not the probe: a best-effort probe dropping a key it genuinely cannot resolve is correct behavior, and "make CI report a branch" would mean inventing a placeholder. Build a throwaway repo (`git init -q` + `-c commit.gpgsign=false commit --allow-empty` + `checkout -b <name>`) and `chdir` into it, so the expected branch is a value the test CONTROLS — that is strictly stronger than asserting against the ambient tree, which only ever proved "the suite runs from some worktree". Same trap in tolerant disguise: `assert "git_sha" in meta or "branch" in meta` survives detached HEAD but still breaks outside a checkout. To verify a fix for this class, reproduce with `git worktree add --detach` and confirm the OLD test fails there first — a local attached checkout cannot tell you anything. (PR #213, 2026-07-20)
+
+## Guards sharing one unverified premise don't corroborate each other — honour the producer's trust flags
+
+When several checks all derive from the same source file, their agreement is not independent evidence: an incomplete Hallucinote render yields a SHORT BUT PERFECTLY VALID master WAV, so open clip bounds derive from the truncated length, the post-encode duration check compares against that same derived number, and the non-empty-file check passes — every guard agrees and they are wrong together, publishing a truncated take as the tour's central evidence. Adding another derived check cannot find this class; only reading what the PRODUCER already recorded can. The capture manifest carries `status`, `analyzer_not_terminal` and per-entry `terminal` for exactly this reason ("never measure-and-lie"), so any consumer — especially one whose output is published — must honour them and require an explicit `--allow-incomplete` to override, while treating ABSENCE of the fields as fine, since manifests predating them must stay readable. Generalises: before adding a fourth check derived from an input, ask whether the input's producer already told you not to trust it. (TOUR A3, Critic rev-20260807T011821Z R-13)
+
+## A comment asserting how an external tool fails is a test, not a comment
+
+When you write down how a subprocess behaves on a failure path AND build a guard on it, verify the claim — the guard is only as good as an assumption nobody checked. "ffmpeg writes a zero-length file on an out-of-range seek" was wrong: it exits 0, with EMPTY stderr, writing ~428 bytes of valid mp3 header, which sails straight through the file-is-non-empty check written to catch it. The fix was not a better threshold but a different KIND of check (re-measure the encoded duration), and the same shape recurs — a gate sharing its patterns with the mechanism it guards cannot catch that mechanism's blind spot (TOUR A1), and a traceback guard catching only the tool's own exception class misses FileNotFoundError, the likeliest failure at that step (A1, R-14). Pin the external behaviour in a test so a version bump that changes it goes red. (TOUR A3, 2026-08-06)
+
+## Verify a from-scratch reproduction, not a re-push onto matching state
+
+When testing that something can be rebuilt, push into an EMPTY target, because a
+push into state that already matches skips the work and reports OK. Hallucinote's
+devices phase diff-reconciles, so every push onto an already-correct Live set had
+been skipping the loads entirely; the first push into a fresh set exposed a
+preset-shadowing bug and a stale-link permanent halt within minutes. Reading the
+code finds neither — the code is correct in the state it usually runs in.
+(2026-08-07, TOUR B1)
+
+## A test you have not seen fail is not evidence — plant the failure
+
+For any guard or scanner, verify RED by planting the thing it should catch, not
+just GREEN on a clean tree. A repo-wide secret/path scan passed vacuously because
+the constant it iterated was `(regex, description)` pairs and the loop called
+`.search` on the tuple — it matched nothing, forever, while looking thorough. Also
+verify the OVER-drop direction: a scan that flags legitimate fixtures gets deleted
+rather than fixed. (2026-08-07, TOUR B1)
+
+## A planted mutation proves nothing until you know WHERE it landed
+
+Two falsification runs during TMP-7B3X reported NOT CAUGHT for reasons that had nothing to do with the tests. The first inserted a refusal after `_require_bar_floor("start_bar", start_bar)` — a string that appears three times in `src/hallucinote/db/mutations/score.py` — and `str.replace(old, new, 1)` hit the first occurrence, mutating an unrelated mutator while the meter test passed untouched. The assertion that the mutation *applied* (the rule the previous session added) was satisfied and still proved nothing. The second flipped `plan.alert(` to `plan.warn(` in `sync/push/tempo.py` one iteration after a different same-length mutation of the same file; both mutated files had identical size and landed inside one mtime tick, so CPython reused the stale `.pyc` and the second run never executed the mutation. Re-running that one case by hand showed two tests failing exactly as designed.
+
+**How to apply.** (1) Anchor a planted mutation on something unique to the target — the function's docstring, or a located line index whose enclosing `def` you assert by name — and print that name so a mis-aimed mutation is visible in the output. (2) When a survivor is surprising, re-run that single case by hand before concluding the test is weak; the harness is the likelier suspect. (3) Vary the mutation's byte length between iterations touching one module, or sleep past the mtime tick, so the bytecode cache cannot serve a stale compile.
+
+## Removing a guard means re-raising its signal on the channel that reaches a human
+
+TMP-7B3X deleted a mutator `ValueError` that had made a Live limitation impossible to miss, and replaced it with `plan.warn(...)` in the push planner. `PushPlan.warn` appends to `PushPlan.notes`, whose declaration in `src/hallucinote/sync/push/_core.py` reads *"Diagnostic only — NOT surfaced to the operator. Use `alert()` for anything the operator must see"*, and `push_execute._drain_plan_warnings` drains `alerts` alone — its own docstring names dropping notes as "the exact silent-drop SYN-9F2L exists to prevent." Two independent Critic reviewers found it. Every claim written about a "loud warn" — in the docstrings, three docs, a skill and the change log — was false, and the two new tests asserted on `plan.notes`, so they passed while the operator saw nothing. The method name was read and its severity inferred; the field it writes was eight lines away in the same package.
+
+The follow-on finding was sharper. The divergence alert that *was* added fired on the mere presence of a non-bar-1 meter row, so it would have been identical noise on every correct odd-meter song and lived in a phase the documented re-materialize step (`push execute --only arrangement`) skips. It now runs in the arrangement and cue planners and compares each placement's meter-map beats against the uniform-meter beats, alerting only on the ones that actually differ.
+
+**How to apply.** (1) When removing a guard, name the channel the replacement lands on and read that channel's declaration — not the method's name. (2) Assert on the operator-facing field (`plan.alerts`), not on the producing object, whenever the point of the message is that a human sees it. (3) A detector must separate the healthy case from the broken one; one that fires on the existence of a condition rather than on its affected instances is noise, and noise gets tuned out. (4) Promote a sibling silent drop you find while you are in there — leaving tempo's identical skip on `notes` while meter's became an alert would have been indefensible.
+
+## Prose naming a mechanism reads as a decision — DESCRIBED-BUT-UNBUILT
+
+A docstring or design note that says how something works is indistinguishable from
+a record that it was built. `build.py` documented an outro pitch-drop as riding a
+Shifter envelope; no Shifter and no envelope ever existed, the build ran clean and
+the push reported OK. This is the only defect class with no symptoms. When a stage
+cannot decide something, mark it explicitly OPEN — never hand it downstream in the
+clothes of a decision. (2026-08-07, TOUR B1)
+
+## A required CLI argument can forbid the stage that should supply it
+
+Before concluding a missing step is a discipline problem, check whether the
+tooling makes it impossible. Hallucinote never elicited musical requirements
+partly because `/song-new`'s scaffold CLI takes tempo, meter and the section list
+as REQUIRED arguments — the agent must invent them to run the command, and the
+invented values become the song. Ordering forbade the stage; no amount of norm
+would have fixed it. (2026-08-07, TOUR B1)
+
+## Check whether a rule describes the tooling before obeying it
+
+The PR skill says a develop-bound change-log entry stays statusless. Following it
+made a chunk invisible to this repo's derived views, because only `status=shipped`
+feeds them. When a written rule and the implementation disagree, the rule may be
+describing a different repo's tooling — verify which, and record the departure
+rather than silently matching either. (2026-08-07, TOUR B1)
+
 ## A sampler/drum part's note mapping is only verifiable by rendering it
 
 `examples/b-natural`'s `11 Latin Perc` rendered as digital silence (-180 dB) while all ten other stems had audio. The part was authored against a Drum Rack's pad layout (C1 = MIDI 36); its instrument was an Instrument Rack wrapping an **Impulse**, whose eight slots are C3-G3 in Live's display — MIDI **60-67**. Every gate in the system was green: the notes were in the DB (129 of them), the notes were in Live, `verify-arrangement` passed on all 34 placements, `compat check` was 38/38 native, and the push reported `OK — all 14 phases completed`. The defect was found by rendering and listing per-stem RMS.
@@ -540,3 +723,75 @@ criterion in the plan and say so — never quietly pass, and never loosen the co
 to satisfy a wrong spec. (2026-08-10, STR-4C8N A2)
 
 **How to apply.** (1) Expand a count into its individual symptoms before calling a partial pass a failure. (2) If satisfying the criterion would require the tool to report something untrue, the criterion is wrong — correct it in the plan and say so. (3) Never tune a threshold until a count reaches zero; that is how a rubber stamp gets built and called a fix.
+
+## An estimator that reports the FIRST threshold crossing is bimodal on multi-lobe material
+
+`transients._part_transient` measured a kick's 10→90 % rise with
+`np.argmax(win >= 0.90 * pv)` — the first crossing scanning forward from the
+edge of a 60 ms search window. Real kicks are not single-lobed: the alien kit's
+40–150 Hz envelope has two comparable lobes 31.8 ms apart, invariant across the
+song. Whether the FIRST lobe cleared `0.90 × peak` decided which lobe the
+estimator measured, so the reading was bimodal — ~16 ms or ~44 ms — with a 1 %
+change in one lobe's height flipping it. A mix edit that lowered every section's
+first lobe by the same ~0.04 of the peak flipped exactly the two sections that
+crossed 0.90, and that read as "verse 1's kick got worse" when nothing about
+verse 1 had changed. The fix is to scan BACKWARD from the peak for the last
+sample under each threshold, making the rise the hit's final approach; all ten
+sections then read within 1 ms of each other and the mix edit showed as the
+uniform −1.3 ms it was. The same review found the twin defect one step later:
+a censored rise left the attack window anchored on the search window's edge, so
+its band levels were read over 75 ms instead of 30 and pooled into medians whose
+mix depended on how many hits happened to censor. (2026-09-08, AUD lenses,
+Chunk 03)
+
+**How to apply.** (1) For any interval between two threshold crossings, scan both from the feature you mean (the peak), not from a window boundary. (2) Before trusting a per-section difference, check whether the estimator is bimodal on this material — plot or tabulate the per-hit values, not just the median; a 50/50 split means the median is a coin toss. (3) Sweep the estimator's band edges and thresholds: a number that moves 44 → 15 ms when a filter edge moves 10 Hz is a property of the filter, and its docstring must say so where the FIELD is defined, not only in the skill that reads it. (4) When an estimator censors, censor everything anchored on what it failed to find — a fallback anchor silently changes the geometry of a different measurement.
+
+
+## A delegate in a shared clone must never `git stash`
+
+**Rule.** A subagent working in a `git worktree` of a shared clone must not run `git stash`
+(push, pop, apply or drop). To test a pre-fix baseline, use `git show HEAD:<path> > <path>` and
+restore from a copy — it touches nothing outside the worktree.
+
+**Why.** The stash is per-CLONE, not per-worktree. A delegate's `git stash pop` reaches straight
+into whatever another session left stashed. This happened during RELBLK-V19: a malformed
+`git stash push -m` created no entry, and the follow-up `pop` applied a different session's
+"b-natural-era engine work" stash into the delegate's worktree. It recovered, and the coordinator
+verified nothing was lost (the pop conflicted, so both entries survived) — but two other delegates
+in the same wave used stash-based baselines and were simply lucky.
+
+**How to apply.** Say it in the delegate brief, next to the verification ceiling. The failure is
+silent from the delegate's side: the stash it pops looks like its own work.
+
+
+## An `*_index` field crossing layers must say PHYSICAL or ORDINAL
+
+**Rule.** When a persisted integer is used to address an object in an external system, the
+boundary artifact that specifies the field must state which number it holds: the external
+system's own address, or the ordinal the field's producer assigns. Name it where the contract
+is written, not only in the producer's docstring.
+
+**Why.** `ableton_links` was specified as `(session_id, db_kind, db_id) -> ableton_index`.
+For devices that value is Live's **physical** `device_index` — what `plan_push_devices` hands
+`set_parameter` — but `chain_rebuild._rebind_links` wrote the DB `position` instead, and every
+reader accepted it, because the two numbers are equal whenever the chain's unauthored devices
+(in practice the `HallucinoteAnalyzer`) sit after the authored ones. A chain rebuild breaks that
+for exactly one window: the analyzer survives the demolish at the HEAD, so position *q* addresses
+index *q+1*. In that window `push execute --only devices` wrote authored values onto the
+neighbouring device — the same wrong-device failure as #532, one layer out, reached through the
+recovery the tool's own alert recommends.
+
+Two things made it survive. `reconcile_device_links`' stale-drop **keeps** an off-by-one link
+because the index exists, and its positional bind then finds a class mismatch and declines to
+rebind — so the wrong value is preserved rather than corrected. And the defect is invisible in the
+common case: every test whose chain held no unauthored device passed identically either way.
+
+**How to apply.** (1) In the boundary artifact, write which number the field holds and what makes
+the two coincide — the coincidence condition is the thing a reader needs, because it is what will
+stop being true. (2) A producer holding only ordinals must read the live order and map
+(`chain_rebuild._logical_chain` keeps both numbers per device); it may not assume agreement.
+(3) Write the test for the disagreeing state. Here that meant teaching the fake to hold a device
+the DB does not author, which the fakes could not represent at all — the scenario was
+unrepresentable, not merely untested, which is why it survived the module's whole life.
+(4) Suspect any reconcile pass that validates an address by EXISTENCE: "the index is occupied" is
+not "the index is right".

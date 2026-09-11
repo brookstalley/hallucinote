@@ -468,6 +468,8 @@ def test_timbre_serializes_when_present_and_is_null_when_absent():
         "spectral_centroid_hz": 1820.0,
         "spectral_flatness": 0.42,
         "spectral_rolloff_hz": 4100.0,
+        # sharpness defaults to NaN when a fixture doesn't measure it → null
+        "sharpness_acum": None,
     }
     assert parsed["stems"][1]["timbre"] is None
 
@@ -490,6 +492,7 @@ def test_timbre_nan_sentinel_serializes_as_null():
         "spectral_centroid_hz": None,
         "spectral_flatness": None,
         "spectral_rolloff_hz": None,
+        "sharpness_acum": None,
     }
 
 

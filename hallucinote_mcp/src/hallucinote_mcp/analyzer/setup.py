@@ -367,7 +367,7 @@ def strip_analyzers(context: LiveContext) -> StripResult:
     instances). Re-running is a no-op once every surface is clear.
 
     Walks the SAME ``_plan_surfaces`` snapshot ``ensure_analyzers_loaded``
-    uses, finds the analyzer per surface via ``_find_analyzer_index`` (the
+    uses, finds the analyzer per surface via ``find_analyzer_index`` (the
     shared finder), and deletes it via ``device_handlers.delete_handler``.
     Returns a ``StripResult`` naming every surface a deletion fired on.
 
@@ -390,7 +390,7 @@ def strip_analyzers(context: LiveContext) -> StripResult:
 
         def _find() -> int | None:
             devices = _existing_devices_for(context, plan.track_address)
-            return _find_analyzer_index(devices)
+            return find_analyzer_index(devices)
 
         idx = context.run_on_main(_find)
         if _strip_action(idx) == "absent":
@@ -510,7 +510,7 @@ def _ensure_on_surface(
         # length from the SAME device-list snapshot — they must agree (an
         # interleaved analyzer's "is it last?" decision compares the two).
         devices = _existing_devices_for(context, track_address)
-        return _find_analyzer_index(devices), len(devices)
+        return find_analyzer_index(devices), len(devices)
 
     existing_idx, chain_len = context.run_on_main(_index_and_len)
     action = _reposition_action(existing_idx, chain_len)
@@ -589,7 +589,7 @@ def _ensure_on_surface(
         # never trusts the under-tapped stem (never measure-and-lie).
         def _reread() -> tuple[int | None, bool]:
             devices = _existing_devices_for(context, track_address)
-            idx = _find_analyzer_index(devices)
+            idx = find_analyzer_index(devices)
             return idx, (idx == len(devices))
 
         found_idx, terminal = context.run_on_main(_reread)
@@ -755,8 +755,14 @@ Every .amxd of type ``amxd~ audioeffect`` surfaces under this single
 class. The .amxd filename (sans extension) is in ``device.name``."""
 
 
-def _find_analyzer_index(devices: list[Any]) -> int | None:
+def find_analyzer_index(devices: list[Any]) -> int | None:
     """1-based device_index of the first HallucinoteAnalyzer in the chain.
+
+    PUBLIC because it carries a cross-module contract: `handlers/device.py`
+    asks it "is this device behind the tap?" so that the answer and the
+    re-seat sweep's own answer cannot diverge. It was underscore-private while
+    every caller lived in this module; a private name reaching across a module
+    boundary understates what a rename would break.
 
     M4L identity surface in Live's device-object API:
       - ``class_display_name`` is ``"Max Audio Effect"`` for every

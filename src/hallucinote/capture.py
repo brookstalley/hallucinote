@@ -54,8 +54,11 @@ in each track's `sends` map, keyed by return name), top-level device chains
 (1 per track/return/master that has a `devices: [...]` array — chunk 4a;
 master added by SNP-4K7M), devices
 (1 row per array entry), device parameters (1 row per entry in each device's
-`params_dialed: {...}` map). `clips: [...]` on tracks is still ignored —
-populated by build.py hand-authored sections.
+`params_dialed: {...}` map). A sampler device entry also carries
+`audio_file: "assets/..."` — the sample it plays, in the same song-relative-or-
+absolute form `clips.audio_file` uses; push hands it back via
+`ableton_device(action='assign_sample')`. `clips: [...]` on tracks is still
+ignored — populated by build.py hand-authored sections.
 
 Live capture (Ableton -> snapshot.json) runs IN CODE over the bridge push/pull
 already use: `assemble_snapshot_via_probes` walks the live set, issuing the v1
@@ -74,12 +77,30 @@ from __future__ import annotations
 import re
 import sqlite3
 import warnings
+from collections import Counter
+from dataclasses import dataclass, field as _dc_field
 from datetime import datetime, timezone
-from typing import Any
+from pathlib import Path
+from typing import Any, Iterable
 
 from hallucinote.analyzer_identity import is_analyzer_device
 from hallucinote.db import mutations as M, queries as Q
+# The two track-row operations replay needs that the package's flat namespace
+# does not re-export yet — imported from the submodule the way `db.mutations`
+# submodules import each other.
+from hallucinote.db.mutations.tracks import (
+    describe_track_deletion,
+    reindex_tracks,
+)
+from hallucinote.paths import audio_file_ref
 from hallucinote.return_naming import normalize_live_return_name
+# One definition of what Live's default scaffold IS, read by both sides that
+# have to recognize it — capture (exclude it from the snapshot) and the push
+# cleanup planner (offer to delete it) — so the two can never disagree.
+from hallucinote.default_scaffold import (
+    CANONICAL_DEFAULT_SCAFFOLD_RETURN_DEVICES,
+    CANONICAL_DEFAULT_SCAFFOLD_TRACK_NAMES,
+)
 
 # SNP-8R4K chunk 2 — snapshot schema version stamped on every compiled snapshot
 # (`compile_snapshot`) and asserted by the at-rest cleanup (`migrate_snapshot`).
@@ -108,7 +129,7 @@ _VALID_TRACK_TYPES = frozenset({"midi", "audio", "group"})
 # `requests.kind='pull'` row and every event they emit carries that
 # request_id + song_id + ts. `replay_capture` refuses (StaleSnapshotError)
 # when such events are NEWER than the snapshot's `captured_at` stamp.
-# Design + refuse/warn matrix: .prawduct/artifacts/plans/BAK-7D2V/design.md.
+# Design + refuse/warn matrix: .prawduct/artifacts/plans/BAK-7D2V/archive/design.md.
 
 # Event kinds for state replay_capture re-asserts from the snapshot. A pulled
 # event OUTSIDE this set (clip-notes, envelopes, tempo/cue, routing, tuning,
@@ -116,7 +137,7 @@ _VALID_TRACK_TYPES = frozenset({"midi", "audio", "group"})
 # what keeps ordinary build.py-staging pulls from tripping it.
 #
 # Coverage contract (audited 2026-07-04; method + full table in
-# .prawduct/artifacts/plans/BAK-7D2V/design.md §"Kind-set audit"): for EVERY
+# .prawduct/artifacts/plans/BAK-7D2V/archive/design.md §"Kind-set audit"): for EVERY
 # mutator any pull apply handler calls (grep `M\.` over sync/pull/), the event
 # kind(s) it emits are either in this tuple (replay re-asserts that state) or
 # provably outside replay's write surface. Cascade-deleting mutators matter
@@ -150,9 +171,8 @@ def has_usable_captured_at(snapshot: dict[str, Any]) -> bool:
     the guard can order it against pulled events instead of falling back to the
     legacy warn-and-proceed branch.
 
-    The one public read of :data:`_CAPTURED_AT_SHAPE`, so callers that must
-    distinguish a stamped snapshot from a legacy one (the guard itself, and the
-    re-stamp override, which refuses on an unstamped file) share one definition
+    The one public read of :data:`_CAPTURED_AT_SHAPE`, so every caller that must
+    distinguish a stamped snapshot from a legacy one shares a single definition
     of "usable" rather than re-deriving the shape.
     """
     captured_at = snapshot.get("captured_at")
@@ -181,33 +201,6 @@ def utc_now_eventlike() -> str:
     string comparison against event rows is chronological comparison."""
     now = datetime.now(timezone.utc)
     return now.strftime("%Y-%m-%dT%H:%M:%S.") + f"{now.microsecond // 1000:03d}Z"
-
-
-def restamp_captured_at(snapshot: dict[str, Any]) -> str:
-    """Refresh ``snapshot['captured_at']`` to now (in place); return the new stamp.
-
-    The guard is armed by pull EVENTS newer than the snapshot, not by snapshot
-    content, so re-stamping the canonical snapshot newer than those events
-    disarms it with no content change (BAK-7D2V).
-
-    This is an operator override, not a workflow step: it ASSERTS that the
-    on-disk content already matches Live, and nothing here can verify that
-    assertion. An empty ``diff_snapshots`` result does not verify it either —
-    the diff compares device identity, dialed parameters, and chain names, but
-    never device sidechain source, drum-pad mappings, or ``chain_authored_props``,
-    all of which replay re-asserts. A pull touching only those fields diffs clean
-    over a stale file, so re-stamping there would silently revert it. Baking a
-    real capture is the durable fix (``/song-snapshot`` merges the fresh refresh
-    over the canonical file, carrying those fields AND a fresh stamp);
-    ``--force-replay`` is the conscious-discard path, and it re-warns every build
-    rather than disarming permanently.
-
-    Only a genuine capture or this explicit re-stamp may move the stamp;
-    ``migrate_snapshot`` deliberately never does (stamping unknown-age content
-    newer than pulls it lacks would defeat the guard)."""
-    stamp = utc_now_eventlike()
-    snapshot["captured_at"] = stamp
-    return stamp
 
 
 def _pulled_rows_newer_than(
@@ -298,7 +291,7 @@ def _guard_stale_snapshot(
             "NOW. Re-capture to bake live edits durably and stamp the "
             "snapshot so this check becomes exact: run `/song-snapshot` "
             "(probe -> diff -> confirmed overwrite of captured_session.json), "
-            "or `python -m hallucinote.tools.capture_cli execute --song "
+            'or `"<python>" -m hallucinote.cli capture execute --song '
             "<slug>` — note that writes captured_session.refresh.json, NOT "
             "the canonical file: review/diff it, then copy it over "
             "captured_session.json yourself. (A legacy file is never "
@@ -718,7 +711,7 @@ def _replay_devices(
         # `drum_pads` array captured via `ableton_device(action='pad_info')`:
         # ``[{chain_name: str, midi_note: int}, ...]``. Replay persists into
         # `drum_pad_mappings` so the song's generators can resolve
-        # ``Kit.from_device(...).kick`` to the kit's actual MIDI note.
+        # ``load_kit(...).kick`` to the kit's actual MIDI note.
         # Arc 4 / D4: identity check uses the browser display name
         # ``"Drum Rack"`` (post-D4 ``snapshot.class`` semantics).
         pads = d.get("drum_pads")
@@ -833,6 +826,159 @@ def _mixer_from_snapshot(t: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+@dataclass
+class TrackReconciliation:
+    """How a snapshot's tracks line up against the rows a song already has.
+
+    ``moves`` maps an existing row id -> the ``track_index`` it must end up at
+    (only rows that actually have to move). ``claimed`` maps an incoming track
+    name -> the row id it reconciled onto. ``orphans`` are the existing rows no
+    incoming track claims. ``ambiguous`` names the incoming tracks that could
+    not be resolved by name and fall back to index-keyed upsert.
+    """
+
+    moves: dict[str, int] = _dc_field(default_factory=dict)
+    claimed: dict[str, str] = _dc_field(default_factory=dict)
+    orphans: list[dict[str, Any]] = _dc_field(default_factory=list)
+    ambiguous: list[str] = _dc_field(default_factory=list)
+
+
+def plan_track_reconciliation(
+    existing_rows: Iterable[Any], incoming_tracks: Iterable[dict[str, Any]],
+) -> TrackReconciliation:
+    """Match a snapshot's tracks to a song's existing track rows BY NAME, and
+    say where each row has to move.
+
+    Pure: takes row-like mappings (``id`` / ``track_index`` / ``name``) and
+    snapshot track entries (``index`` / ``name``), touches no database.
+
+    **Why name and not index.** ``track_index`` is a POSITION, and the system
+    renumbers positions — capture's dense rank around an excluded default
+    scaffold is exactly that. Keying a track's identity on its position means
+    "same index" silently reads as "same track", so a renumber renames a real
+    row onto a slot it never occupied and strands the row it came from. A
+    reconciliation has to match on something that SURVIVES a renumber, and the
+    name is what does.
+
+    **Ambiguity refuses rather than guesses.** Live permits duplicate track
+    names. Where a name matches more than one existing row — or the incoming
+    snapshot itself repeats it, so which incoming track owns the row is
+    unknowable — nothing is reconciled for that name and it is reported. A
+    wrong reconciliation is worse than none: it silently renames a real row,
+    which is the failure this exists to prevent. An incoming name matching NO
+    existing row is not ambiguous at all — it is a new track, or a track
+    genuinely renamed in Live — and is left to the index-keyed upsert in
+    silence, because a warning that fires on the healthy path is one an
+    operator learns to ignore.
+
+    **Orphans are moved out of the way, never deleted.** An orphan is a row
+    neither claimed by name nor standing in for an unresolved incoming index.
+    It still holds a position a reconciled row may need, so it is relocated
+    above every claimed index — keeping its UUID, its children and its pulled
+    mix state intact — and the renumber stays satisfiable. Deleting it is the
+    operator's call (`prune_track`), never replay's.
+    """
+    rows = [
+        r for r in existing_rows
+        if r["kind"] != "master" and int(r["track_index"]) != 0
+    ]
+    incoming = list(incoming_tracks)
+    plan = TrackReconciliation()
+
+    rows_by_name: dict[str, list[Any]] = {}
+    for row in rows:
+        rows_by_name.setdefault(row["name"], []).append(row)
+    incoming_name_counts: Counter[str] = Counter(t["name"] for t in incoming)
+
+    target: dict[str, int] = {}
+    unresolved: list[dict[str, Any]] = []
+    for entry in incoming:
+        name = entry["name"]
+        candidates = rows_by_name.get(name) or []
+        if len(candidates) == 1 and incoming_name_counts[name] == 1:
+            row = candidates[0]
+            plan.claimed[name] = row["id"]
+            target[row["id"]] = int(entry["index"])
+            continue
+        if candidates and (
+            len(candidates) > 1 or incoming_name_counts[name] > 1
+        ):
+            if name not in plan.ambiguous:
+                plan.ambiguous.append(name)
+        unresolved.append(entry)
+
+    # The index-keyed fallback, unchanged in effect and now explicit. An
+    # incoming name that identified no row is either a NEW track or one
+    # renamed in Live, and in the rename case the row that should wear the new
+    # name is the one already sitting at that index. Binding it here is what
+    # keeps a rename a rename — the row keeps its UUID and its children — and
+    # it is also what stops the rename's own row being mistaken for an orphan.
+    rows_by_index = {int(r["track_index"]): r for r in rows}
+    for entry in unresolved:
+        row = rows_by_index.get(int(entry["index"]))
+        if row is None or row["id"] in target:
+            continue
+        target.setdefault(row["id"], int(row["track_index"]))
+
+    incoming_indexes = {int(t["index"]) for t in incoming}
+    claimed_indexes = set(target.values())
+    plan.orphans = [row for row in rows if row["id"] not in target]
+
+    # An orphan sitting on an index the snapshot claims has to step aside.
+    # Park it above everything either side uses, in its current order, so the
+    # relocation is deterministic and never itself collides.
+    occupied = incoming_indexes | claimed_indexes | {
+        int(r["track_index"]) for r in rows
+    }
+    next_free = max(occupied, default=0) + 1
+    for row in sorted(plan.orphans, key=lambda r: int(r["track_index"])):
+        current = int(row["track_index"])
+        if current not in incoming_indexes and current not in claimed_indexes:
+            continue
+        target[row["id"]] = next_free
+        next_free += 1
+
+    plan.moves = {
+        row["id"]: target[row["id"]] for row in rows
+        if row["id"] in target and int(row["track_index"]) != target[row["id"]]
+    }
+    return plan
+
+
+def _validate_snapshot_track(t: dict[str, Any]) -> int:
+    """Validate one snapshot track entry and return its index.
+
+    Runs as a PRE-PASS over every incoming track, before replay writes
+    anything: the reconciliation re-indexes rows, and a malformed entry
+    discovered halfway through the upsert loop would leave that renumber half
+    applied with no transaction spanning it.
+    """
+    track_type = t.get("type", "midi")
+    if track_type not in _VALID_TRACK_TYPES:
+        raise ValueError(
+            f"track {t.get('name')!r}: type {track_type!r} not in "
+            f"{sorted(_VALID_TRACK_TYPES)}"
+        )
+    idx = int(t["index"])
+    if idx < 1:
+        # 0 is reserved for the master sentinel; Live's tracks are 1-based.
+        raise ValueError(
+            f"track {t.get('name')!r}: index {idx} must be >= 1 "
+            "(0 is reserved for the master sentinel)"
+        )
+    return idx
+
+
+def _orphan_report(conn: sqlite3.Connection, orphans: list[Any]) -> str:
+    """The per-orphan detail line: what each stranded row is carrying."""
+    parts = []
+    for row in orphans:
+        plan = describe_track_deletion(conn, track_id=row["id"])
+        detail = plan.summary() if plan is not None else "unreadable"
+        parts.append(f"index {row['track_index']}: {row['name']!r} ({detail})")
+    return "; ".join(parts)
+
+
 def replay_capture(
     conn: sqlite3.Connection,
     snapshot: dict[str, Any],
@@ -866,6 +1012,16 @@ def replay_capture(
     threading still distinguishes pulled state from build-owned state for
     tombstone-time semantics.
 
+    Tracks are reconciled BY NAME before that upsert runs
+    (`plan_track_reconciliation` + `reindex_tracks`). ``track_index`` is a
+    position the system renumbers, not an identity: keying the upsert on it
+    meant a renumbered snapshot renamed a real row onto a slot it never held
+    and stranded the row the name came from. Reconciliation moves each matched
+    row to its new index first, keeping its UUID (so `ableton_links` and every
+    child row stay valid), and refuses to guess where a name is ambiguous. A
+    row the snapshot no longer defines is REPORTED with what it carries and the
+    command that removes it — never deleted here.
+
     The mix layout IS replayed: tracks/returns/sends/mixer AND the full device
     tree — top-level devices, nested rack chains (`_replay_rack_chains`, depth-N),
     device parameters, and per-DrumChain props (choke_group/out_note). Notes/clips
@@ -895,7 +1051,8 @@ def replay_capture(
             f"replay_capture: snapshot predates SNP-8R4K ({detail}) — analyzer "
             "rows are ignored on build (the DB is clean either way), but the "
             "committed snapshot file is still dirty at rest. Run "
-            "`python -m hallucinote.tools.capture_cli migrate <captured_session.json>` "
+            '`"<python>" -m hallucinote.cli capture migrate '
+            "<captured_session.json>` "
             "to clean + version-stamp the committed file.",
             UserWarning,
             stacklevel=2,
@@ -1036,21 +1193,63 @@ def replay_capture(
             stacklevel=2,
         )
 
+    incoming_tracks = list(snapshot.get("tracks") or [])
+    # Validate the whole incoming set BEFORE anything is written: the
+    # reconciliation below re-indexes rows, and a malformed entry found
+    # mid-loop would leave that renumber half applied.
+    for t in incoming_tracks:
+        _validate_snapshot_track(t)
+
+    # Reconcile by NAME before upserting by index. `track_index` is a position
+    # the system is allowed to renumber (capture's dense rank around an
+    # excluded default scaffold does exactly that), so keying identity on it
+    # made "same index" silently mean "same track" — a real row got renamed
+    # onto a slot it never held and the row it came from was stranded as a
+    # duplicate. Here each row is carried to its new position first; the upsert
+    # loop below then finds identity and position already agreeing.
+    reconciliation = plan_track_reconciliation(
+        Q.get_tracks_for_song(conn, song_id), incoming_tracks,
+    )
+    if reconciliation.moves:
+        reindex_tracks(
+            conn,
+            song_id=song_id,
+            moves=reconciliation.moves,
+            actor=actor,
+            request_id=request_id,
+            reason=reason or "replay_capture: reconcile track identity by name",
+        )
+    if reconciliation.ambiguous:
+        warnings.warn(
+            "replay_capture: could not reconcile "
+            f"{len(reconciliation.ambiguous)} track name(s) "
+            f"({', '.join(repr(n) for n in sorted(reconciliation.ambiguous))}) "
+            "— the name matches more than one row in this song, or the "
+            "snapshot itself repeats it, so which row it identifies is "
+            "unknowable. Those tracks fall back to the (song, track_index) "
+            "upsert, which can rename a row. Give the duplicated tracks "
+            "distinct names in Live and re-capture.",
+            UserWarning,
+            stacklevel=2,
+        )
+
     track_ids_by_name: dict[str, str] = {}
-    for t in snapshot.get("tracks") or []:
+    reidentified: list[tuple[int, str, str]] = []
+    # Read AFTER the reconciliation, so the rename guard below judges the rows
+    # as they now stand rather than as they stood before the moves.
+    existing_names_by_index: dict[int, str] = {
+        int(r["track_index"]): r["name"]
+        for r in Q.get_tracks_for_song(conn, song_id)
+    }
+    for t in incoming_tracks:
         track_type = t.get("type", "midi")
-        if track_type not in _VALID_TRACK_TYPES:
-            raise ValueError(
-                f"track {t.get('name')!r}: type {track_type!r} not in "
-                f"{sorted(_VALID_TRACK_TYPES)}"
-            )
         idx = int(t["index"])
-        if idx < 1:
-            # 0 is reserved for the master sentinel; Live's tracks are 1-based.
-            raise ValueError(
-                f"track {t.get('name')!r}: index {idx} must be >= 1 "
-                "(0 is reserved for the master sentinel)"
-            )
+        # What survives to here is the fallback path: a name the reconciliation
+        # refused to resolve, upserted onto whatever row holds its index. The
+        # rename is the silent half; say it, and leave the row alone.
+        was = existing_names_by_index.get(idx)
+        if was is not None and was != t["name"]:
+            reidentified.append((idx, was, t["name"]))
         tid = M.create_track(
             conn,
             song_id=song_id,
@@ -1113,6 +1312,61 @@ def replay_capture(
                 sidechain_pending=sidechain_pending,
             )
 
+    # Only the ORPHANING case earns the alarm. A rename is ambiguous on its own:
+    # renaming a track in Live and re-capturing produces the same (index, old,
+    # new) triple as an index shift, and on that path the row is simply correct.
+    # What distinguishes them is whether the incoming name ALSO sits at a
+    # different index in the DB **that the snapshot does not itself cover**. A
+    # deliberate SWAP (DB {1:'A', 2:'B'}, snapshot [(1,'B'), (2,'A')]) puts each
+    # name at another index too, yet strands nothing: both indices are claimed
+    # by an incoming track. Consulting the incoming index set is what tells the
+    # two apart.
+    incoming_indexes = {int(t["index"]) for t in incoming_tracks}
+    shifted = [
+        (idx, was, now) for idx, was, now in reidentified
+        if any(
+            n == now and i != idx and i not in incoming_indexes
+            for i, n in existing_names_by_index.items()
+        )
+    ]
+    if shifted:
+        detail = "; ".join(
+            f"index {idx}: {was!r} -> {now!r}" for idx, was, now in shifted
+        )
+        warnings.warn(
+            f"capture: replay RENAMED {len(shifted)} existing track row(s) "
+            f"({detail}), and each incoming name ALSO sits at another index "
+            "this snapshot does not cover — so the row it came from is being "
+            "left behind as a duplicate. Replay reconciles tracks by name, so "
+            "this only happens where the name was ambiguous and the "
+            "(song, track_index) upsert had to stand in. Check the song's "
+            "tracks before building.",
+            stacklevel=2,
+        )
+
+    # R5 — a row the snapshot no longer defines is REPORTED, never pruned by
+    # replay. An orphan can be carrying pulled human work (its mixer state, its
+    # sends, a tuned device chain, its clips and notes), none of which a build
+    # without `--reset` re-authors, and `_guard_stale_snapshot` already refuses
+    # rather than silently reverting pulled edits — a replay that deleted rows
+    # on its own authority would contradict a guard this module ships. It is
+    # not inert either: the next push materializes it as a junk track in Live.
+    # So the report names the remedy.
+    if reconciliation.orphans:
+        detail = _orphan_report(conn, reconciliation.orphans)
+        warnings.warn(
+            f"capture: replay left {len(reconciliation.orphans)} track row(s) "
+            f"this snapshot does not define: {detail}. Replay never deletes a "
+            "track row — an orphan can be carrying pulled work a rebuild does "
+            "not re-author, but the next push will materialize it in Live. "
+            "Remove one with: hallucinote prune-tracks --db <song>.db --song "
+            f"{song_name!r} --track <name>  (or --all-orphans --snapshot "
+            "<captured_session.json> for every orphan at once).",
+            UserWarning,
+            stacklevel=2,
+        )
+
+
     # BAK-3M9T: apply each device's sidechain source now that every track exists.
     # The source is stored by surface name (never a per-build UUID), resolved here
     # against this song's tracks (the source is always a track — see
@@ -1166,7 +1420,29 @@ def capture_plan() -> list[dict[str, str]]:
     """
     return [
         {"tool": "ableton_session(action='info')",
-         "purpose": "global state: tempo, signature, master volume/pan, track counts"},
+         "purpose": "PRECONDITION FIRST, then global state. Read `is_playing` and "
+                    "`current_song_time` before probing anything else. If "
+                    "`is_playing` is true, STOP — a capture reads each parameter at "
+                    "whatever beat the probe lands on, so a moving playhead makes "
+                    "the snapshot nondeterministic and no seek can fix it; ask for "
+                    "the transport to be stopped. If either key is missing or "
+                    "non-numeric, STOP — an unreadable playhead cannot be assumed "
+                    "to be at 0. Otherwise: tempo, signature, master volume/pan, "
+                    "track counts"},
+        {"tool": "ableton_session(action='seek', bar=1, beat=0.0)",
+         "purpose": "Park the playhead at beat 0 before any parameter is read, "
+                    "unless `current_song_time` is already 0. Every parameter under "
+                    "an automation envelope reads at the value the envelope holds AT "
+                    "THE PLAYHEAD, and after a render or a performed-automation push "
+                    "the playhead sits at the END of the arrangement — captured "
+                    "there, an end-of-song value becomes the device's dialed "
+                    "baseline and `replay_capture` re-asserts it on every subsequent "
+                    "build, permanently redefining the value every envelope rides "
+                    "from. It is silent: the diff shows an ordinary field change. "
+                    "Check the reply's `settled_beats` is 0 before continuing; if it "
+                    "is not, STOP rather than capture values that may be wrong and "
+                    "indistinguishable from deliberate ones. (`capture execute` does "
+                    "all of this in code — prefer it.)"},
         {"tool": "ableton_device(action='list', target='master')",
          "purpose": "SNP-4K7M: the master's top-level device chain (kind + "
                     "display_name + position), attached as `song.master.devices` "
@@ -1211,7 +1487,7 @@ def capture_plan() -> list[dict[str, str]]:
                     "field on the snapshot: ``[{midi_note: int, chain_name: "
                     "str}, ...]``. Replay persists into `drum_pad_mappings` "
                     "so songs can "
-                    "use `Kit.from_device(conn, device_id)` to author kit-"
+                    "use `hallucinote.kits.load_kit(conn, device_id)` to author kit-"
                     "portable drum patterns instead of GM-assumed MIDI notes."},
     ]
 
@@ -1399,17 +1675,30 @@ def _snapshot_param_entry(p: dict[str, Any]) -> dict[str, Any] | None:
     return entry
 
 
-def _params_dialed_via_probe(
+def _probe_device_parameters(
     probe, *, node: dict[str, Any],
-) -> dict[str, Any]:
-    """Probe one device's parameters (``detail='full'`` — the filter + the
-    normalized math need min/max/is_enum) and assemble the filtered
-    ``params_dialed`` map keyed by parameter name."""
+) -> list[dict[str, Any]]:
+    """One device's RAW ``get_parameters`` entries (``detail='full'`` — the
+    default filter + the normalized math need min/max/is_enum).
+
+    Split out from :func:`_params_dialed_via_probe` so a caller that needs a
+    parameter's raw live VALUE — not its snapshot-filtered form — can read it
+    off the same single probe instead of paying a second round trip. The
+    sidechain-arming check (:func:`sidechain_armed_in_probe`) is the caller
+    that needs it: a param sitting at its intrinsic default is absent from
+    ``params_dialed``, so presence there cannot answer "is it on?".
+    """
     result = probe("ableton_device", "get_parameters", node=node, detail="full")
+    return [p for p in (result.get("parameters") or []) if isinstance(p, dict)]
+
+
+def _params_dialed_from_probed(
+    parameters: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Assemble the filtered ``params_dialed`` map (keyed by parameter name)
+    from raw probed parameter entries."""
     out: dict[str, Any] = {}
-    for p in result.get("parameters") or []:
-        if not isinstance(p, dict):
-            continue
+    for p in parameters:
         name = p.get("name")
         if not isinstance(name, str) or not name:
             continue
@@ -1417,6 +1706,17 @@ def _params_dialed_via_probe(
         if entry is not None:
             out[name] = entry
     return out
+
+
+def _params_dialed_via_probe(
+    probe, *, node: dict[str, Any],
+) -> dict[str, Any]:
+    """Probe one device's parameters (``detail='full'`` — the filter + the
+    normalized math need min/max/is_enum) and assemble the filtered
+    ``params_dialed`` map keyed by parameter name."""
+    return _params_dialed_from_probed(
+        _probe_device_parameters(probe, node=node)
+    )
 
 
 def _parent_node(parent_kind: str, parent_index: int | None) -> dict[str, Any]:
@@ -1567,14 +1867,110 @@ def _capture_nested_chains(
     return out
 
 
+def _device_sample_ref(
+    listed: dict[str, Any], song_dir: Path | None,
+) -> str | None:
+    """The snapshot's ``audio_file`` reference for one listed device, or None.
+
+    ``sample_file_path`` rides the chain listing for any device with a sample
+    slot; its value is None for a slot nothing is loaded into, which is not a
+    reference to record — an empty Simpler round-trips as a Simpler with no
+    sample, exactly as it stands in Live.
+
+    Rendered through :func:`hallucinote.paths.audio_file_ref` so a sample under
+    the song directory is stored song-relative and a sample from the user's own
+    library keeps its absolute path — the same two forms ``clips.audio_file``
+    carries, read back by the same resolver at push time.
+    """
+    file_path = listed.get("sample_file_path")
+    if not file_path:
+        return None
+    return audio_file_ref(song_dir, str(file_path))
+
+
+# A device's sidechain-ENABLE parameter, matched the way the MCP
+# `set_sidechain` handler matches it (lowercased substring over the canonical
+# name + the known naming variants), so "armed" means the same thing on every
+# surface that asks. Live natives use `S/C On`; the variants cover plugins.
+SIDECHAIN_ENABLE_PARAM_HINTS: tuple[str, ...] = (
+    "s/c on", "sidechain on", "sidechain active", "side enable",
+    "external sidechain",
+)
+
+
+def is_sidechain_enable_param(name: Any) -> bool:
+    """True when ``name`` is a device's sidechain-ENABLE parameter."""
+    if not isinstance(name, str):
+        return False
+    lname = name.lower()
+    return any(hint in lname for hint in SIDECHAIN_ENABLE_PARAM_HINTS)
+
+
+def sidechain_armed_in_probe(parameters: list[dict[str, Any]]) -> bool:
+    """True when raw probed ``get_parameters`` entries show the device's
+    sidechain ENABLED.
+
+    Reads the raw live ``value``, never ``params_dialed`` membership: the
+    snapshot's default filter DROPS a param sitting at its intrinsic default,
+    so an absent `S/C On` can mean "off" — and a present one can mean "Live
+    wouldn't report a default", which says nothing about the value.
+    """
+    for p in parameters:
+        if not is_sidechain_enable_param(p.get("name")):
+            continue
+        raw = p.get("value")
+        if isinstance(raw, bool):
+            return raw
+        if isinstance(raw, (int, float)):
+            return float(raw) > 0.5
+    return False
+
+
+def unreadable_sidechain_source_warning(targets: list[str]) -> str:
+    """The ONE message text for an armed sidechain on a device with no
+    input-routing surface (#536), shared by `/song-snapshot`'s capture and
+    push's ``device_sidechain`` phase so the two can't drift.
+
+    ``targets`` are pre-rendered ``"<device> on <parent>"`` labels. Per
+    `api-contract.md` § Direction (errors teach) the message says what WILL
+    happen — the source does not survive the next rebuild — and what to do
+    instead, not merely that something is off.
+    """
+    return (
+        "sidechain source NOT machine-readable: " + "; ".join(targets)
+        + " — the sidechain is ARMED (S/C On) on a device Live exposes no "
+        "input-routing surface for, so Hallucinote can neither read nor write "
+        "its SOURCE (Multiband Dynamics is the known case). Whatever source is "
+        "set by hand in Live's device view is LOST on the next build.py "
+        "rebuild — the device comes back armed and pointed at nothing. Re-set "
+        "the source by hand in Live after every push, or move the sidechain "
+        "onto a device that does expose routing (Compressor / Gate / Glue "
+        "Compressor)."
+    )
+
+
 def _capture_devices_for_parent(
     probe, *, parent_kind: str, parent_index: int | None = None,
+    song_dir: Path | None = None,
+    parent_label: str | None = None,
+    unreadable_sidechain_sink: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Capture the full device chain (top-level + nested, to any depth) for one
     parent (track / return / master), in the snapshot ``devices`` shape.
 
     The analyzer is skipped here so it is never probed; `compile_snapshot`
     strips it again defensively (R3) and densifies positions.
+
+    ``song_dir`` anchors a sampler's ``audio_file`` reference; without it every
+    captured sample path is stored absolute, which still replays on this
+    machine but does not travel.
+
+    ``unreadable_sidechain_sink`` collects ``"<device> on <parent>"`` labels for
+    the #536 condition — an ARMED sidechain on a device with no input-routing
+    surface, whose source this capture provably cannot see. The caller owns the
+    warning so one message covers the whole set; pass ``parent_label`` with it
+    (the track/return NAME, which this function is not given otherwise). Without
+    a sink the condition goes undetected, so a new caller must pass one.
     """
     listing = probe("ableton_device", "list", **_parent_flat_args(parent_kind, parent_index))
     out: list[dict[str, Any]] = []
@@ -1589,12 +1985,16 @@ def _capture_devices_for_parent(
             "class_name": d.get("class_name"),
             "name": d.get("name", ""),
         }
+        sample_ref = _device_sample_ref(d, song_dir)
+        if sample_ref is not None:
+            entry["audio_file"] = sample_ref
         node = {
             "parent": _parent_node(parent_kind, parent_index),
             "terminal": "device",
             "device_index": di,
         }
-        params = _params_dialed_via_probe(probe, node=node)
+        probed_params = _probe_device_parameters(probe, node=node)
+        params = _params_dialed_from_probed(probed_params)
         if params:
             entry["params_dialed"] = params
         # BAK-3M9T: a top-level device's sidechain SOURCE — the one piece the
@@ -1613,6 +2013,22 @@ def _capture_devices_for_parent(
             channel = routing.get("current_channel")
             if channel:
                 entry["sidechain_source_channel"] = channel
+        elif (
+            unreadable_sidechain_sink is not None
+            and not routing.get("has_input_routing")
+            and sidechain_armed_in_probe(probed_params)
+        ):
+            # #536: the sidechain is ON and Live exposes no routing surface, so
+            # there is no source for capture to record and none for push to
+            # restore. The Live limit is genuine and not ours to fix — what IS
+            # ours is that the loss stops being silent. Gated on has_input_routing
+            # so a routing-capable device (#374's author→push→pull path, the
+            # Compressor common case) never warns: a warning that fires there
+            # would teach the operator to ignore all of them.
+            unreadable_sidechain_sink.append(
+                f"{(entry['name'] or entry['class'] or 'device')!r} on "
+                f"{parent_label or f'{parent_kind} {parent_index}'}"
+            )
         if cls_display in RACK_CLASS_NAMES:
             chains_resp = probe(
                 "ableton_device", "get_device_chains",
@@ -1716,8 +2132,188 @@ def _capture_sends(probe, *, track_index: int) -> dict[str, Any]:
     return sends
 
 
+def is_untouched_default_scaffold_track(
+    track: dict[str, Any], *, has_clips: bool,
+) -> bool:
+    """True when a captured track entry is one of Live's brand-new-set
+    scaffold tracks that the song has NOT claimed.
+
+    Live's default set ships four tracks (``1-MIDI`` / ``2-MIDI`` /
+    ``3-Audio`` / ``4-Audio``) that are furniture, not song content. Ingesting
+    them makes them permanent song state: the push-side probe-and-link then
+    MATCHES them by name, so they never reach ``unmatched_live_tracks``, the
+    default-scaffold classifier goes silent, and "delete the default scaffold?"
+    can never be offered again.
+
+    Name alone is not enough on this side. Push can key its cleanup off the
+    name because it only ever judges tracks that are already unmatched; capture
+    judges every track in the set, so a scaffold slot the user has CLAIMED —
+    dropped an instrument on ``2-MIDI``, or a clip on ``3-Audio`` — must
+    survive. Untouched therefore means canonical name AND no devices AND no
+    clips.
+
+    ``has_clips`` is required rather than read off the entry because a snapshot
+    track entry carries clips only when the assembler happened to gather them:
+    a caller that never listed the track's clip slots cannot tell an empty
+    track from an unlisted one, and must not silently drop a claimed track on
+    that ambiguity.
+    """
+    return (
+        track.get("name") in CANONICAL_DEFAULT_SCAFFOLD_TRACK_NAMES
+        and not track.get("devices")
+        and not has_clips
+    )
+
+
+# A device entry key that only a CLAIMED device carries. `params_dialed` is
+# already non-default-filtered (`_snapshot_param_entry` drops anything sitting
+# at its intrinsic default), so an empty/absent map IS "at factory settings" —
+# a bypassed device shows up here because `Device On` is then off-default.
+# `browser_path` is deliberately absent: it is cross-machine IDENTITY carried
+# forward by `preserve_browser_paths`, not something a user dialed.
+_DEVICE_AUTHORSHIP_KEYS: tuple[str, ...] = (
+    "params_dialed", "chains", "param_overrides", "drum_pads",
+    "audio_file", "sidechain_source", "sidechain_source_channel",
+    "preset_query",
+)
+
+
+def is_untouched_default_scaffold_return(
+    entry: dict[str, Any], *, has_sends: bool,
+) -> bool:
+    """True when a captured return entry is one of Live's brand-new-set
+    scaffold returns that the song has NOT claimed.
+
+    The sibling of :func:`is_untouched_default_scaffold_track`, and
+    deliberately a DIFFERENT predicate. Live ships its default returns
+    ``A-Reverb`` and ``B-Delay`` carrying devices, so the track side's
+    "canonical name AND no devices" can never fire here. Name alone is worse
+    than useless: it would drop a claimed return's whole captured mix, and it
+    would break replay outright, because a surviving track's ``sends`` map
+    names returns and `replay_capture` raises on a send to a return the
+    snapshot no longer defines.
+
+    Untouched therefore means all four of:
+
+    * the canonical slot NAME (``A-Reverb`` / ``B-Delay``);
+    * EXACTLY the canonical device for that slot, and nothing else on the
+      chain — a second device, or a different one, is the user's chain;
+    * that device still at factory settings and under its stock name — a
+      dialed parameter, a nested-rack edit, a preset seed or a rename is a
+      claim;
+    * and NOTHING SENDS TO IT. That last conjunct is what keeps replay
+      satisfiable rather than merely tidy: if no track sends to the return,
+      dropping it cannot orphan a ``sends`` entry.
+
+    ``has_sends`` is required rather than read off the entry for the same
+    reason ``has_clips`` is on the track side — a return entry carries no
+    record of who sends to it, and the answer lives on the *tracks*. A caller
+    that has not looked cannot tell "nobody sends to it" from "I didn't check",
+    and must not drop a claimed return on that ambiguity.
+    """
+    canonical_device = CANONICAL_DEFAULT_SCAFFOLD_RETURN_DEVICES.get(
+        entry.get("name")
+    )
+    if canonical_device is None or has_sends:
+        return False
+    devices = entry.get("devices") or []
+    if len(devices) != 1:
+        return False
+    device = devices[0]
+    if (device.get("class_name") or device.get("class")) != canonical_device:
+        return False
+    if device.get("name") not in (None, "", canonical_device):
+        return False
+    return not any(device.get(key) for key in _DEVICE_AUTHORSHIP_KEYS)
+
+
+def _track_carries_clips(probe, *, track_index: int) -> bool:
+    """True when a Live track holds at least one clip in either location.
+
+    Session slots are reported dense — empty ones carry ``empty: True`` — while
+    ``arrangement_clips`` lists only real placements, so an entry without an
+    explicit ``empty`` flag counts as a clip.
+    """
+    for location in ("session", "arrangement"):
+        listing = probe(
+            "ableton_clip", "list", track_index=track_index, location=location,
+        )
+        for clip in listing.get("clips") or []:
+            if not clip.get("empty"):
+                return True
+    return False
+
+
+def _exclude_untouched_scaffold_returns(
+    returns_out: list[dict[str, Any]], tracks_out: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Drop the untouched default-scaffold returns from a freshly assembled
+    capture, in the order the two halves have to happen.
+
+    Returns ``(surviving_returns, dropped_names)``. Three things move together
+    and none of them is optional:
+
+    1. The predicate needs the TRACKS, because "nothing sends to it" is the
+       conjunct that keeps replay satisfiable — so this runs after the track
+       walk, not during the return walk. A send whose level is ``0.0`` is
+       Live's default wiring, not a send: every track carries one to every
+       return in a brand-new set.
+    2. Every surviving track's ``sends`` map loses the dropped return's key.
+       `replay_capture` RAISES on a send naming a return the snapshot does not
+       define, so leaving the key behind would trade an ingested scaffold for
+       an unreplayable snapshot. Only proven-zero sends are ever stripped, so
+       nothing authored is lost.
+    3. Survivors are renumbered by dense rank, for the reason the track half
+       is (`create_return` upserts on ``(song_id, position)``): a snapshot
+       numbered AROUND a scaffold return that Live later deletes would replay
+       the same return into a second row at a different position. Dense rank
+       makes the snapshot's numbering identical before and after the
+       push-side cleanup actually runs.
+
+    Send keys are compared through `normalize_live_return_name`, the same
+    normalization replay's own send lookup uses, so the strip cannot miss a
+    key because one side carried Live's ``<letter>-`` prefix and the other
+    did not.
+    """
+    sent_to: set[str] = set()
+    for track in tracks_out:
+        for return_name, level in (track.get("sends") or {}).items():
+            if isinstance(level, bool) or not isinstance(level, (int, float)):
+                continue
+            if float(level) > 0.0:
+                sent_to.add(normalize_live_return_name(return_name))
+
+    surviving: list[dict[str, Any]] = []
+    dropped: list[str] = []
+    for entry in returns_out:
+        name = entry.get("name")
+        has_sends = normalize_live_return_name(str(name)) in sent_to
+        if is_untouched_default_scaffold_return(entry, has_sends=has_sends):
+            dropped.append(str(name))
+            continue
+        entry["index"] = len(surviving) + 1
+        surviving.append(entry)
+
+    if dropped:
+        dropped_normalized = {normalize_live_return_name(n) for n in dropped}
+        for track in tracks_out:
+            sends = track.get("sends")
+            if not sends:
+                continue
+            kept = {
+                key: level for key, level in sends.items()
+                if normalize_live_return_name(key) not in dropped_normalized
+            }
+            if kept:
+                track["sends"] = kept
+            else:
+                track.pop("sends", None)
+    return surviving, dropped
+
+
 def assemble_snapshot_via_probes(
     probe, *, old_snapshot: dict[str, Any] | None = None,
+    song_dir: Path | None = None,
 ) -> dict[str, Any]:
     """Deterministically build a full ``captured_session.json`` snapshot by
     walking the live set in code — the in-code successor to the
@@ -1739,8 +2335,29 @@ def assemble_snapshot_via_probes(
     that portable seed forward and rewrites the fresh `chains` dump into a flat
     `param_overrides` list, so a by-ear nested tweak survives a rebuild without
     dropping the preset's timbre or bloating the snapshot.
+
+    ``song_dir`` is the directory the snapshot will be written beside. It
+    anchors a sampler's captured sample to a song-relative ``audio_file``
+    reference; omitted, such a path is stored absolute and stops travelling
+    between machines.
+
+    An UNTOUCHED track of Live's brand-new-set scaffold is excluded, the way
+    the analyzer is (see :func:`is_untouched_default_scaffold_track` for the
+    predicate and why name alone won't do here); surviving tracks are numbered
+    by dense rank so the exclusion can't leave a hole. Its untouched RETURNS go
+    the same way, on a necessarily different predicate
+    (:func:`is_untouched_default_scaffold_return`) and after the track walk,
+    because one of its conjuncts is "nothing sends to it"
+    (`_exclude_untouched_scaffold_returns`). This is the only capture entry
+    point that applies either — deciding "untouched" needs the track's clip
+    inventory and the whole set's send map, neither of which
+    ``compile_snapshot`` ever sees, so a caller assembling from probe results
+    it gathered by hand keeps whatever it probed.
     """
     info = probe("ableton_session", "info")
+    # #536: every device whose sidechain is armed on a surface Live exposes no
+    # routing for, collected across the whole walk so one warning covers the set.
+    unreadable_sidechain: list[str] = []
     master_mixer = info.get("master")
     master_block: dict[str, Any] | None = None
     if master_mixer:
@@ -1748,7 +2365,11 @@ def assemble_snapshot_via_probes(
             "volume": master_mixer.get("volume"),
             "panning": master_mixer.get("panning"),
         }
-        master_devices = _capture_devices_for_parent(probe, parent_kind="master")
+        master_devices = _capture_devices_for_parent(
+            probe, parent_kind="master", song_dir=song_dir,
+            parent_label="master",
+            unreadable_sidechain_sink=unreadable_sidechain,
+        )
         if master_devices:
             master_block["devices"] = master_devices
 
@@ -1771,13 +2392,16 @@ def assemble_snapshot_via_probes(
             "color": rinfo.get("color", r.get("color")),
         }
         devices = _capture_devices_for_parent(
-            probe, parent_kind="return", parent_index=ri,
+            probe, parent_kind="return", parent_index=ri, song_dir=song_dir,
+            parent_label=f"return {entry['name']!r}",
+            unreadable_sidechain_sink=unreadable_sidechain,
         )
         if devices:
             entry["devices"] = devices
         returns_out.append(entry)
 
     tracks_out: list[dict[str, Any]] = []
+    dropped_scaffold: list[str] = []
     track_count = int(info.get("track_count") or 0)
     for ti in range(1, track_count + 1):
         tinfo = probe("ableton_track", "info", track_index=ti)
@@ -1797,16 +2421,68 @@ def assemble_snapshot_via_probes(
         if sends:
             entry["sends"] = sends
         devices = _capture_devices_for_parent(
-            probe, parent_kind="track", parent_index=ti,
+            probe, parent_kind="track", parent_index=ti, song_dir=song_dir,
+            parent_label=f"track {entry['name']!r}",
+            unreadable_sidechain_sink=unreadable_sidechain,
         )
         if devices:
             entry["devices"] = devices
+        # An untouched default-scaffold track is Live's furniture, not the
+        # song's — capturing it would make it permanent song state and silence
+        # the push-side cleanup offer forever. Clips are the one half of the
+        # predicate that costs extra probes, so they are only listed for a
+        # canonically-named track: at most Live's four scaffold slots, and none
+        # at all in a set whose tracks the song has already named.
+        if entry["name"] in CANONICAL_DEFAULT_SCAFFOLD_TRACK_NAMES:
+            if is_untouched_default_scaffold_track(
+                entry, has_clips=_track_carries_clips(probe, track_index=ti),
+            ):
+                # Never silent: a pristine set captures as zero tracks, and
+                # without this the operator is told nothing about why.
+                dropped_scaffold.append(str(entry.get("name")))
+                continue
+        # Dense 1-based rank among the tracks that survive, NEVER the raw Live
+        # index: `create_track` upserts on (song, track_index), so a snapshot
+        # numbered around a scaffold that later gets deleted would replay the
+        # same song track into a second row at a different index.
+        entry["index"] = len(tracks_out) + 1
         tracks_out.append(entry)
 
+    if dropped_scaffold:
+        warnings.warn(
+            f"capture: excluded {len(dropped_scaffold)} untouched default "
+            f"scaffold track(s) ({', '.join(dropped_scaffold)}) — Live's "
+            "brand-new-set tracks carrying no devices and no clips. Add a "
+            "device or a clip to keep one. Surviving tracks are renumbered "
+            "from 1.",
+            stacklevel=2,
+        )
+
+    returns_out, dropped_returns = _exclude_untouched_scaffold_returns(
+        returns_out, tracks_out,
+    )
+    if dropped_returns:
+        warnings.warn(
+            f"capture: excluded {len(dropped_returns)} untouched default "
+            f"scaffold return(s) ({', '.join(dropped_returns)}) — Live's "
+            "brand-new-set returns still carrying only their stock device at "
+            "factory settings, with nothing sent to them. Dial the device, "
+            "swap it, or send something to it to keep one. Surviving returns "
+            "are renumbered from 1.",
+            stacklevel=2,
+        )
     snapshot = compile_snapshot(
         session_info=session_info, returns=returns_out, tracks=tracks_out,
     )
     _resolve_captured_sidechain_sources(snapshot)
+    if unreadable_sidechain:
+        warnings.warn(
+            "capture: " + unreadable_sidechain_source_warning(
+                unreadable_sidechain
+            ),
+            UserWarning,
+            stacklevel=2,
+        )
     if old_snapshot is not None:
         preserve_browser_paths(old_snapshot, snapshot)
         # SNP-2H9F: a device the prior snapshot loaded via preset_query keeps its
@@ -2079,6 +2755,54 @@ def inject_browser_paths(
                 )
 
 
+def _name_index_map(
+    snapshot: dict[str, Any], parent_kind: str,
+) -> dict[str, int]:
+    """Track / return name -> index, for names that are UNIQUE in the snapshot.
+
+    Capture renumbers survivors by dense rank when it drops an untouched
+    default scaffold — tracks AND returns both — so a song captured from a
+    scaffold-bearing set moves every real one's index down. The identity joins
+    below key on that index, and their miss path is a silent drop, so without a
+    stable second key one refresh of such a song would lose every device's
+    browser path and every preset seed, on exactly the songs the scaffold
+    exclusion exists for.
+
+    A duplicated name is omitted rather than guessed: matching the wrong parent
+    would carry a real path onto a real device that never had it, which is worse
+    than the drop this exists to prevent.
+
+    Return names are compared through `normalize_live_return_name` so a
+    snapshot written with Live's ``<letter>-`` slot prefix still joins against
+    one written without it.
+    """
+    key = snapshot.get("tracks") if parent_kind == "track" else snapshot.get("returns")
+    seen: dict[str, int] = {}
+    dupes: set[str] = set()
+    for p in key or []:
+        name, idx = p.get("name"), p.get("index")
+        if not isinstance(name, str) or idx is None:
+            continue
+        if parent_kind == "return":
+            name = normalize_live_return_name(name)
+        if name in seen:
+            dupes.add(name)
+            continue
+        seen[name] = int(idx)
+    for d in dupes:
+        seen.pop(d, None)
+    return seen
+
+
+def _joined_name(parent: dict[str, Any], parent_kind: str) -> str | None:
+    """The key a parent joins on in `_name_index_map`, or None when it has no
+    usable name."""
+    name = parent.get("name")
+    if not isinstance(name, str):
+        return None
+    return normalize_live_return_name(name) if parent_kind == "return" else name
+
+
 def _collect_browser_paths(
     snapshot: dict[str, Any],
 ) -> dict[tuple[str, int, int, Any], list[str]]:
@@ -2131,26 +2855,25 @@ def preserve_browser_paths(
     old_paths = _collect_browser_paths(old)
     if not old_paths:
         return
-    for t in new.get("tracks") or []:
-        if "index" not in t:
-            continue
-        ti = int(t["index"])
-        for d in t.get("devices") or []:
-            if d.get("browser_path") or "index" not in d:
+    for parent_kind, parents in (("track", new.get("tracks")),
+                                 ("return", new.get("returns"))):
+        old_by_name = _name_index_map(old, parent_kind)
+        for parent in parents or []:
+            if "index" not in parent:
                 continue
-            key = ("track", ti, int(d["index"]), d.get("class"))
-            if key in old_paths:
-                d["browser_path"] = list(old_paths[key])
-    for r in new.get("returns") or []:
-        if "index" not in r:
-            continue
-        ri = int(r["index"])
-        for d in r.get("devices") or []:
-            if d.get("browser_path") or "index" not in d:
-                continue
-            key = ("return", ri, int(d["index"]), d.get("class"))
-            if key in old_paths:
-                d["browser_path"] = list(old_paths[key])
+            pidx = int(parent["index"])
+            # Second key for the renumber case: same name, the index it HAD.
+            joined = _joined_name(parent, parent_kind)
+            was = old_by_name.get(joined) if joined is not None else None
+            for d in parent.get("devices") or []:
+                if d.get("browser_path") or "index" not in d:
+                    continue
+                di, cls = int(d["index"]), d.get("class")
+                key = (parent_kind, pidx, di, cls)
+                if key not in old_paths and was is not None:
+                    key = (parent_kind, was, di, cls)
+                if key in old_paths:
+                    d["browser_path"] = list(old_paths[key])
 
 
 # ---------------------------------------------------------------------------
@@ -2265,14 +2988,23 @@ def preserve_preset_overrides(
         return
     for parent_kind, parents in (("track", new.get("tracks")),
                                  ("return", new.get("returns"))):
+        old_by_name = _name_index_map(old, parent_kind)
         for parent in parents or []:
             if "index" not in parent:
                 continue
             pidx = int(parent["index"])
+            # Same renumber fallback as the browser-path join: a dense-ranked
+            # track or return carries a different index than the snapshot it
+            # is refreshing.
+            joined = _joined_name(parent, parent_kind)
+            was = old_by_name.get(joined) if joined is not None else None
             for d in parent.get("devices") or []:
                 if "index" not in d:
                     continue
-                key = (parent_kind, pidx, int(d["index"]), d.get("class"))
+                di, cls = int(d["index"]), d.get("class")
+                key = (parent_kind, pidx, di, cls)
+                if key not in old_presets and was is not None:
+                    key = (parent_kind, was, di, cls)
                 preset = old_presets.get(key)
                 if preset is None:
                     continue

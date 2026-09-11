@@ -1,9 +1,13 @@
 # Error recovery
 
 The server returns structured errors with teaching hints. Read the message and
-fix the input — retrying the same call with the same params will fail the same
-way. The error fields (`valid_actions`, `required`, `optional`, `example`,
-`hint`) tell you exactly what to change.
+fix the input — for the errors on this page, retrying the same call with the
+same params will fail the same way. The error fields (`valid_actions`,
+`required`, `optional`, `example`, `hint`) tell you exactly what to change.
+
+**Two replies are exceptions to that rule, and both are about Live being busy
+rather than about your call.** Read *Live is busy* below before you treat
+either as something to fix.
 
 ## Validation errors (param-level)
 
@@ -67,25 +71,36 @@ fresh `push_cli` process now reports a newer version than the Remote Script Live
 loaded at startup; the handshake refuses correctly, but the song work is blocked
 through no fault of its own.
 
-Recovery that keeps the live session: **pin the CLI to the Remote Script's
-commit** instead of upgrading Live. The refusal reports the Remote Script's
-version, and its `+<sha>` suffix is the commit it was vendored from. Check that
-commit out in a throwaway worktree, point `PYTHONPATH` at it, and verify the pin
-took with `preflight` before re-running:
+Recovery that keeps the live session: **pin the CLI to the Remote Script's own
+content** instead of upgrading Live. The `+<suffix>` in a version string is a
+content fingerprint of the vendored package (`_compute_content_fingerprint`),
+**not a git commit** — `git cat-file -t` rejects it and no worktree, ref or tag
+resolves it. The only tree that reproduces that fingerprint is the package Live
+loaded, so the pin copies *that directory* and puts it first on `PYTHONPATH`.
+
+The install strips `cli/` and `server.py` from what it vendors, and neither is
+in `_FINGERPRINT_PATHS`, so copy them back from your checkout — `preflight`
+works again and the pin still fingerprints as the Remote Script does. Run from
+your checkout root (the path below is macOS's default User Library; `preflight`
+prints yours as `user_library.default`):
 
 ```
-git worktree add /tmp/hallucinote-pin <sha-from-the-refusal>
-export PYTHONPATH=/tmp/hallucinote-pin/src:/tmp/hallucinote-pin/hallucinote_mcp/src
-python3 -m hallucinote_mcp.cli preflight   # package.version must == the vendored remote_script version
+PIN=/tmp/hallucinote-pin; rm -rf "$PIN"; mkdir -p "$PIN"
+cp -R "$HOME/Music/Ableton/User Library/Remote Scripts/Hallucinote/hallucinote_mcp" "$PIN/"
+cp -R hallucinote_mcp/src/hallucinote_mcp/cli "$PIN/hallucinote_mcp/cli"
+cp hallucinote_mcp/src/hallucinote_mcp/server.py "$PIN/hallucinote_mcp/"
+export PYTHONPATH="$PIN:$PWD/src"
+python3 -m hallucinote_mcp.cli preflight   # remote_script.candidates[].matches_mcp_server must read true
 python3 -m hallucinote.sync.push_cli execute ...   # now handshakes clean
 ```
 
-When the session is done, remove the pin (`git worktree remove
-/tmp/hallucinote-pin`) and reinstall normally to bring Live up to date. There is
-no `--pin` flag: a process that mutates `sys.path` after import has already
+When the session is done, drop the pin (`rm -rf /tmp/hallucinote-pin`, unset
+`PYTHONPATH`) and reinstall normally to bring Live up to date. There is no
+`--pin` flag: a process that mutates `sys.path` after import has already
 imported the wrong package, so pinning has to happen in the environment before
-Python starts. `push_cli execute` prints this same recipe in its recovery
-footer when it detects the handshake refusal.
+Python starts. `push_cli execute` prints this same recipe — with your detected
+User Library path already filled in — in its recovery footer when it detects
+the handshake refusal.
 
 ## Render capture errors (recorder won't arm)
 
@@ -125,7 +140,42 @@ workarounds. The teaching errors will point you at that doc too.
 - **`<tool>('<action>') executor referenced unknown param 'X'; this is a
   schema bug`** — server-side bug; report it.
 
+## Live is busy — the two replies that are NOT about your call
+
+Everything else on this page is a defect in the request. These two are not, and
+the fix for each is to wait rather than to change anything.
+
+### `ok=false` — the request was refused, not attempted
+
+The message names an operation already running on Live's main thread and how
+long it has been going. Live's main thread serves one caller at a time, and
+this refusal is deliberate: queueing you behind it is what turns one slow
+operation into an unresponsive DAW.
+
+**Your call never ran.** Nothing partial happened, so there is nothing to undo.
+Poll `ableton_session(action='bout_status')` until it is clear, then send the
+same call unchanged — same params, and this time it succeeds. This is the one
+place on this page where an identical retry is the correct move; do not "fix"
+the request, because nothing was wrong with it.
+
+### `ok=true` with `code='work_escalated'` — a handle, not a result
+
+The call outran Live's main-thread ceiling. **It did not fail and it is still
+running** — Python cannot interrupt a Live API call, so the reply reports that
+the server stopped waiting, not that the work stopped. The `result` carries
+`job_id`, `label` and `elapsed_s` instead of the call's own return value.
+
+Treating this as success is the mistake it exists to prevent: it books a write
+that has not landed, and your next call queues behind the one still executing.
+
+Poll `ableton_session(action='bout_status', job_id=...)` to a terminal state —
+`done` carries the call's real result, `failed` carries Live's own error. If it
+never terminates, `ableton_session(action='abandon_bout', job_id=...)` clears
+the occupancy; the work may still be running in Live, and abandoning does not
+stop it.
+
 ## Don't retry silently
 
 If a call fails with a teaching error, the structured response tells you
-what to change. Same params → same failure.
+what to change. Same params → same failure. The busy refusal above is the
+stated exception: there, same params → success once the main thread is free.

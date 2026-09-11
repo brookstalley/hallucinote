@@ -10,7 +10,7 @@ Two branches:
   grammar reaches every field, incl. ``reference_pitch.octave``) and hands this
   function the assembled scalars/list as a plain dict. Closed against the
   verify-api shapes captured live off **Wendy Carlos gamma** (2026-06-19) — see
-  ``.prawduct/artifacts/plans/MICROTUNE/api-notes-tuning.md``.
+  ``.prawduct/artifacts/plans/MICROTUNE/archive/api-notes-tuning.md``.
 
 LOM → :class:`TuningData` mapping (verify-api confirmed):
 

@@ -903,6 +903,11 @@ def test_capture_plan_lists_expected_probes():
     tools = {p["tool"] for p in plan}
     assert tools == {
         "ableton_session(action='info')",
+        # The hand path carries the same playhead precondition `capture execute`
+        # enforces in code: read the transport, then park it at beat 0. Without it a
+        # by-hand capture taken after a render bakes end-of-song envelope values in
+        # as dialed baselines, silently and permanently.
+        "ableton_session(action='seek', bar=1, beat=0.0)",
         # SNP-4K7M: master device-chain probe (attached as song.master.devices)
         "ableton_device(action='list', target='master')",
         "ableton_return(action='list')",
@@ -914,6 +919,23 @@ def test_capture_plan_lists_expected_probes():
         # M1-C: per-Drum-Rack pad layout probe
         "ableton_device(action='pad_info')",
     }
+
+
+def test_capture_plan_states_the_playhead_precondition_before_any_probe():
+    """A hand capture hits the same silent-baseline defect `capture execute` refuses,
+    so the plan must carry the precondition — and carry it first, since a seek listed
+    after the parameter walk documents nothing."""
+    plan = capture_plan()
+    tools = [p["tool"] for p in plan]
+    assert tools[0] == "ableton_session(action='info')"
+    assert tools[1] == "ableton_session(action='seek', bar=1, beat=0.0)"
+    assert "is_playing" in plan[0]["purpose"]
+    assert "current_song_time" in plan[0]["purpose"]
+    assert "settled_beats" in plan[1]["purpose"]
+    # Every probe that reads a parameter value comes after the park.
+    walk = next(i for i, t in enumerate(tools)
+                if t == "ableton_device(action='get_parameters')")
+    assert walk > 1
 
 
 def test_compile_snapshot_passes_through_inputs():
@@ -1805,9 +1827,16 @@ def test_compile_snapshot_output_does_not_need_migration():
 
 def test_replay_warns_on_needs_migration_snapshot(conn):
     """A needs-migration snapshot triggers the build-time guidance warning that
-    names the analyzer count + the migrate command."""
+    names the analyzer count + the migrate command.
+
+    The command is pinned in its runnable plugin-env form: the bare
+    ``python -m hallucinote.tools.capture_cli`` invocation this used to name
+    fails to import outside the plugin env (issue #449).
+    """
     snapshot = _polluted_snapshot()
-    with pytest.warns(UserWarning, match=r"predates SNP-8R4K.*capture_cli migrate"):
+    with pytest.warns(
+        UserWarning, match=r"predates SNP-8R4K.*hallucinote\.cli capture migrate"
+    ):
         replay_capture(conn, snapshot, song_name="t")
     # DB is clean regardless (chunk 1's _replay_devices strips analyzers).
     assert conn.execute(

@@ -54,13 +54,21 @@ If the probe fails or returns nothing, omit `--installed-plugins` in 0b. The com
     --probe
 ```
 
-`--probe` resolves every device's `preset_query` against Live's browser in-process. Omit it if Live or the MCP bridge isn't available; the gate still enforces user confirmation on unverified entries.
+`--probe` resolves every device's `preset_query` against Live's browser in-process, and — when the song loads content from an Ableton Pack — reads this machine's installed Packs so an absent one is named. Omit it if Live or the MCP bridge isn't available; the gate still enforces user confirmation on unverified entries, and Pack content then reports as a requirement (`pack_content`) rather than a refusal, because nothing looked.
 
-The CLI emits a JSON report with status buckets — `native`, `placeholder`, `third_party_ok`, `third_party_missing`, `third_party_unverified`, `preset_query_invalid`, `kind_unresolvable`, `kind_ambiguous`, `preset_query_unverified`. The CLI also prints a human summary explaining each bucket.
+The CLI emits a JSON report covering **two independent families**. Devices, under `entries` with status buckets `native`, `placeholder`, `third_party_ok`, `third_party_missing`, `third_party_unverified`, `preset_query_invalid`, `kind_unresolvable`, `kind_ambiguous`, `preset_query_unverified`, `pack_content`, `pack_content_missing`, `user_content`. Samples, under `samples` with `sample_ok`, `sample_missing`, `sample_unreadable`, `sample_not_a_file`, `sample_unresolvable`, and their own `samples_*` summary counts — each sample row carries `use_site`, `"clip"` or `"device"`, because a sampler's missing sample and a clip's are the same fault in different places. The report is JSON and nothing else — there is no human summary to read out; you compose one from the entries.
 
-**Exit codes:** `0` = clean. `1` = at least one device in a problem bucket — display the offending entries and ask the user:
+**A native class is not native content.** `pack_content` / `pack_content_missing` / `user_content` mark devices whose Live class ships with Live but whose SOUND does not — a Drum Rack out of an Ableton Pack, a Simpler pointing into the author's user library. `pack_content` and `user_content` are requirements for the *next* machine, not failures on this one, so they do not set exit 1; `pack_content_missing` does, because `--probe` looked and the Pack is not here.
 
-> *"Some devices won't load cleanly on this machine. Pushing now will fail at device-load for those (the chain stays empty; nothing is substituted). Continue anyway? (yes/no)"*
+**Exit codes:** `0` = clean. `1` = at least one DEVICE or at least one SAMPLE in a problem bucket. **Read which family actually fired before you speak** — a sample-only failure leaves every device bucket empty, so an agent that displays only devices shows the user nothing and asks them to confirm a refusal it cannot evidence. Display the offending entries from whichever family is non-empty, then ask:
+
+> *Devices only:* "Some devices won't load cleanly on this machine. Pushing now will fail at device-load for those (the chain stays empty; nothing is substituted). Continue anyway? (yes/no)"
+>
+> *Samples only:* "Some clips or samplers reference samples that are missing or unreadable on this machine. Pushing now will place clips Live cannot play and samplers with nothing loaded. Continue anyway? (yes/no)"
+>
+> *A missing Pack:* "This song loads content from Ableton Pack(s) this machine doesn't have; those devices will come up empty. Continue anyway? (yes/no)" — name the Packs.
+>
+> *Both:* name both, in that order.
 
 Proceed only on explicit `yes`. If `no`, point at `songs/<slug>/REQUIREMENTS.md` (regenerate with `compat write-requirements <slug>` if absent) and stop. Re-running compat after fixes is idempotent.
 
@@ -174,9 +182,10 @@ Read `songs/<slug>/.last-push-state.json`. Surface in this order:
 
 - **`probe-and-link` exits non-zero**: snapshot malformed, DB path wrong, or session_id unknown. Show stderr.
 - **`execute` exits 1 (partial)**: act on the stdout "Halt cause" block (cause + next step); fix in `build.py`/snapshot, rebuild, re-run `execute`. Idempotent — already-applied rows skip. `.last-push-errors.json` has per-call forensics.
+- **`execute` exits 1 with no "Halt cause" block**: two prepasses refuse before any phase plans, so neither produces one and neither writes the errors file. Read stderr. Either **an unfinished chain rebuild is on disk** — a journal left between a rebuild's first delete and its verify, so the DB's links describe a chain Live no longer has; finish it with `chain-rebuild --resume auto`, then re-run. Or **`--reconcile-chains` hit a SHORTFALL** — a rebuild that finished and rebound its links while some captured values never landed; its journal holds them. Re-apply what the DB authors with `execute --only devices`, or retry the refused writes by naming the journal to `chain-rebuild --resume <path>`, then delete the journal and re-run. A SHORTFALL journal does **not** block `execute` — it warns on every push until deleted, which is the reminder that captured values are still only in that file.
 - **Arrangement looks wrong (missing / doubled notes), or you hand-edited clips in Live?** The arrangement phase is a pure projection (clear + rebuild from the DB every push) guarded by a post-phase integrity assert that HALTs on divergence — a corrupt materialize fails loud, never `OK`. To audit the current DB↔Live arrangement at any time, run **`"$PY" -m hallucinote.cli verify-arrangement --song <slug>`**: it probes Live via the note API and reports `extra` / `missing` / `mismatch` per (track, section), exit 0 = faithful, 1 = divergence (rebuild `build.py` first to compare build.py↔Live). If the push halts with `lane_unreadable` for a track, Live could not list that track's arrangement lane — push therefore neither cleared nor rebuilt it, so its old clips are still there. Re-run `execute --only arrangement --probe` (idempotent); if it keeps failing on the same track, inspect that lane in Live for a clip Live can't read. The old SYN-4R7P `IndexError: clip_index out of range` from a stale arrangement link can no longer occur — clear+rebuild never refreshes into a dead index, so the fix for a wrong-looking timeline is simply to re-run `execute --only arrangement`.
-- **`devices` halts with `REFUSING to load …`**: the phase found a device the DB authors at a position Live already has something at, and could not match the two (class drift), or could not read that parent's chain at all. It refuses rather than loading — Live 12.4 has no reorder API, so a load TAIL-APPENDS, and appending onto a chain that already has the device silently doubles the signal path (and doubles again on every later push). The message names the track and what it saw. Fix: run `probe-and-link --probe` to bind the chain that is already there, or re-snapshot the set (`/song-snapshot`) so the DB describes it — then re-run `execute`.
-- **`devices` halts with `devices integrity: … DUPLICATE`**: the post-phase assert re-probed Live and found a chain carrying more of a device class than the DB authors there. This set is already doubled and a re-push cannot undo it (no reorder API): delete the duplicate devices in Live, or push into a fresh set, then re-run `probe-and-link --probe`. Devices Live carries that the DB never authored (a stock return effect, a hand-dropped utility) are surfaced as warnings, not halts.
+- **`devices` halts with `REFUSING to load …`**: the phase found a device the DB authors at a position Live already has something at, and could not match the two (class drift), or could not read that parent's chain at all. It refuses rather than loading — Live 12.4 has no reorder API, so a load TAIL-APPENDS, and appending onto a chain that already has the device silently doubles the signal path (and doubles again on every later push). The message names the track and what it saw. Three fixes, in the order to try them: run `probe-and-link --probe` to bind the chain that is already there (nothing changes in Live); or re-snapshot the set (`/song-snapshot`) so the DB describes Live's order; or, when the **DB's** order is the one you want, rebuild the chain into it with **`"$PY" -m hallucinote.cli chain-rebuild --song <slug> --track <live index> --from-position <N>`** — it captures the chain, journals it to disk before the first delete, deletes descending, reloads in the DB's order and restores every surviving device's parameters, refusing to report success until Live reads back equal — and if a write is refused it reports a SHORTFALL, keeps the journal and exits non-zero rather than calling a partial restore done (`docs/song-authoring-conventions.md` → *Reordering / inserting mid-chain*). Then re-run `execute`. To do that rebuild as part of the push instead, re-run with **`execute --reconcile-chains`** — same orchestration, opt-in per push (it is destructive and holds Live for minutes, so it never runs automatically). In-rack hand edits do not survive a rebuild: a rack comes back via its preset.
+- **`devices` halts with `devices integrity: … DUPLICATE`**: the post-phase assert re-probed Live and found a chain carrying more of a device class than the DB authors there. This set is already doubled and a re-push cannot undo it (no reorder API): delete the duplicate devices in Live, or push into a fresh set, then re-run `probe-and-link --probe`. `chain-rebuild` is **not** the fix here — it rebuilds a chain into the DB's order, and a doubled chain first needs the extra copy gone. Devices Live carries that the DB never authored (a stock return effect, a hand-dropped utility) are surfaced as warnings, not halts.
 - **`execute` exits 2 (connection lost)**: see `ableton://guides/error-recovery`. Re-execute.
 - **`ValueError` from a planner**: usually a strict-precondition issue. Show the error and stop.
 
@@ -203,12 +212,15 @@ silently no-op are `envelopes`, `performed automation`, `arrangement` and
 a pitch bend, a filter sweep or a rise and the envelopes phase pushed nothing,
 that is a **gap, not a clean run**.
 
-One class of that gap now reports itself. A phase that pushed nothing because it
-could not **determine** what to do — a failed per-track probe, a link that isn't
-there — is marked `[GAP] … NOT PUSHED — could not determine state`, the run's
-outcome is `INCOMPLETE`, the exit code is non-zero, and the summary lists the
-reason verbatim under `INCOMPLETE —`. Do not read that as a halt (nothing
-failed) and do not read it as clean. Fix the named precondition and re-run
+One class of that gap now reports itself. A phase that left something the song
+asked for un-materialized — because it could not **determine** what to do (a
+failed per-track probe, a link that isn't there), or because it determined it
+perfectly well and the route cannot **carry** it (an authored automation edge
+shorter than the perform route's record tick) — is marked
+`[GAP] … NOT PUSHED — N things the push could not carry`, the run's outcome is
+`INCOMPLETE`, the exit code is non-zero, and the summary lists the reason
+verbatim under `INCOMPLETE —`. Do not read that as a halt (nothing failed) and
+do not read it as clean. Fix the named precondition and re-run
 `execute --probe`; it re-probes and is idempotent. `skipped (nothing to push)`
 still means exactly that — there was no work — and remains the case you have to
 judge yourself against the brief.

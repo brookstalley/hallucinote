@@ -82,7 +82,6 @@ from .clips import (
 from .devices import (
     BREAKPOINT_CURVE_KINDS,
     ENVELOPE_TARGET_KINDS,
-    NOTE_EXPRESSION_AXES,
     add_breakpoint,
     create_device,
     create_device_chain,
@@ -101,6 +100,9 @@ from .devices import (
     set_chain_properties,
     set_device_parameter,
     set_device_sidechain,
+)
+from .audio import (
+    record_audio_capture,
 )
 from .links import (
     ABLETON_LINK_KINDS,
@@ -155,8 +157,12 @@ from .tracks import (
     MONITORING_STATES,
     OUTPUT_ROUTING_KINDS,
     TRACK_KINDS,
+    TrackDeletionPlan,
     _delete_track,
     create_track,
+    describe_track_deletion,
+    prune_track,
+    reindex_tracks,
     set_track_mixer,
     set_track_routing,
 )
@@ -180,8 +186,12 @@ __all__ = [
     "OUTPUT_ROUTING_KINDS",
     "TRACK_KINDS",
     "create_track",
+    "describe_track_deletion",
+    "prune_track",
+    "reindex_tracks",
     "set_track_mixer",
     "set_track_routing",
+    "TrackDeletionPlan",
     # clips
     "WARP_MODES",
     "create_audio_clip",
@@ -220,7 +230,6 @@ __all__ = [
     # devices + automation
     "BREAKPOINT_CURVE_KINDS",
     "ENVELOPE_TARGET_KINDS",
-    "NOTE_EXPRESSION_AXES",
     "add_breakpoint",
     "create_device",
     "create_device_chain",
@@ -243,6 +252,7 @@ __all__ = [
     "ABLETON_LINK_KINDS",
     "create_ableton_session",
     "link_db_to_ableton",
+    "record_audio_capture",
     "reset_song_content",
     "unlink_db_from_ableton",
     # requests / provenance

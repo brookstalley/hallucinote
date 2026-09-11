@@ -32,7 +32,16 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
+
+if TYPE_CHECKING:  # the lens modules import stereo.py, which imports this
+    # module — importing them at runtime would close that cycle. Annotations
+    # are lazy (`from __future__ import annotations`) and the serializers
+    # below read attributes, so the string form is all that is needed.
+    from .imaging import ImagingMetrics
+    from .integrity import SurfaceIntegrity
+    from .phase import PhaseRelation
+    from .reconcile import SumReconciliation
 
 SCHEMA_VERSION = "1"
 
@@ -94,10 +103,20 @@ class TimbreMetrics:
       ``spectral_rolloff_hz``   — frequency below which 85 % of the energy lies.
                                   A second brightness/edge cue, robust to a
                                   bright but low-energy top end.
+      ``sharpness_acum``        — psychoacoustic sharpness (von Bismarck /
+                                  Zwicker weighting over Bark specific
+                                  loudness). The SHRILLNESS axis: a piercing
+                                  lead reads higher than a warm pad at the same
+                                  centroid. Scale-invariant; ordering and A/B
+                                  deltas are the contract, the acum calibration
+                                  is provisional. NaN default so hand-built
+                                  fixtures and pre-sharpness baselines stay
+                                  valid (the AUD-2N6K optional-field pattern).
     """
     spectral_centroid_hz: float
     spectral_flatness: float
     spectral_rolloff_hz: float
+    sharpness_acum: float = float("nan")
 
 
 @dataclass(frozen=True)
@@ -168,6 +187,12 @@ class StemMetrics:
     # Standing stereo descriptors (STR-4C8N). Same optional-field pattern, same
     # reason: pre-stereo baselines and hand-built fixtures stay valid.
     stereo: "StereoMetrics | None" = None
+    # Where this surface sits across the stage and where its width lives, per
+    # band. Sibling to `stereo` rather than a replacement: `stereo` is the
+    # broadband correlation and mono-sum loss, and its own docstring names the
+    # case it cannot see — a comb filter in the top over a mono low end averages
+    # to something unremarkable. Same optional-field pattern as the two above.
+    imaging: "ImagingMetrics | None" = None
 
     def __post_init__(self) -> None:
         if self.surface_kind not in _VALID_SURFACE_KINDS:
@@ -235,7 +260,14 @@ class ReverbVerification:
 class EnvelopeVerification:
     """Realized-vs-declared verdict for one authored automation change (AUD-8H2M).
 
-    One record per value-changing breakpoint of a declared envelope. ``metric``
+    One record per authored GESTURE — a run of value changes graded as a single
+    move. ``at_beat`` is the gesture's first change, ``through_beat`` its last,
+    and ``steps`` how many value changes it collapsed (1 for a lone
+    breakpoint). A ramp authored as 64 small steps is ONE record spanning the
+    whole traversal, not 64: a per-step verdict is only valid when the step has
+    a full analysis window on each side, so grading a staircase per step
+    compared two points on the same gesture and made finer authorship read as
+    worse realization. ``metric``
     + ``before`` / ``after`` are the measured quantity across the change
     (``spectral_centroid_hz`` for a device-parameter flip, ``rms_db``
     for a send-level step — the return's STEREO RMS, the same quantity the
@@ -274,6 +306,12 @@ class EnvelopeVerification:
     realized: bool
     note: str
     probe: str | None = None
+    # The gesture's span. ``through_beat`` is the beat the move LANDS on (equal
+    # to ``at_beat`` for a single-breakpoint change); ``steps`` is how many
+    # declared value changes it collapsed. Together they say what was graded,
+    # so a reader never has to infer a staircase's extent from the note.
+    through_beat: float | None = None
+    steps: int = 1
 
 
 @dataclass(frozen=True)
@@ -515,6 +553,144 @@ class Polymeter:
 
 
 @dataclass(frozen=True)
+class PartTransient:
+    """One part's LOW-BAND (kick-class) hit SHAPE within a section window.
+
+    The read-side answer to "is the kick a thud or a punch?" — measured from
+    the hits the transient lens picks on the 40-150 Hz band of the stem (a
+    kit stem's hats and snares don't register there). All values are MEDIANS
+    across the window's hits.
+
+      ``rise_ms``            — 10 -> 90 % of the low-band envelope on the
+                               hit's FINAL approach to its peak (both
+                               thresholds found scanning back from the peak, so
+                               an earlier lobe cannot capture the 90 % point).
+                               RELATIVE, never an absolute attack time: it sees
+                               only 40-150 Hz, so a kick whose beater click
+                               leads its low-band peak by tens of ms has an
+                               attack this number never looks at, and it moves
+                               with the hit band's edges (one real kit read
+                               44 ms at 40-150 Hz and 15 ms at 50-150 Hz for
+                               the same hits). Compare it across renders and
+                               sections of ONE kit; not across kits, and not
+                               against an absolute "punchy" threshold.
+                               ``None`` when every hit's rise was censored
+                               (see below).
+      ``t20_ms``             — time after the peak for the low envelope to
+                               fall 20 dB. The ring. ``None`` when every hit's
+                               T20 was censored.
+      ``censored_*_hits``    — hits whose estimator hit its own boundary (the
+                               10 % point earlier than the 60 ms search window;
+                               no 20 dB fall inside the 600 ms cap or before the
+                               slice ended; an attack window with no 10 % point
+                               to anchor it — a rise-censored hit is always
+                               attack-censored — or cut by the slice end).
+                               Excluded from the medians, counted here — a
+                               boundary value is never reported as a
+                               measurement, and no band level is read over a
+                               window that could not be placed.
+      ``attack_<band>_db``   — band RMS (dBFS, PRE-FADER stem as captured)
+                               over the first 30 ms of the hit; the names carry
+                               their edges: sub 40-100, low 100-250 (the thud
+                               register), lowmid 250-600 (boxiness), click
+                               2-6 kHz (the beater). These are NOT the
+                               attribution bands (``sub_20_60`` …).
+      ``click_minus_sub_db`` — the punch read (level-blind): how far the click
+                               sits under the sub weight. Near 0 = a defined
+                               attack; -15 or below = no click to speak of.
+      ``low_minus_sub_db``   — the thud read (level-blind): > 0 means the
+                               attack lives in the low-mids rather than the
+                               sub — the "muffled / muddy with the bass" shape.
+
+    Neutral measurement — the interpreter grades it against intent.
+    """
+    track_id: str
+    hit_count: int
+    rise_ms: float | None
+    t20_ms: float | None
+    censored_rise_hits: int
+    censored_t20_hits: int
+    censored_attack_hits: int
+    attack_sub_40_100_db: float
+    attack_low_100_250_db: float
+    attack_lowmid_250_600_db: float
+    attack_click_2k_6k_db: float
+    click_minus_sub_db: float
+    low_minus_sub_db: float
+
+
+@dataclass(frozen=True)
+class IntelligibilityBand:
+    """One Bark band of the speech band, for one spoken turn.
+
+    ``lo_hz`` / ``hi_hz`` are the band's edges. ``speech_db`` and ``bed_db``
+    are the speech surface's and the bed's mean band power over the turn's
+    frames, in STFT-power dB with a floor at the analyzer's epsilon: the scale
+    is consistent within a report and across reports of one capture format,
+    but it is not calibrated dBFS, so read the DIFFERENCE, never the absolute.
+    ``speech_over_bed_db`` is that difference — how far the line sits above
+    (positive) or under (negative) the bed in this band. ``masked_fraction``
+    is the share of the turn's frames where the speech carries energy here
+    and the bed's spread excitation covers it (the masking lens's rule with
+    the speech as the target); ``NaN`` (→ JSON ``null``) when the speech had
+    no energy in the band during the turn, because there was nothing to mask.
+    """
+    lo_hz: float
+    hi_hz: float
+    speech_db: float
+    bed_db: float
+    speech_over_bed_db: float
+    masked_fraction: float
+
+
+@dataclass(frozen=True)
+class TurnIntelligibility:
+    """The speech band over the bed for one spoken turn — the film-mix number.
+
+    A turn is one audio placement on the declared speech track (one line),
+    clipped to the section it is reported under. ``start_s`` / ``end_s`` are
+    seconds against the capture — the domain the measurement ran in;
+    ``start_beat`` / ``end_beat`` are the same span in song-absolute beats,
+    the report's usual domain, filled by the orchestrator and ``None`` when
+    the measurement was driven directly with no beat map. ``label`` names the
+    line when the caller knows it.
+
+    The turn-level numbers pool the speech band's Bark tiles: ``speech_db``
+    and ``bed_db`` are the mean power summed across those bands over the
+    turn's frames (the same uncalibrated STFT-power dB as the per-band rows),
+    ``speech_over_bed_db`` their difference, and ``masked_fraction`` the
+    masked share of the speech's energized tiles across the whole speech
+    band. ``n_frames`` is how many STFT frames the turn afforded; ``0`` means
+    the turn was too short to analyse and every measurement is ``NaN`` (→
+    JSON ``null``), the honest "unmeasured" sentinel this report uses
+    everywhere. ``bands`` is the per-band breakdown, low to high.
+
+    NEUTRAL MEASUREMENT, deliberately without a threshold, a grade or a
+    finding: a line meant to sit under the music is authorship, and only the
+    reader knows which lines those are. The framing that turns these numbers
+    into a producer's question is the interpreter's, not this row's.
+
+    Two limits carried rather than corrected: the bed is the mono sum of the
+    other stems at mix level, so it is pan-blind like the masking lens; and
+    the speech band (300–3400 Hz) is the telephone band — the consonant energy
+    above it that separates *sat* from *fat* is measured only by the bands'
+    upper edge, so a bright bed can eat articulation this row cannot see.
+    """
+    turn_index: int
+    start_s: float
+    end_s: float
+    speech_db: float
+    bed_db: float
+    speech_over_bed_db: float
+    masked_fraction: float
+    n_frames: int
+    bands: list[IntelligibilityBand]
+    label: str | None = None
+    start_beat: float | None = None
+    end_beat: float | None = None
+
+
+@dataclass(frozen=True)
 class SectionMetrics:
     """Per-surface loudness scoped to one named section window.
 
@@ -574,6 +750,17 @@ class SectionMetrics:
     # >= 2 accented parts whose recovered cells differ. Empty when parts share a
     # cell or carry no audible accent. Neutral — the interpreter grades intent.
     polymeter: list[Polymeter] = field(default_factory=list)
+    # Per-part low-band hit SHAPE (one entry per stem with enough kick-class
+    # hits), populated only when transient analysis is enabled. The read-side
+    # answer to "thud or punch?". Neutral — the interpreter grades it.
+    transients: list[PartTransient] = field(default_factory=list)
+    # The transient lens's failure channel: one structured skip per part that
+    # produced no reading — the complete set is invalid_sample_rate /
+    # window_too_short / no_low_band_energy / too_few_hits / all_hits_censored
+    # (``transients.TransientWindowResult`` is the home) — so an empty
+    # ``transients`` never hides WHY. Empty when the lens is off or every part
+    # measured.
+    transient_skips: list[dict] = field(default_factory=list)
     # Onset/event density (onsets-per-beat summed across stems) over the section
     # window — the second energy-realization correlate (ARR-7M3D), alongside
     # master.loudness.lufs_s_median. Level-blind. None when timing/cross-rhythm
@@ -581,6 +768,13 @@ class SectionMetrics:
     # when the window had no detected onsets. A RELATIVE read across sections:
     # only the ranking feeds the energy-realization Spearman ρ.
     onset_density: float | None = None
+    # The speech band over the bed, one row per spoken turn that falls in the
+    # section window. None when the song declares no speech track (the lens
+    # did not run — `skipped_analyses` says so); an EMPTY list when it ran and
+    # no turn falls in this section. The two must stay distinguishable: null
+    # is "not measured", [] is "measured, nothing here". Neutral numbers, no
+    # threshold — the interpreter frames them.
+    intelligibility: list[TurnIntelligibility] | None = None
 
 
 @dataclass(frozen=True)
@@ -647,6 +841,58 @@ class EnergyRealization:
     skipped: list[str]
 
 
+# Which MixReport block feeds a Finding, and which is evidence a reader
+# interprets. Every measurement block on MixReport must appear in exactly one
+# of these two maps — `test_every_lens_block_declares_whether_it_gates` fails
+# on a block that is in neither, so a new lens cannot ship without the author
+# deciding which it is.
+#
+# This exists because `sum_reconciliation` shipped in neither state: computed
+# on every report, serialized on every report, and read by nothing. Its tests
+# asserted the number was present and correct, which is exactly what a lens
+# that gates nothing also looks like — so the suite stayed green while three
+# `alien` renders reported a master that was one soloed stem as a mix change.
+#
+# The split is `gate-verdict-policy.md`'s, and the exemption that lets a defect
+# lens block is design decision 2 of `build-plan-render-integrity.md` — neither
+# is new here: a DEFECT lens has
+# physical ground truth (is this audio damaged, does this capture contradict
+# itself) and may legitimately block; an INTENT lens ranks authored intent
+# against what was rendered, which is an aesthetic judgement and never fails a
+# build.
+FINDING_BEARING_BLOCKS: dict[str, str] = {
+    # MixReport field  ->  the _derive_findings parameter that consumes it
+    "master": "master",
+    "stems": "stems",
+    "overshoots": "overshoots",
+    "reverb_verifications": "reverbs",
+    "automation_verifications": "automation",
+    "per_section": "sections",
+    "integrity": "integrity",
+    "phase_relations": "phase_relations",
+    "alignment": "capture_span",
+    "sum_reconciliation": "sum_reconciliation",
+}
+
+EVIDENCE_ONLY_BLOCKS: dict[str, str] = {
+    # MixReport field  ->  why it does not gate
+    "returns": (
+        "per-return measurements; the judgements drawn from them belong to the "
+        "reverb and phase lenses, which do gate and take these as input"
+    ),
+    "width_realizations": (
+        "an INTENT lens — it ranks declared stereo width against the rendered "
+        "width, which is an aesthetic judgement; its own recognition limits "
+        "ride in skipped_analyses so an absence is never read as a verdict"
+    ),
+    "energy_realization": (
+        "an INTENT lens — declared per-section intensity ranked against "
+        "rendered LUFS-S and onset density; a low correlation is a "
+        "conversation about the arrangement, never a build failure"
+    ),
+}
+
+
 @dataclass(frozen=True)
 class Finding:
     """Structured intent-keyed observation from the analysis pass.
@@ -673,6 +919,26 @@ class Finding:
                 f"severity={self.severity!r} must be one of "
                 f"{_VALID_SEVERITIES}"
             )
+
+
+# Where each family of numbers in a MixReport is tapped. The analyzer sits in
+# each track's device chain and in the master's, so every per-surface and
+# per-section reading is PRE that surface's mixer fader; only the delivered
+# true-peak applies one. ``analyze_mix`` overwrites ``section_masking`` when it
+# reconstructs mix balance from declared static fader gains.
+_MEASUREMENT_BASIS = {
+    "stem_loudness": "pre_fader",
+    "return_loudness": "pre_fader",
+    "section_masking": "pre_fader",
+    "master": "pre_master_fader",
+    "delivered_true_peak_dbtp": "post_master_fader",
+    "note": (
+        "every per-stem and per-section number here is measured off a "
+        "PRE-fader tap, so a fader-only change moves NONE of them — they are "
+        "expected to be identical across an A/B of a level move. Only the "
+        "master block and delivered_true_peak_dbtp respond to a fader."
+    ),
+}
 
 
 @dataclass
@@ -719,10 +985,39 @@ class MixReport:
     # needs >= 2 ranks) — recorded with a skipped_analyses entry, never a
     # fabricated ρ. A ruler: ranked intensity vs intent + inversions, no verdict.
     energy_realization: "EnergyRealization | None" = None
-    # Capture-alignment audit (AUD-1C7K): per-surface trim applied before
-    # analysis so the correction is visible, not silent. None when analysis ran
-    # without an alignment pass (e.g. a directly-constructed report in a test).
+    # Capture-length audit, BOTH questions, serialized by AlignmentReport alone:
+    # `method`/`common_length`/`max_drift_*`/`surfaces` are the per-surface trim
+    # applied before analysis so the correction is visible, not silent
+    # (AUD-1C7K); `capture_span` is whether the capture covers the beat span the
+    # manifest DECLARED, which conditions every beat this report cites. Those are
+    # independent failures — surfaces can agree perfectly with each other and
+    # still, together, span the wrong stretch of the song. `capture_span` is null
+    # when that check declined (`skipped_analyses` says why) and ABSENT on a
+    # report written before the check existed; the two are not the same and only
+    # the skip entry distinguishes them. None here when analysis ran without an
+    # alignment pass (e.g. a directly-constructed report in a test).
     alignment: dict[str, Any] | None = None
+    # Render integrity, one row per captured surface. This family answers "is
+    # this audio damaged" rather than "did it realize its intent", so unlike
+    # every other lens here it has physical ground truth and may legitimately
+    # emit blocking findings. It is also UPSTREAM of the rest: a click reads as
+    # an onset to the timing lens, a dropout reads as a dynamics move, so these
+    # rows are the precondition for believing the numbers beside them. Empty
+    # when the pass did not run — never silently absent.
+    integrity: list["SurfaceIntegrity"] = field(default_factory=list)
+    # Pairwise phase relationships between surfaces. The only lens that sees two
+    # surfaces destroying each other: `stereo` measures L/R within one surface
+    # and masking measures magnitude overlap, so a kick and a sub cancelling, a
+    # polarity-flipped stem, or an uncompensated plugin delay are invisible to
+    # both. Read `lag_samples` together with `lag_correlation` — a lag with low
+    # confidence is two parts sharing a downbeat, not a device delay.
+    phase_relations: list["PhaseRelation"] = field(default_factory=list)
+    # Do the captured stems, summed, reconstruct the captured master? The one
+    # check that validates the capture SET rather than its members: every other
+    # lens analyses the surfaces it was handed, and none asks whether that set
+    # was complete. A residual is diagnostic evidence, not a verdict — a
+    # nonlinear master chain produces one legitimately.
+    sum_reconciliation: "SumReconciliation | None" = None
     compare_to: dict[str, Any] | None = None
     # Song audit-log seq the analyzed capture reflects (copied from
     # manifest.db_seq — AUD-4W7K). The key ``compare.resolve_baseline``
@@ -741,6 +1036,27 @@ class MixReport:
     # Post-fader true-peak = bus true-peak + master_fader_db (the master fader is a
     # linear gain after the captured chain). THIS is the delivery/clipping number.
     delivered_true_peak_dbtp: float | None = None
+    # WHERE the fader value above came from, and whether anything confirmed it
+    # against the set that produced this audio. `"song_db"` means it is what the
+    # song's DB DECLARES — read at analysis time, never compared with Live,
+    # because analysis is server-side and has no connection to the set. A fader
+    # trimmed in Live and not pulled back therefore leaves `master_fader_db` and
+    # `delivered_true_peak_dbtp` wrong by exactly that drift, silently, and an
+    # agent reading them keeps trimming a level it already fixed. None when no
+    # fader value was supplied at all.
+    master_fader_source: str | None = None
+    master_fader_verified: bool = False
+    # Why it is unverified, and the one command that settles it. None when the
+    # value WAS verified, or when there is no fader value to qualify.
+    master_fader_note: str | None = None
+    # What each family of numbers here is measured RELATIVE TO. It lives in the
+    # report rather than only in /mix-review's prose because the report is what
+    # an A/B comparison reads: a fader-only move leaves every per-stem and
+    # per-section row byte-identical, and without this block that reads as "the
+    # change did nothing" rather than "these rows cannot see a fader".
+    measurement_basis: dict[str, str] = field(
+        default_factory=lambda: dict(_MEASUREMENT_BASIS)
+    )
     schema_version: str = SCHEMA_VERSION
 
     def to_json_dict(self) -> dict[str, Any]:
@@ -777,6 +1093,13 @@ class MixReport:
             "master_fader_volume": self.master_fader_volume,
             "master_fader_db": _finite_or_none(self.master_fader_db),
             "delivered_true_peak_dbtp": _finite_or_none(self.delivered_true_peak_dbtp),
+            # Provenance travels WITH the number. Without it a reader has no
+            # way to tell a fader read off the rendered set from one declared
+            # in the DB and never checked against it.
+            "master_fader_source": self.master_fader_source,
+            "master_fader_verified": self.master_fader_verified,
+            "master_fader_note": self.master_fader_note,
+            "measurement_basis": dict(self.measurement_basis),
             "stems": [_stem_to_dict(s) for s in self.stems],
             "returns": [_stem_to_dict(r) for r in self.returns],
             "overshoots": [_overshoot_to_dict(o) for o in self.overshoots],
@@ -809,6 +1132,13 @@ class MixReport:
                 else None
             ),
             "alignment": self.alignment,
+            "integrity": [_integrity_to_dict(i) for i in self.integrity],
+            "phase_relations": [_phase_to_dict(p) for p in self.phase_relations],
+            "sum_reconciliation": (
+                _reconciliation_to_dict(self.sum_reconciliation)
+                if self.sum_reconciliation is not None
+                else None
+            ),
             "compare_to": self.compare_to,
         }
 
@@ -835,6 +1165,7 @@ def _stem_to_dict(s: StemMetrics) -> dict[str, Any]:
                 "spectral_centroid_hz": _finite_or_none(s.timbre.spectral_centroid_hz),
                 "spectral_flatness": _finite_or_none(s.timbre.spectral_flatness),
                 "spectral_rolloff_hz": _finite_or_none(s.timbre.spectral_rolloff_hz),
+                "sharpness_acum": _finite_or_none(s.timbre.sharpness_acum),
             }
             if s.timbre is not None
             else None
@@ -849,6 +1180,119 @@ def _stem_to_dict(s: StemMetrics) -> dict[str, Any]:
             if s.stereo is not None
             else None
         ),
+        # Where the surface sits and where its width lives. Per-band rows are
+        # always present (a missing band cannot be told from an unmeasured one);
+        # an unmeasurable band carries null, the report's existing sentinel.
+        "imaging": (
+            {
+                "balance_db": _finite_or_none(s.imaging.balance_db),
+                "mid_side_ratio_db": _finite_or_none(s.imaging.mid_side_ratio_db),
+                "position": _finite_or_none(s.imaging.position),
+                "width": _finite_or_none(s.imaging.width),
+                "skipped": s.imaging.skipped,
+                "bands": [
+                    {
+                        "band": b.band,
+                        "correlation": _finite_or_none(b.correlation),
+                        "width": _finite_or_none(b.width),
+                    }
+                    for b in s.imaging.band_images
+                ],
+            }
+            if s.imaging is not None
+            else None
+        ),
+    }
+
+
+def _integrity_to_dict(i: "SurfaceIntegrity") -> dict[str, Any]:
+    """Serialize one surface's render-integrity row.
+
+    Event lists are capped upstream and the cap is recorded in ``checks_skipped``
+    rather than implied by a short list, so a clean surface and a badly damaged
+    one whose rows were truncated never look alike.
+    """
+    return {
+        "track_id": i.track_id,
+        "silent": i.silent,
+        "peak_dbfs": _finite_or_none(i.peak_dbfs),
+        "clipped_sample_fraction": _finite_or_none(i.clipped_sample_fraction),
+        "worst_clip_run_samples": i.worst_clip_run_samples,
+        "clip_events": [
+            {
+                "start_sample": c.start_sample,
+                "length_samples": c.length_samples,
+                "channel": c.channel,
+            }
+            for c in i.clip_events
+        ],
+        "dc_offset": [_finite_or_none(v) for v in i.dc_offset],
+        "dc_offset_dbfs": _finite_or_none(i.dc_offset_dbfs),
+        "dropouts": [
+            {
+                "start_sample": d.start_sample,
+                "length_samples": d.length_samples,
+                "kind": d.kind,
+            }
+            for d in i.dropouts
+        ],
+        "discontinuities": [
+            {
+                "sample": d.sample,
+                "channel": d.channel,
+                "magnitude": _finite_or_none(d.magnitude),
+            }
+            for d in i.discontinuities
+        ],
+        "tail_level_dbfs": _finite_or_none(i.tail_level_dbfs),
+        "checks_skipped": list(i.checks_skipped),
+    }
+
+
+def _phase_to_dict(p: "PhaseRelation") -> dict[str, Any]:
+    """Serialize one pairwise phase relationship.
+
+    ``lag_samples`` is meaningless without ``lag_correlation`` beside it — a
+    cross-correlation always peaks somewhere — so the two are emitted together
+    and documented as one reading.
+    """
+    return {
+        "track_id_a": p.track_id_a,
+        "track_id_b": p.track_id_b,
+        "correlation": _finite_or_none(p.correlation),
+        "polarity_inverted": p.polarity_inverted,
+        "lag_samples": p.lag_samples,
+        "lag_ms": _finite_or_none(p.lag_ms),
+        "lag_correlation": _finite_or_none(p.lag_correlation),
+        "broadband_cancellation_db": _finite_or_none(p.broadband_cancellation_db),
+        "band_cancellation": [
+            {"band": b.band, "sum_minus_parts_db": _finite_or_none(b.sum_minus_parts_db)}
+            for b in p.band_cancellation
+        ],
+        "skipped": p.skipped,
+    }
+
+
+def _reconciliation_to_dict(r: "SumReconciliation") -> dict[str, Any]:
+    """Serialize the stem-sum-vs-master reconciliation.
+
+    Band residuals share the broadband gain match, so a discrepancy large enough
+    to move that fit lifts every band by the same trim. They are therefore read
+    AGAINST EACH OTHER, never against an absolute floor — per-band gain matching
+    would absorb the very thing the band split exists to expose.
+    """
+    return {
+        "residual_db": _finite_or_none(r.residual_db),
+        "correlation": _finite_or_none(r.correlation),
+        "best_lag_samples": r.best_lag_samples,
+        "gain_offset_db": _finite_or_none(r.gain_offset_db),
+        "gains_assumed_unity": r.gains_assumed_unity,
+        "band_residuals": [
+            {"band": b.band, "residual_db": _finite_or_none(b.residual_db)}
+            for b in r.band_residuals
+        ],
+        "worst_offender": r.worst_offender,
+        "skipped": r.skipped,
     }
 
 
@@ -878,7 +1322,68 @@ def _section_to_dict(
         "cross_rhythm": [_part_cross_rhythm_to_dict(c) for c in s.cross_rhythm],
         "phasing": [_phasing_to_dict(p) for p in s.phasing],
         "polymeter": [_polymeter_to_dict(p) for p in s.polymeter],
+        "transients": [_part_transient_to_dict(t) for t in s.transients],
+        "transient_skips": [dict(sk) for sk in s.transient_skips],
         "onset_density": s.onset_density,
+        # null and [] mean different things here (see the field comment), so
+        # the None is passed through rather than collapsed to an empty list.
+        "intelligibility": (
+            [_turn_intelligibility_to_dict(t) for t in s.intelligibility]
+            if s.intelligibility is not None
+            else None
+        ),
+    }
+
+
+def _turn_intelligibility_to_dict(t: TurnIntelligibility) -> dict[str, Any]:
+    """Serialize one spoken turn's speech-over-bed reading.
+
+    Every measurement goes through ``_finite_or_none``: an unanalysable turn
+    (``n_frames == 0``) and a band the speech never sounded in both carry NaN
+    as "honestly unmeasured", and the report must stay valid JSON under
+    ``allow_nan=False``.
+    """
+    return {
+        "turn_index": t.turn_index,
+        "label": t.label,
+        "start_s": t.start_s,
+        "end_s": t.end_s,
+        "start_beat": t.start_beat,
+        "end_beat": t.end_beat,
+        "n_frames": t.n_frames,
+        "speech_db": _finite_or_none(t.speech_db),
+        "bed_db": _finite_or_none(t.bed_db),
+        "speech_over_bed_db": _finite_or_none(t.speech_over_bed_db),
+        "masked_fraction": _finite_or_none(t.masked_fraction),
+        "bands": [
+            {
+                "lo_hz": b.lo_hz,
+                "hi_hz": b.hi_hz,
+                "speech_db": _finite_or_none(b.speech_db),
+                "bed_db": _finite_or_none(b.bed_db),
+                "speech_over_bed_db": _finite_or_none(b.speech_over_bed_db),
+                "masked_fraction": _finite_or_none(b.masked_fraction),
+            }
+            for b in t.bands
+        ],
+    }
+
+
+def _part_transient_to_dict(t: PartTransient) -> dict[str, Any]:
+    return {
+        "track_id": t.track_id,
+        "hit_count": t.hit_count,
+        "rise_ms": _finite_or_none(t.rise_ms),
+        "t20_ms": _finite_or_none(t.t20_ms),
+        "censored_rise_hits": t.censored_rise_hits,
+        "censored_t20_hits": t.censored_t20_hits,
+        "censored_attack_hits": t.censored_attack_hits,
+        "attack_sub_40_100_db": _finite_or_none(t.attack_sub_40_100_db),
+        "attack_low_100_250_db": _finite_or_none(t.attack_low_100_250_db),
+        "attack_lowmid_250_600_db": _finite_or_none(t.attack_lowmid_250_600_db),
+        "attack_click_2k_6k_db": _finite_or_none(t.attack_click_2k_6k_db),
+        "click_minus_sub_db": _finite_or_none(t.click_minus_sub_db),
+        "low_minus_sub_db": _finite_or_none(t.low_minus_sub_db),
     }
 
 
@@ -991,6 +1496,11 @@ def _envelope_to_dict(e: EnvelopeVerification) -> dict[str, Any]:
         "target_kind": e.target_kind,
         "parameter_path": e.parameter_path,
         "at_beat": e.at_beat,
+        # The span this verdict graded — a 64-step staircase is one row from
+        # `at_beat` through `through_beat` with `steps: 64`. Machine-readable
+        # so /mix-review never has to parse the note to learn the extent.
+        "through_beat": e.through_beat,
+        "steps": e.steps,
         "metric": e.metric,
         # NaN when measurable=False (too-quiet / too-diluted / model
         # breakdown) — serialized as JSON null (B1), the "honestly

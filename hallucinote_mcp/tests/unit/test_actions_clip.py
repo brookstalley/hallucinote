@@ -14,6 +14,30 @@ from hallucinote_mcp.wire import Request
 # ---------- Fakes ----------
 
 
+# Live's two recorded refusals from ``create_audio_clip``, verbatim
+# (docs/research/audio-first-class/lom-probe-results.md row 1c, executed
+# against Live 12.4.1). The fakes raise these exact strings so the handler's
+# error mapping is tested against what Live really says, not a paraphrase.
+LIVE_WRONG_TRACK_ERROR = "Audio clips can only be created on audio tracks"
+LIVE_BAD_PATH_ERROR = (
+    "The provided path does not appear to point to a valid audio file"
+)
+# The third shape, recorded on Live 12.4.5 (probe row 17): Live checks
+# absoluteness BEFORE existence, with its own string. The handler's own
+# pre-check normally refuses a relative path first, so the fake filesystem
+# never raises this — it is exercised directly against the mapper.
+LIVE_RELATIVE_PATH_ERROR = "Please provide an absolute path"
+# The mirror refusal — a MIDI clip on an audio track. NOT probed verbatim:
+# the audio-first-class probes only ever called ``create_audio_clip``. The
+# fake models that Live refuses, not what it says, and no handler code reads
+# this string.
+LIVE_WRONG_TRACK_MIDI_ERROR = "MIDI clips can only be created on MIDI tracks"
+
+# The one path the fake "filesystem" holds. Anything else refuses the way
+# Live refuses a missing or undecodable file.
+PROBE_WAV = "/tmp/aud1m4v_probe.wav"
+
+
 class FakeClip:
     """In-memory stand-in for a Live Clip object."""
 
@@ -24,15 +48,18 @@ class FakeClip:
         length: float = 16.0,
         start_time: float = 0.0,
         kind: str = "midi",
+        file_path: str = PROBE_WAV,
     ):
         self.name = name
         self.length = length
         self.start_time = start_time
         self._kind = kind
-        # Live exposes ``clip.is_midi_clip`` as the kind discriminator;
-        # mirror it here so handlers that pre-check the kind (Wave-2 W2-C
-        # / B-26) hit our fake faithfully.
+        # Live exposes ``clip.is_midi_clip`` and ``clip.is_audio_clip`` as
+        # the kind discriminators; mirror both so handlers that pre-check
+        # the kind (Wave-2 W2-C / B-26) and the list reader's ``is_audio``
+        # hit our fake faithfully.
         self.is_midi_clip = (kind == "midi")
+        self.is_audio_clip = (kind == "audio")
         # MIDI-style notes-storage; mirrors what set_notes() takes.
         self.notes: tuple[tuple[int, float, float, int, bool], ...] = ()
         # Properties handler exercises these attributes.
@@ -40,12 +67,19 @@ class FakeClip:
         self.loop_end = float(length)
         self.muted = False
         self.color = 0
+        # Markers exist on both clip kinds in Live (beats when warped,
+        # seconds when not).
+        self.start_marker = 0.0
+        self.end_marker = float(length)
         # Audio-only attributes — only present on audio clips so the
         # set_property handler can branch.
         if kind == "audio":
+            self.file_path = file_path
             self.gain = 0.0
             self.pitch_coarse = 0
+            self.pitch_fine = 0.0
             self.warping = True
+            self.warp_mode = 0
 
     def set_notes(self, notes_tuple: tuple[tuple[int, float, float, int, bool], ...]) -> None:
         self.notes = tuple(notes_tuple)
@@ -72,15 +106,51 @@ class FakeClip:
 
 
 class FakeClipSlot:
-    def __init__(self, clip: FakeClip | None = None):
+    def __init__(
+        self,
+        clip: FakeClip | None = None,
+        *,
+        track_kind: str = "midi",
+        audio_files: tuple[str, ...] = (PROBE_WAV,),
+    ):
         self.clip = clip
         self.fire_calls = 0
         self.stop_calls = 0
+        # What the host track is, and what the fake filesystem holds —
+        # both are what Live checks before it will make an audio clip.
+        self._track_kind = track_kind
+        self._audio_files = audio_files
 
     def create_clip(self, length: float) -> None:
+        """Live 's ``ClipSlot.create_clip(length)`` — MIDI only.
+
+        Refuses on an audio track the way Live does. The message is NOT a
+        probed verbatim (the audio-first-class probes only ever exercised
+        ``create_audio_clip``'s refusals, rows 1c and 17); only the refusal
+        itself is modelled, and nothing in the handler reads this string.
+        """
+        if self._track_kind != "midi":
+            raise RuntimeError(LIVE_WRONG_TRACK_MIDI_ERROR)
         if self.clip is not None:
             raise RuntimeError("slot already has a clip")
         self.clip = FakeClip(length=length)
+
+    def create_audio_clip(self, file_path: str) -> FakeClip:
+        """Live 12.2+'s ClipSlot.create_audio_clip(abs_path) — one argument.
+
+        Refuses exactly as Live 12.4.1 did under probe row 1c: a MIDI host
+        track raises RuntimeError, an unloadable path raises ValueError.
+        The clip's length comes from the "file", never from the caller.
+        """
+        if self._track_kind != "audio":
+            raise RuntimeError(LIVE_WRONG_TRACK_ERROR)
+        if file_path not in self._audio_files:
+            raise ValueError(LIVE_BAD_PATH_ERROR)
+        if self.clip is not None:
+            raise RuntimeError("slot already has a clip")
+        # 2.0s file at 120bpm read back as 4.0 beats in the probe.
+        self.clip = FakeClip(length=4.0, kind="audio", file_path=file_path)
+        return self.clip
 
     def delete_clip(self) -> None:
         self.clip = None
@@ -129,10 +199,28 @@ class FakeTrack:
         kind: str = "midi",
         slots: int = 8,
         arrangement_clips: list[FakeArrangementClip] | None = None,
+        audio_files: tuple[str, ...] = (PROBE_WAV,),
     ):
         self.name = name
         self._kind = kind
-        self.clip_slots = [FakeClipSlot() for _ in range(slots)]
+        self._audio_files = audio_files
+        # Live types a track by its INPUT side, and that is the only reading
+        # available before a create is attempted: an audio track reports
+        # has_audio_input true / has_midi_input false (lom-probe-results,
+        # "describe Track" on PROBE-AUDIO), a MIDI track the reverse. The
+        # handler's pre-delete kind check reads exactly these, so the fake
+        # has to carry them or the check is untestable — and untested, it
+        # silently degrades to "kind unknown, delete anyway".
+        self.has_midi_input = (kind == "midi")
+        self.has_audio_input = (kind == "audio")
+        # A group track's input flags describe what is folded into it, not a
+        # clip-holding slot; these fakes are never groups.
+        self.is_foldable = False
+        self.is_grouped = False
+        self.clip_slots = [
+            FakeClipSlot(track_kind=kind, audio_files=audio_files)
+            for _ in range(slots)
+        ]
         self.arrangement_clips = arrangement_clips or []
         self.stop_all_clips_calls = 0
         self.duplicate_calls: list[tuple[Any, float]] = []
@@ -141,11 +229,28 @@ class FakeTrack:
         self.arrangement_clips.append(
             FakeArrangementClip(start_time=start_beats, length=length, kind="midi")
         )
+        self.arrangement_clips.sort(key=lambda c: c.start_time)
 
-    def create_audio_clip(self, start_beats: float, length: float) -> None:
-        self.arrangement_clips.append(
-            FakeArrangementClip(start_time=start_beats, length=length, kind="audio")
+    def create_audio_clip(
+        self, file_path: str, start_beats: float
+    ) -> FakeArrangementClip:
+        """Live's Track.create_audio_clip(path, position) — path FIRST.
+
+        The mirror image of create_midi_clip(position, length): the file
+        supplies the length, so the caller does not. Refusals are Live's own
+        (probe row 1c).
+        """
+        if self._kind != "audio":
+            raise RuntimeError(LIVE_WRONG_TRACK_ERROR)
+        if file_path not in self._audio_files:
+            raise ValueError(LIVE_BAD_PATH_ERROR)
+        clip = FakeArrangementClip(
+            start_time=start_beats, length=4.0, kind="audio",
+            file_path=file_path,
         )
+        self.arrangement_clips.append(clip)
+        self.arrangement_clips.sort(key=lambda c: c.start_time)
+        return clip
 
     def delete_clip(self, clip: FakeArrangementClip) -> None:
         self.arrangement_clips.remove(clip)
@@ -277,7 +382,9 @@ def test_clip_replace_notes_action_replaces_add_notes_to_clip_name(loaded_action
 
 def test_list_session_returns_every_slot_with_empties(loaded_actions):
     """Session list emits one entry per slot — empty slots carry
-    {clip_index, empty: True}; populated slots add name + length."""
+    {clip_index, empty: True}; populated slots add name, length and the
+    is_audio discriminator (audio conform fields ride along only when it is
+    true — see the read-surface section)."""
     track = FakeTrack(name="T1", slots=4)
     track.clip_slots[0].clip = FakeClip(name="Verse", length=16.0)
     track.clip_slots[2].clip = FakeClip(name="Chorus", length=8.0)
@@ -296,10 +403,12 @@ def test_list_session_returns_every_slot_with_empties(loaded_actions):
     assert len(clips) == 4
     assert clips[0] == {
         "clip_index": 1, "empty": False, "name": "Verse", "length": 16.0,
+        "is_audio": False,
     }
     assert clips[1] == {"clip_index": 2, "empty": True}
     assert clips[2] == {
         "clip_index": 3, "empty": False, "name": "Chorus", "length": 8.0,
+        "is_audio": False,
     }
     assert clips[3] == {"clip_index": 4, "empty": True}
 
@@ -324,7 +433,7 @@ def test_list_session_all_empty_track(loaded_actions):
 
 def test_list_arrangement_returns_placements_with_indices(loaded_actions):
     """Arrangement list returns 1-based arrangement_clip_index, name,
-    start_beats, length, muted, note_count — preserves order from
+    start_beats, length, muted, note_count, is_audio — preserves order from
     track.arrangement_clips."""
     arr = [
         FakeArrangementClip(name="A", start_time=0.0, length=8.0),
@@ -348,14 +457,17 @@ def test_list_arrangement_returns_placements_with_indices(loaded_actions):
     assert clips[0] == {
         "arrangement_clip_index": 1, "name": "A",
         "start_beats": 0.0, "length": 8.0, "muted": False, "note_count": 0,
+        "is_audio": False,
     }
     assert clips[1] == {
         "arrangement_clip_index": 2, "name": "B",
         "start_beats": 8.0, "length": 8.0, "muted": False, "note_count": 0,
+        "is_audio": False,
     }
     assert clips[2] == {
         "arrangement_clip_index": 3, "name": "C",
         "start_beats": 24.5, "length": 16.5, "muted": False, "note_count": 0,
+        "is_audio": False,
     }
 
 
@@ -598,20 +710,30 @@ def test_create_session_clip_missing_clip_index_errors(loaded_actions):
     assert "clip_index" in (resp.error or "")
 
 
-def test_create_session_audio_clip_unsupported(loaded_actions):
+def test_create_session_audio_clip_on_a_midi_track_teaches_the_fix(loaded_actions):
+    """Session audio creation is supported now (Live 12.2's
+    ClipSlot.create_audio_clip), so the only thing left to refuse here is
+    the host: track 1 is a MIDI track. Live answers that with a bare
+    RuntimeError; the handler must turn it into an instruction.
+    """
     ctx = FakeCtx()
     resp = dispatch(
         Request(
             tool="ableton_clip", action="create",
             params={
                 "track_index": 1, "location": "session", "clip_index": 1,
-                "kind": "audio", "length": 4.0,
+                "kind": "audio", "audio_path": PROBE_WAV,
             },
         ),
         context=ctx,
     )
     assert resp.ok is False
-    assert "audio" in (resp.error or "").lower()
+    err = resp.error or ""
+    assert "audio track" in err.lower(), err
+    # The fix, not just the diagnosis.
+    assert "kind='audio'" in err, err
+    # Live's own words are quoted so the operator can search for them.
+    assert LIVE_WRONG_TRACK_ERROR.lower() in err.lower(), err
 
 
 # ---------- create — arrangement ----------
@@ -1601,3 +1723,1105 @@ def test_inline_notes_warning_parity_between_create_and_replace(loaded_actions):
     create_warning = _create_result(FakeCtx(), notes).result["warning"]
     replace_warning = _replace_result(FakeCtx(), notes).result["warning"]
     assert create_warning == replace_warning
+
+
+def test_duplicate_to_arrangement_detects_spurious_clip_colliding_with_an_existing_start(
+    loaded_actions,
+):
+    """ARR-6T8N: spurious-clip detection used a SET of before-start_times, so a
+    pre-existing clip sitting at exactly ``dest_beats + source.length`` — the
+    very position Live's B-24 split emits its copy at — masked the new one:
+    the start_time was already in the set, so the surplus clip was waved
+    through and left in the arrangement.
+
+    Layout: Scaffold 0..32 (the clip that gets split) plus a Marker clip that
+    already starts at 20.0 = dest(16) + source length(4). After the duplicate
+    there are TWO clips at 20.0 and only one of them existed before.
+    """
+    ctx = FakeCtx()
+    track = ctx.song.tracks[0]
+    track.arrangement_clips.append(
+        FakeArrangementClip(name="Scaffold", length=32.0, start_time=0.0)
+    )
+    # Sits exactly where the B-24 side effect will land.
+    track.arrangement_clips.append(
+        FakeArrangementClip(name="Marker", length=2.0, start_time=20.0)
+    )
+    track.clip_slots[1].clip = FakeClip(name="DupSource", length=4.0)
+
+    resp = dispatch(
+        Request(
+            tool="ableton_clip", action="duplicate_to_arrangement",
+            params={"track_index": 1, "clip_index": 2, "start_beats": 16.0},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+
+    names_and_starts = sorted(
+        (c.start_time, c.name) for c in track.arrangement_clips
+    )
+    assert names_and_starts == [
+        (0.0, "Scaffold"),
+        (16.0, "DupSource"),
+        (20.0, "Marker"),
+    ], (
+        "the spurious split copy at 20.0 must be removed while the "
+        f"pre-existing Marker at 20.0 survives; got {names_and_starts}"
+    )
+    removed = resp.result.get("spurious_clips_removed") or []
+    assert len(removed) == 1, (
+        "exactly one surplus clip should be detected — a start-time SET sees "
+        "20.0 as 'already present' and detects nothing"
+    )
+    assert removed[0]["name"] == "Scaffold"
+
+
+def test_duplicate_to_arrangement_survives_reversed_enumeration_at_a_tied_start(
+    loaded_actions,
+):
+    """The same collision as the test above, with Live enumerating the split
+    copy BEFORE the operator's pre-existing clip.
+
+    The original walk paired after-clips to before-counts positionally, so the
+    first clip encountered at a tied start was treated as pre-existing and the
+    second was deleted. Under this ordering that deletes the operator's
+    authored Marker and keeps the artifact — reported as a successful cleanup,
+    which is the shape of a silent data-loss bug. Resolution is by identity
+    now, so the ordering does not decide who dies.
+    """
+    ctx = FakeCtx()
+    track = ctx.song.tracks[0]
+    track.arrangement_clips.append(
+        FakeArrangementClip(name="Scaffold", length=32.0, start_time=0.0)
+    )
+    track.arrangement_clips.append(
+        FakeArrangementClip(name="Marker", length=2.0, start_time=20.0)
+    )
+    track.clip_slots[1].clip = FakeClip(name="DupSource", length=4.0)
+
+    real_duplicate = track.duplicate_clip_to_arrangement
+
+    def duplicate_then_reverse_the_tie(source, destination_beats):
+        real_duplicate(source, destination_beats)
+        # Live's enumeration order for two clips at one start is not ours to
+        # control; model the adversarial one.
+        tied = [c for c in track.arrangement_clips if c.start_time == 20.0]
+        assert len(tied) == 2, "the B-24 side effect should have collided here"
+        for c in tied:
+            track.arrangement_clips.remove(c)
+        # Split copy first, operator's clip second.
+        for c in sorted(tied, key=lambda c: c.name != "Scaffold"):
+            track.arrangement_clips.append(c)
+
+    track.duplicate_clip_to_arrangement = duplicate_then_reverse_the_tie
+
+    resp = dispatch(
+        Request(
+            tool="ableton_clip", action="duplicate_to_arrangement",
+            params={"track_index": 1, "clip_index": 2, "start_beats": 16.0},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+
+    survivors = sorted((c.start_time, c.name) for c in track.arrangement_clips)
+    assert (20.0, "Marker") in survivors, (
+        "the operator's pre-existing Marker must survive regardless of the "
+        f"order Live enumerated the tied clips in; got {survivors}"
+    )
+    assert (20.0, "Scaffold") not in survivors, (
+        f"the split copy at 20.0 is the one to remove; got {survivors}"
+    )
+    removed = resp.result.get("spurious_clips_removed") or []
+    assert [r["name"] for r in removed] == ["Scaffold"]
+
+
+def test_duplicate_to_arrangement_deletes_nothing_when_the_tied_clips_are_identical(
+    loaded_actions,
+):
+    """When the split copy and the operator's clip share (start, length, name)
+    there is no evidence for which one to delete, so nothing may be deleted.
+
+    Identity resolution answers the ordering question only while the clips are
+    distinguishable. Where the same identity occurs twice, drawing one of the
+    pair down against the before-state and calling the other the newcomer is
+    the enumeration-order coin-flip again, one level down — and in Live the
+    split copy carries the OVERLAPPED clip's content, so the two are not
+    interchangeable. The non-destructive channel is the answer.
+    """
+    ctx = FakeCtx()
+    track = ctx.song.tracks[0]
+    track.arrangement_clips.append(
+        FakeArrangementClip(name="Scaffold", length=32.0, start_time=0.0)
+    )
+    # Identical to the copy Live's B-24 split will emit at 20.0: the split
+    # copy is a copy OF Scaffold, so name and length match exactly.
+    track.arrangement_clips.append(
+        FakeArrangementClip(name="Scaffold", length=32.0, start_time=20.0)
+    )
+    track.clip_slots[1].clip = FakeClip(name="DupSource", length=4.0)
+
+    resp = dispatch(
+        Request(
+            tool="ableton_clip", action="duplicate_to_arrangement",
+            params={"track_index": 1, "clip_index": 2, "start_beats": 16.0},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+
+    at_20 = [c for c in track.arrangement_clips if c.start_time == 20.0]
+    assert len(at_20) == 2, (
+        "neither tied clip may be deleted — there is no evidence for which "
+        f"is the artifact; got {[(c.start_time, c.name) for c in at_20]}"
+    )
+    assert not resp.result.get("spurious_clips_removed"), (
+        "nothing was identified, so nothing may be reported as removed"
+    )
+    remaining = resp.result.get("spurious_clips_remaining") or []
+    assert len(remaining) == 2, remaining
+    assert all("reason" in r for r in remaining), (
+        "the operator needs to know why cleanup stopped, not just that it did"
+    )
+
+
+def test_duplicate_to_arrangement_leaves_a_pre_existing_clip_at_the_destination_alone(
+    loaded_actions,
+):
+    """The counting walk must not mistake a pre-existing clip for the new one
+    (or vice versa) when both sit at the destination beat. Nothing is spurious
+    here — no overlap split fires — so nothing may be deleted."""
+    ctx = FakeCtx()
+    track = ctx.song.tracks[0]
+    track.arrangement_clips.append(
+        FakeArrangementClip(name="Pre", length=2.0, start_time=16.0)
+    )
+    track.clip_slots[1].clip = FakeClip(name="DupSource", length=4.0)
+
+    resp = dispatch(
+        Request(
+            tool="ableton_clip", action="duplicate_to_arrangement",
+            params={"track_index": 1, "clip_index": 2, "start_beats": 16.0},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    names = sorted(c.name for c in track.arrangement_clips)
+    assert names == ["DupSource", "Pre"], (
+        f"neither clip at the destination may be deleted; got {names}"
+    )
+
+
+# ---------- create — audio clips (SMP-6V2K R1.1) ----------
+#
+# The Live calls under test were executed against a running Live 12.4.1 and
+# recorded verbatim in docs/research/audio-first-class/lom-probe-results.md
+# rows 1a (ClipSlot.create_audio_clip(abs_path)), 1b
+# (Track.create_audio_clip(path, beats)) and 1c (both refusals). The fakes
+# above mirror those signatures and those error strings, so these tests
+# assert against what Live does rather than against a paraphrase of it.
+
+
+def test_create_session_audio_clip_loads_the_file(loaded_actions):
+    """Row 1a: one call, a real clip in the slot, playing the file we named."""
+    ctx = FakeCtx()
+    resp = dispatch(
+        Request(
+            tool="ableton_clip", action="create",
+            params={
+                "track_index": 2, "location": "session", "clip_index": 1,
+                "kind": "audio", "audio_path": PROBE_WAV,
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    assert resp.result["kind"] == "audio"
+    assert resp.result["clip_index"] == 1
+    # The file_path is read back OFF THE CLIP — the evidence that a file
+    # loaded, not merely that the call returned.
+    assert resp.result["file_path"] == PROBE_WAV
+    # Length comes from the file, not from the caller.
+    assert resp.result["length"] == 4.0
+    clip = ctx.song.tracks[1].clip_slots[0].clip
+    assert clip is not None
+    assert clip.is_audio_clip is True
+    assert clip.file_path == PROBE_WAV
+
+
+def test_create_session_audio_clip_replace_clobbers_the_occupant(loaded_actions):
+    ctx = FakeCtx()
+    existing = FakeClip(name="Existing")
+    ctx.song.tracks[1].clip_slots[0].clip = existing
+    resp = dispatch(
+        Request(
+            tool="ableton_clip", action="create",
+            params={
+                "track_index": 2, "location": "session", "clip_index": 1,
+                "kind": "audio", "audio_path": PROBE_WAV, "replace": True,
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    new_clip = ctx.song.tracks[1].clip_slots[0].clip
+    assert new_clip is not existing
+    assert new_clip.file_path == PROBE_WAV
+
+
+def test_create_session_audio_clip_names_the_clip(loaded_actions):
+    ctx = FakeCtx()
+    resp = dispatch(
+        Request(
+            tool="ableton_clip", action="create",
+            params={
+                "track_index": 2, "location": "session", "clip_index": 1,
+                "kind": "audio", "audio_path": PROBE_WAV, "name": "Line 1",
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    assert resp.result["name"] == "Line 1"
+    assert ctx.song.tracks[1].clip_slots[0].clip.name == "Line 1"
+
+
+def test_create_arrangement_audio_clip_places_at_start_beats(loaded_actions):
+    """Row 1b: Track.create_audio_clip(path, beats) — note the argument order,
+    the mirror image of create_midi_clip(beats, length). The fake's signature
+    is Live's, so a handler that passed them the other way round would place
+    the clip at a nonsense position (or refuse the path)."""
+    ctx = FakeCtx()
+    resp = dispatch(
+        Request(
+            tool="ableton_clip", action="create",
+            params={
+                "track_index": 2, "location": "arrangement",
+                "kind": "audio", "audio_path": PROBE_WAV, "start_beats": 16.0,
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    assert resp.result["arrangement_clip_index"] == 1
+    assert resp.result["start_beats"] == 16.0
+    assert resp.result["file_path"] == PROBE_WAV
+    arr = ctx.song.tracks[1].arrangement_clips
+    assert len(arr) == 1
+    assert arr[0].start_time == 16.0
+    assert arr[0].file_path == PROBE_WAV
+    assert arr[0].is_audio_clip is True
+
+
+def test_create_arrangement_audio_clip_index_when_a_clip_already_sits_there(
+    loaded_actions,
+):
+    """The new clip must be told apart from one already at that beat.
+
+    Matching on (start, length) is what the MIDI path used to do and it
+    cannot work for audio — the length comes from the file and is unknown
+    until after the call. The positional multiset answers it: skip as many
+    clips at this beat as were there before.
+    """
+    ctx = FakeCtx()
+    track = ctx.song.tracks[1]
+    track.arrangement_clips.append(
+        FakeArrangementClip(name="Pre", start_time=16.0, length=4.0)
+    )
+    resp = dispatch(
+        Request(
+            tool="ableton_clip", action="create",
+            params={
+                "track_index": 2, "location": "arrangement",
+                "kind": "audio", "audio_path": PROBE_WAV, "start_beats": 16.0,
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    assert resp.result["arrangement_clip_index"] == 2, (
+        "the pre-existing clip at that beat must not be reported as the new one"
+    )
+    assert len(track.arrangement_clips) == 2
+    assert track.arrangement_clips[1].file_path == PROBE_WAV
+
+
+def test_create_arrangement_audio_clip_on_a_midi_track_teaches_the_fix(
+    loaded_actions,
+):
+    ctx = FakeCtx()
+    resp = dispatch(
+        Request(
+            tool="ableton_clip", action="create",
+            params={
+                "track_index": 1, "location": "arrangement",
+                "kind": "audio", "audio_path": PROBE_WAV, "start_beats": 0.0,
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    err = resp.error or ""
+    assert "audio track" in err.lower(), err
+    assert "kind='audio'" in err, err
+
+
+@pytest.mark.parametrize("location, extra", [
+    ("session", {"clip_index": 1}),
+    ("arrangement", {"start_beats": 0.0}),
+])
+def test_create_audio_clip_unloadable_path_teaches_both_causes(
+    loaded_actions, location, extra
+):
+    """Row 1c: Live reports a MISSING file and an UNDECODABLE one with the
+    same ValueError, so the teaching error has to name both — an operator
+    who only checks that the file exists would otherwise stop looking."""
+    ctx = FakeCtx()
+    params = {
+        "track_index": 2, "location": location,
+        "kind": "audio", "audio_path": "/tmp/does-not-exist.wav",
+    }
+    params.update(extra)
+    resp = dispatch(
+        Request(tool="ableton_clip", action="create", params=params),
+        context=ctx,
+    )
+    assert resp.ok is False
+    err = (resp.error or "").lower()
+    assert "/tmp/does-not-exist.wav" in err, err
+    assert "exists" in err, err
+    assert "decode" in err, err
+
+
+def test_live_relative_path_refusal_teaches_the_same_fix():
+    """Probe row 17: Live's own absoluteness check has a third error string,
+    raised before the file is looked at. When it arrives — Live's idea of
+    'absolute' stricter than os.path.isabs, a future build — it must teach
+    the same fix as the handler's pre-check, not surface as a bare ValueError
+    that reads like a corrupt file. Unknown strings still pass through
+    untouched."""
+    from hallucinote_mcp.handlers.clip import _create_audio_clip
+
+    def live_refuses(*_args):
+        raise ValueError(LIVE_RELATIVE_PATH_ERROR)
+
+    with pytest.raises(ValueError) as exc_info:
+        _create_audio_clip(
+            live_refuses, ("scratchpad/probe.wav",),
+            track_index=3, audio_path="scratchpad/probe.wav",
+        )
+    err = str(exc_info.value)
+    assert "absolute" in err.lower(), err
+    assert "resolve_audio_path" in err, err
+    assert LIVE_RELATIVE_PATH_ERROR in err, err
+    assert "decode" not in err.lower(), "must not be mislabelled as the bad-file refusal"
+
+    def live_says_something_new(*_args):
+        raise ValueError("some refusal this build never saw")
+
+    with pytest.raises(ValueError, match="never saw") as unknown:
+        _create_audio_clip(
+            live_says_something_new, ("/abs/x.wav",),
+            track_index=3, audio_path="/abs/x.wav",
+        )
+    assert "resolve_audio_path" not in str(unknown.value)
+
+
+def test_create_audio_clip_requires_an_absolute_path(loaded_actions):
+    """Live resolves nothing. A song-relative reference is the engine's to
+    resolve (paths.resolve_audio_path) before the call reaches the wire, and
+    the error has to say so — otherwise the caller reads Live's generic
+    'not a valid audio file' and goes hunting for a corrupt WAV."""
+    ctx = FakeCtx()
+    resp = dispatch(
+        Request(
+            tool="ableton_clip", action="create",
+            params={
+                "track_index": 2, "location": "session", "clip_index": 1,
+                "kind": "audio", "audio_path": "assets/line.wav",
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    err = resp.error or ""
+    assert "absolute" in err.lower(), err
+    assert "resolve_audio_path" in err, err
+
+
+def test_create_audio_clip_requires_audio_path(loaded_actions):
+    """There is no such thing as an empty audio clip — the file IS the clip."""
+    ctx = FakeCtx()
+    resp = dispatch(
+        Request(
+            tool="ableton_clip", action="create",
+            params={
+                "track_index": 2, "location": "session", "clip_index": 1,
+                "kind": "audio", "length": 4.0,
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    assert "audio_path" in (resp.error or ""), resp.error
+
+
+def test_create_audio_clip_refuses_notes(loaded_actions):
+    ctx = FakeCtx()
+    resp = dispatch(
+        Request(
+            tool="ableton_clip", action="create",
+            params={
+                "track_index": 2, "location": "session", "clip_index": 1,
+                "kind": "audio", "audio_path": PROBE_WAV,
+                "notes": [{"pitch": 60, "start_time": 0.0, "duration": 1.0}],
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    assert "note" in (resp.error or "").lower(), resp.error
+    # Nothing was created — the refusal happens before Live is touched.
+    assert ctx.song.tracks[1].clip_slots[0].clip is None
+
+
+def test_create_audio_clip_ignores_length_and_says_so(loaded_actions):
+    """A caller who passes length must not be left believing it took effect:
+    Live's create_audio_clip has no length argument at all."""
+    ctx = FakeCtx()
+    resp = dispatch(
+        Request(
+            tool="ableton_clip", action="create",
+            params={
+                "track_index": 2, "location": "session", "clip_index": 1,
+                "kind": "audio", "audio_path": PROBE_WAV, "length": 16.0,
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    assert resp.result["length"] == 4.0, "the file's length wins"
+    warning = resp.result.get("warning", "")
+    assert "ignored" in warning.lower(), warning
+    assert "start_marker" in warning, warning
+
+
+def test_create_midi_clip_requires_length(loaded_actions):
+    """length went optional on the schema so audio need not invent one; MIDI
+    still cannot do without it, and the handler is now where that is said."""
+    ctx = FakeCtx()
+    resp = dispatch(
+        Request(
+            tool="ableton_clip", action="create",
+            params={
+                "track_index": 1, "location": "session", "clip_index": 1,
+                "kind": "midi",
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    assert "length" in (resp.error or ""), resp.error
+
+
+def test_create_midi_clip_rejects_audio_path(loaded_actions):
+    ctx = FakeCtx()
+    resp = dispatch(
+        Request(
+            tool="ableton_clip", action="create",
+            params={
+                "track_index": 1, "location": "session", "clip_index": 1,
+                "kind": "midi", "length": 4.0, "audio_path": PROBE_WAV,
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    assert "kind='audio'" in (resp.error or ""), resp.error
+
+
+def test_create_no_longer_reports_audio_path_deferred(loaded_actions):
+    """The reserved no-op is REPLACED, not wrapped: nothing on the wire may
+    still say a path was received but not loaded."""
+    ctx = FakeCtx()
+    resp = dispatch(
+        Request(
+            tool="ableton_clip", action="create",
+            params={
+                "track_index": 2, "location": "session", "clip_index": 1,
+                "kind": "audio", "audio_path": PROBE_WAV,
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    assert "audio_path_deferred" not in resp.result
+
+
+# ---------- set_property — the audio conform surface ----------
+
+
+@pytest.mark.parametrize("property_name, value, attr, expected", [
+    ("pitch_coarse", -5, "pitch_coarse", -5),
+    ("pitch_fine", 12.5, "pitch_fine", 12.5),
+    ("warp_mode", 6, "warp_mode", 6),
+    ("start_marker", 2.0, "start_marker", 2.0),
+    ("end_marker", 6.0, "end_marker", 6.0),
+])
+def test_set_property_writes_each_conform_field(
+    loaded_actions, property_name, value, attr, expected
+):
+    ctx = FakeCtx()
+    clip = FakeClip(kind="audio")
+    ctx.song.tracks[1].clip_slots[0].clip = clip
+    resp = dispatch(
+        Request(
+            tool="ableton_clip", action="set_property",
+            params={
+                "track_index": 2, "location": "session", "clip_index": 1,
+                "property": property_name, "value": value,
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    assert getattr(clip, attr) == expected
+
+
+def test_set_property_pitch_and_pitch_coarse_are_the_same_property(loaded_actions):
+    """action='list' reports pitch_coarse; set_property has always taken
+    'pitch'. Both spellings must reach the same Live attribute or a value
+    read back cannot be written back."""
+    ctx = FakeCtx()
+    clip = FakeClip(kind="audio")
+    ctx.song.tracks[1].clip_slots[0].clip = clip
+    for name, value in (("pitch", 7), ("pitch_coarse", -3)):
+        resp = dispatch(
+            Request(
+                tool="ableton_clip", action="set_property",
+                params={
+                    "track_index": 2, "location": "session", "clip_index": 1,
+                    "property": name, "value": value,
+                },
+            ),
+            context=ctx,
+        )
+        assert resp.ok is True, resp.error
+        assert clip.pitch_coarse == value
+
+
+@pytest.mark.parametrize("property_name, value", [
+    ("pitch_fine", 12.5),
+    ("warp_mode", 4),
+    ("pitch_coarse", 3),
+])
+def test_set_property_new_audio_fields_refuse_midi_clips(
+    loaded_actions, property_name, value
+):
+    ctx = FakeCtx()
+    ctx.song.tracks[0].clip_slots[0].clip = FakeClip(kind="midi")
+    resp = dispatch(
+        Request(
+            tool="ableton_clip", action="set_property",
+            params={
+                "track_index": 1, "location": "session", "clip_index": 1,
+                "property": property_name, "value": value,
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    assert "audio-only" in (resp.error or "").lower(), resp.error
+
+
+@pytest.mark.parametrize("property_name", ["start_marker", "end_marker"])
+def test_set_property_markers_are_not_audio_only(loaded_actions, property_name):
+    """A MIDI clip has markers too. Classing them audio-only would refuse a
+    write Live accepts."""
+    ctx = FakeCtx()
+    clip = FakeClip(kind="midi")
+    ctx.song.tracks[0].clip_slots[0].clip = clip
+    resp = dispatch(
+        Request(
+            tool="ableton_clip", action="set_property",
+            params={
+                "track_index": 1, "location": "session", "clip_index": 1,
+                "property": property_name, "value": 3.0,
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    assert getattr(clip, property_name) == 3.0
+
+
+@pytest.mark.parametrize("property_name, value", [
+    ("pitch_fine", 51.0),
+    ("pitch_fine", -51.0),
+    ("warp_mode", 7),
+    ("warp_mode", -1),
+    ("gain", -0.5),
+    ("gain", 1.5),
+])
+def test_set_property_conform_bounds_are_enforced(
+    loaded_actions, property_name, value
+):
+    ctx = FakeCtx()
+    ctx.song.tracks[1].clip_slots[0].clip = FakeClip(kind="audio")
+    resp = dispatch(
+        Request(
+            tool="ableton_clip", action="set_property",
+            params={
+                "track_index": 2, "location": "session", "clip_index": 1,
+                "property": property_name, "value": value,
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    assert "out of range" in (resp.error or ""), resp.error
+
+
+def test_set_property_has_no_reverse(loaded_actions):
+    """Live exposes NO settable reverse on a Clip (lom-audio-clip-surface.md
+    §4, 'confirmed absent'). Accepting the name here would promise a
+    materialization that does not exist; reverse is a derived asset or a
+    sampler parameter instead."""
+    action = schema.get("ableton_clip", "set_property")
+    prop_spec = next(p for p in action.params if p.name == "property")
+    assert "reverse" not in (prop_spec.enum or ()), (
+        "reverse is not a Live clip property — do not add it to the enum"
+    )
+    ctx = FakeCtx()
+    ctx.song.tracks[1].clip_slots[0].clip = FakeClip(kind="audio")
+    resp = dispatch(
+        Request(
+            tool="ableton_clip", action="set_property",
+            params={
+                "track_index": 2, "location": "session", "clip_index": 1,
+                "property": "reverse", "value": 1,
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+
+
+# ---------- list — the audio read surface (SMP-6V2K R1.2) ----------
+
+
+_EXPECTED_AUDIO_FIELDS = {
+    "file_path", "gain", "pitch_coarse", "pitch_fine", "warping",
+    "warp_mode", "start_marker", "end_marker",
+}
+
+
+def test_list_session_audio_clip_reports_its_conform_state(loaded_actions):
+    """The whole entry, asserted exactly: this shape is what pull ingests a
+    hand-dragged clip through, so it is a contract and not an example."""
+    clip = FakeClip(name="Line 1", length=4.0, kind="audio")
+    clip.gain = 0.8
+    clip.pitch_coarse = -2
+    clip.pitch_fine = 15.0
+    clip.warping = True
+    clip.warp_mode = 6
+    clip.start_marker = 0.5
+    clip.end_marker = 3.5
+    track = FakeTrack(name="Dialogue", kind="audio", slots=2)
+    track.clip_slots[0].clip = clip
+    ctx = FakeCtx(FakeSong(tracks=[track]))
+    resp = dispatch(
+        Request(
+            tool="ableton_clip", action="list",
+            params={"track_index": 1, "location": "session"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    assert resp.result["clips"][0] == {
+        "clip_index": 1,
+        "empty": False,
+        "name": "Line 1",
+        "length": 4.0,
+        "is_audio": True,
+        "file_path": PROBE_WAV,
+        "gain": 0.8,
+        "pitch_coarse": -2,
+        "pitch_fine": 15.0,
+        "warping": True,
+        "warp_mode": 6,
+        "start_marker": 0.5,
+        "end_marker": 3.5,
+    }
+
+
+def test_list_arrangement_audio_clip_reports_its_conform_state(loaded_actions):
+    clip = FakeArrangementClip(
+        name="Line 2", start_time=8.0, length=4.0, kind="audio"
+    )
+    clip.warping = False
+    clip.warp_mode = 3
+    clip.start_marker = 1.25
+    clip.end_marker = 2.5
+    track = FakeTrack(name="Dialogue", kind="audio", arrangement_clips=[clip])
+    ctx = FakeCtx(FakeSong(tracks=[track]))
+    resp = dispatch(
+        Request(
+            tool="ableton_clip", action="list",
+            params={"track_index": 1, "location": "arrangement"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    entry = resp.result["clips"][0]
+    assert entry == {
+        "arrangement_clip_index": 1,
+        "name": "Line 2",
+        "start_beats": 8.0,
+        "length": 4.0,
+        "muted": False,
+        "note_count": None,
+        "is_audio": True,
+        "file_path": PROBE_WAV,
+        "gain": 0.0,
+        "pitch_coarse": 0,
+        "pitch_fine": 0.0,
+        "warping": False,
+        "warp_mode": 3,
+        "start_marker": 1.25,
+        "end_marker": 2.5,
+    }
+
+
+@pytest.mark.parametrize("location", ["session", "arrangement"])
+def test_list_midi_clip_omits_the_audio_fields_entirely(loaded_actions, location):
+    """Absent, not null. A null-filled MIDI entry would read as 'an audio clip
+    whose file we could not determine' — the one confusion the discriminator
+    exists to prevent."""
+    midi = FakeArrangementClip(name="Riff", start_time=0.0, length=8.0)
+    track = FakeTrack(name="Lead", slots=2, arrangement_clips=[midi])
+    track.clip_slots[0].clip = FakeClip(name="Riff", length=8.0)
+    ctx = FakeCtx(FakeSong(tracks=[track]))
+    resp = dispatch(
+        Request(
+            tool="ableton_clip", action="list",
+            params={"track_index": 1, "location": location},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    entry = resp.result["clips"][0]
+    assert entry["is_audio"] is False
+    leaked = _EXPECTED_AUDIO_FIELDS & set(entry)
+    assert not leaked, f"MIDI entry must omit the audio fields; leaked {leaked}"
+
+
+def test_list_discriminator_falls_back_to_is_midi_clip(loaded_actions):
+    """A wrapper exposing only the MIDI half of the discriminator must still
+    be read correctly — reporting a sample-playing clip as MIDI would send
+    pull looking for notes that do not exist."""
+    clip = FakeClip(name="Stem", length=4.0, kind="audio")
+    del clip.is_audio_clip
+    track = FakeTrack(name="Dialogue", kind="audio", slots=1)
+    track.clip_slots[0].clip = clip
+    ctx = FakeCtx(FakeSong(tracks=[track]))
+    resp = dispatch(
+        Request(
+            tool="ableton_clip", action="list",
+            params={"track_index": 1, "location": "session"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    entry = resp.result["clips"][0]
+    assert entry["is_audio"] is True
+    assert entry["file_path"] == PROBE_WAV
+
+
+def test_list_empty_slot_carries_no_discriminator(loaded_actions):
+    """An empty slot holds no clip, so it is neither audio nor MIDI — saying
+    is_audio: False there would assert something about a clip that isn't."""
+    track = FakeTrack(name="T1", slots=2)
+    ctx = FakeCtx(FakeSong(tracks=[track]))
+    resp = dispatch(
+        Request(
+            tool="ableton_clip", action="list",
+            params={"track_index": 1, "location": "session"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    assert resp.result["clips"][0] == {"clip_index": 1, "empty": True}
+
+
+def test_list_round_trips_into_set_property(loaded_actions):
+    """R1.2's real requirement: every conform field the read surface reports
+    must be writable under a name set_property accepts. A read that cannot be
+    written back is not a round trip."""
+    list_action = schema.get("ableton_clip", "list")
+    assert list_action is not None
+    set_action = schema.get("ableton_clip", "set_property")
+    writable = set(
+        next(p for p in set_action.params if p.name == "property").enum or ()
+    )
+    # file_path is Live-read-only (re-pointing a clip is delete-and-recreate),
+    # so it is the one reported field with no writer.
+    not_writable = (_EXPECTED_AUDIO_FIELDS - writable) - {"file_path"}
+    assert not not_writable, (
+        f"reported but not writable: {sorted(not_writable)} — either add the "
+        f"property to set_property or stop reporting it"
+    )
+
+
+# ---------- create schema ----------
+
+
+def test_create_length_is_optional_and_audio_path_is_required_for_audio(
+    loaded_actions,
+):
+    """The schema can't express 'required for one kind' — the handler owns
+    that (tested above). What the schema owes is not blocking an audio create
+    on a length Live has no argument for."""
+    action = schema.get("ableton_clip", "create")
+    params = {p.name: p for p in action.params}
+    assert params["length"].required is False
+    assert "kind='midi'" in params["length"].description
+    assert "ABSOLUTE" in params["audio_path"].description
+    assert "audio_path_deferred" not in params["audio_path"].description
+
+
+def test_set_property_enum_declares_the_whole_conform_surface(loaded_actions):
+    """R1.1 conforms a placed sample through these names; if the schema does
+    not declare one, the dispatcher rejects the call before the handler ever
+    sees it."""
+    action = schema.get("ableton_clip", "set_property")
+    declared = set(next(p for p in action.params if p.name == "property").enum or ())
+    assert {
+        "gain", "pitch", "pitch_coarse", "pitch_fine", "warp", "warping",
+        "warp_mode", "start_marker", "end_marker",
+    } <= declared
+
+
+def test_set_property_enum_matches_the_handler_property_table(loaded_actions):
+    """Two lists, one contract: the dispatcher validates against the schema
+    enum and the handler against its own table. A name in one and not the
+    other is either an unreachable property or a dispatcher rejection the
+    handler was written to serve."""
+    from hallucinote_mcp.handlers.clip import _CLIP_PROPERTIES as handler_table
+
+    action = schema.get("ableton_clip", "set_property")
+    declared = set(next(p for p in action.params if p.name == "property").enum or ())
+    assert declared == set(handler_table)
+
+
+def test_set_property_gain_domain_matches_live_and_the_db(loaded_actions):
+    """Live clip gain is LINEAR 0.0-1.0, not dB (lom-audio-clip-surface.md §4,
+    cross-checked against the installed 12.4.1 LomTypes gate table), and
+    `db/mutations/clips.py` `_validate_audio_fields` enforces exactly that
+    range. A wire that accepted a negative gain would take a value neither
+    Live nor the DB can hold and would diverge the two authoring surfaces.
+    """
+    ctx = FakeCtx()
+    ctx.song.tracks[1].clip_slots[0].clip = FakeClip(kind="audio")
+    for value in (0.0, 1.0):
+        resp = dispatch(
+            Request(
+                tool="ableton_clip", action="set_property",
+                params={
+                    "track_index": 2, "location": "session", "clip_index": 1,
+                    "property": "gain", "value": value,
+                },
+            ),
+            context=ctx,
+        )
+        assert resp.ok is True, (value, resp.error)
+
+
+def test_replace_that_fails_to_recreate_says_the_slot_is_now_empty(loaded_actions):
+    """A slot holds one clip, so replace=True deletes before it creates, and a
+    path Live will not load is refused only after that point — the pre-check
+    reads track kind, not the filesystem. The old clip is gone; what the
+    caller must not get is an error that reads like a rejected call which
+    changed nothing.
+    """
+    ctx = FakeCtx()
+    audio_track = ctx.song.tracks[1]
+    slot = audio_track.clip_slots[0]
+    slot.clip = FakeClip(kind="audio")
+    resp = dispatch(
+        Request(
+            tool="ableton_clip", action="create",
+            params={
+                "track_index": 2, "location": "session", "clip_index": 1,
+                "kind": "audio", "audio_path": "/tmp/line.wav",
+                "replace": True,
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    err = resp.error or ""
+    assert "now EMPTY" in err, err
+    assert "will not load" in err, err
+    assert slot.clip is None
+
+
+def test_replace_of_an_audio_path_onto_a_midi_track_keeps_the_clip(loaded_actions):
+    """The pre-check's whole point: the clip is still THERE and still
+    readable, not merely that an error was raised. Live's track typing says
+    in advance that this create cannot succeed, so nothing is deleted.
+    """
+    ctx = FakeCtx()
+    midi_track = ctx.song.tracks[0]
+    slot = midi_track.clip_slots[0]
+    existing = FakeClip(name="Keep me", kind="midi", length=8.0)
+    existing.set_notes(((60, 0.0, 1.0, 100, False),))
+    slot.clip = existing
+    resp = dispatch(
+        Request(
+            tool="ableton_clip", action="create",
+            params={
+                "track_index": 1, "location": "session", "clip_index": 1,
+                "kind": "audio", "audio_path": PROBE_WAV,
+                "replace": True,
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    err = resp.error or ""
+    assert "Nothing was deleted" in err, err
+    assert "MIDI track" in err, err
+    assert "now EMPTY" not in err, err
+    # Present, the SAME clip, and still readable through the bridge.
+    assert slot.clip is existing
+    read = dispatch(
+        Request(
+            tool="ableton_clip", action="list",
+            params={"track_index": 1, "location": "session"},
+        ),
+        context=ctx,
+    )
+    assert read.ok is True, read.error
+    entry = next(c for c in read.result["clips"] if c["clip_index"] == 1)
+    assert entry["name"] == "Keep me"
+    assert entry["length"] == 8.0
+
+
+def test_replace_of_a_midi_clip_onto_an_audio_track_keeps_the_clip(loaded_actions):
+    """The mirror direction. Live refuses a MIDI create on an audio track the
+    same way, so the same pre-check must cover it — an audio-only fix would
+    leave half the data loss in place.
+    """
+    ctx = FakeCtx()
+    audio_track = ctx.song.tracks[1]
+    slot = audio_track.clip_slots[0]
+    existing = FakeClip(name="Keep me too", kind="audio", length=4.0)
+    slot.clip = existing
+    resp = dispatch(
+        Request(
+            tool="ableton_clip", action="create",
+            params={
+                "track_index": 2, "location": "session", "clip_index": 1,
+                "kind": "midi", "length": 16.0, "replace": True,
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    err = resp.error or ""
+    assert "Nothing was deleted" in err, err
+    assert "audio track" in err, err
+    assert "now EMPTY" not in err, err
+    assert slot.clip is existing
+    assert slot.clip.name == "Keep me too"
+
+
+def test_replace_does_not_refuse_when_live_will_not_say_the_track_kind(
+    loaded_actions,
+):
+    """The pre-check must stay silent on a track whose kind it cannot read.
+    Guessing would refuse a create that Live would have accepted, which is a
+    worse failure than the one being prevented: a working call turned into an
+    error the caller cannot act on.
+    """
+    ctx = FakeCtx()
+    track = ctx.song.tracks[1]
+    del track.has_midi_input
+    del track.has_audio_input
+    slot = track.clip_slots[0]
+    slot.clip = FakeClip(kind="audio")
+    resp = dispatch(
+        Request(
+            tool="ableton_clip", action="create",
+            params={
+                "track_index": 2, "location": "session", "clip_index": 1,
+                "kind": "audio", "audio_path": PROBE_WAV, "replace": True,
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
+    assert slot.clip.file_path == PROBE_WAV
+
+
+def test_replace_pre_check_does_not_fire_on_an_empty_slot(loaded_actions):
+    """An empty slot has nothing to protect, so a wrong-kind create there must
+    still reach Live and surface Live's own refusal — the pre-check is a guard
+    on the delete, not a second validation layer in front of every create.
+    """
+    ctx = FakeCtx()
+    resp = dispatch(
+        Request(
+            tool="ableton_clip", action="create",
+            params={
+                "track_index": 1, "location": "session", "clip_index": 1,
+                "kind": "audio", "audio_path": PROBE_WAV, "replace": True,
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    err = resp.error or ""
+    assert "not an audio track" in err, err
+    assert "Nothing was deleted" not in err, err
+
+
+def test_replace_failure_disclosure_survives_an_awkward_exception_type(loaded_actions):
+    """The disclosure is built by re-raising the original exception's TYPE with a
+    new message, which assumes a constructor that takes one string. Not every
+    exception has one, and this is the worst possible path for a raise inside the
+    handler: the clip is already deleted, so losing the disclosure would leave a
+    caller with a TypeError and no idea their slot was emptied.
+    """
+    class AwkwardError(Exception):
+        def __init__(self, a, b):  # noqa: D107 - deliberately not single-arg
+            super().__init__(a, b)
+            self.a, self.b = a, b
+
+    ctx = FakeCtx()
+    track = ctx.song.tracks[1]
+    slot = track.clip_slots[0]
+    slot.clip = FakeClip(kind="audio")
+
+    def _boom(_path):
+        raise AwkwardError("live blew up", 42)
+
+    slot.create_audio_clip = _boom
+    resp = dispatch(
+        Request(
+            tool="ableton_clip", action="create",
+            params={
+                "track_index": 2, "location": "session", "clip_index": 1,
+                "kind": "audio", "audio_path": "/tmp/line.wav",
+                "replace": True,
+            },
+        ),
+        context=ctx,
+    )
+    assert resp.ok is False
+    err = resp.error or ""
+    assert "now EMPTY" in err, err
+    assert "live blew up" in err, err
+    assert slot.clip is None

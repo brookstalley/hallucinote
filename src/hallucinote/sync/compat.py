@@ -1,4 +1,22 @@
-"""Cross-machine portability: detect third-party plugins a song requires.
+"""Cross-machine portability: what a song needs that this machine may not have.
+
+Two independent families, each with its own status vocabulary and its own
+section of ``REQUIREMENTS.md``: **devices** (third-party plugins, the
+``preset_query`` selectors that load them, and where each device's content
+comes from) and **samples** (the files ``clips.audio_file`` and
+``devices.audio_file`` point at). They are kept apart deliberately — a clip is
+not a device, so folding one into the other would mean either a synthesized
+``DeviceEntry`` for something that is not a device or a status enum whose
+meaning depends on which row it decorates. The sample family spans both
+columns because the thing being checked is identical — a path, and what is at
+it — and one field on the row says which use site named it.
+
+A device's CLASS is not its content. A Drum Rack, a Simpler or an instrument
+rack is a Live built-in whose sound may live in an Ableton Pack or in the
+author's own library; on a machine without that Pack the class exists and the
+content does not. So the device family classifies provenance as well as
+installability, out of the two columns that record it —
+``devices.preset_query``'s browser root and ``devices.browser_path_json``.
 
 W13-B (v0.9.0). The DB-as-source-of-truth model means a song travels as a
 DB + a captured snapshot — but Live devices reference plugins (VST/AU) that
@@ -14,12 +32,19 @@ If a plugin is missing, the consumer installs it. REQUIREMENTS.md (written
 by ``write_requirements``) is the shopping list the song's author leaves
 for collaborators.
 
+A sample is checked for **existence and readability only**. Live's own
+missing-media flow relinks a moved sample and the asset manifest verifies
+content; a compat check that guessed at either would report failures it has
+no standing to make.
+
 Two CLI subcommands:
 - ``compat check <slug> [--installed-plugins FILE] [--probe]`` — print JSON
   report + exit 1 if items need user attention (missing or unverified
-  third-party, structurally invalid preset_query, or — with ``--probe`` —
-  preset_query that resolves to 0 or 2+ matches in Live's browser).
-  Called by the ``/ableton-push`` skill as a preflight gate.
+  third-party, structurally invalid preset_query, a sample a clip or a
+  sampler names that is not a readable file, or — with ``--probe`` —
+  preset_query that resolves to 0 or 2+ matches in Live's browser, or an
+  Ableton Pack this machine does not have). Called by the ``/ableton-push``
+  skill as a preflight gate.
 - ``compat write-requirements <slug>`` — (re)generate
   ``songs/<slug>/REQUIREMENTS.md`` so the file travels with the song. The
   *author* runs this when their device list materially changes; the
@@ -41,15 +66,30 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sqlite3
+import stat
 import sys
 from dataclasses import asdict, dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Literal
 
 from hallucinote.db import init_db, queries as Q, resolve_db_path
+from hallucinote.paths import (
+    portable_text,
+    resolve_audio_path,
+    song_dir_for_conn,
+)
 from hallucinote.preset_query import BROWSER_ROOTS as _VALID_BROWSER_ROOTS
+from hallucinote.preset_query import SEARCH_MODES as _VALID_MATCH_MODES
 from hallucinote.workspace import resolve_song_dir
+
+
+# The matcher's own defaults, named once. Importing the ENUM but restating
+# the DEFAULTS would leave the gate half-anchored to the loader — the same
+# split that let SYN-6Q3D happen.
+_MATCH_MODE_DEFAULT = "substring"
+_CASE_SENSITIVE_DEFAULT = False
 
 
 # ---------------------------------------------------------------------------
@@ -114,6 +154,15 @@ DeviceStatus = Literal[
     "kind_unresolvable",        # Dry-run reported 0 matches for kind/preset_query — load will fail.
     "kind_ambiguous",           # Dry-run reported 2+ matches — strict loader will refuse.
     "preset_query_unverified",  # preset_query needed AND no dry-runs map was provided.
+    # Content provenance. A native Live class can wrap content that lives
+    # OUTSIDE Live, so "this machine has the class" is not "this machine has
+    # the sound". These three say where the content comes from; they are
+    # DEVICE statuses because they decorate a device row, and they are
+    # family-prefixed (``pack_`` / ``user_``) so a status string carries its
+    # family with it wherever it lands.
+    "pack_content",             # Content lives in an Ableton Pack the consumer must install.
+    "pack_content_missing",     # Probed: that Pack is not installed on THIS machine.
+    "user_content",             # Content lives in the author's user library / samples — no Pack to install.
 ]
 
 
@@ -145,6 +194,68 @@ class DeviceEntry:
     # — the agent can use this to suggest a concrete fix without
     # re-running the dry-run).
     detail: str | None = None
+    # For ``pack_content`` / ``pack_content_missing``, the Pack's name as the
+    # AUTHOR's browser labelled it. Live captures no stable catalogue
+    # identifier for a Pack, so this is a label to match by eye and
+    # REQUIREMENTS.md says exactly that rather than implying an id. None when
+    # the row records a packs root but no segment under it to name.
+    pack_name: str | None = None
+
+
+# The sample family's own status vocabulary. Separate from ``DeviceStatus``
+# by design and prefixed so a status string carries its family with it: the
+# two enums land side by side in one JSON report, and a bare "missing" that
+# could mean either a plugin or a file is the ambiguity this split exists to
+# prevent. Same caller contract as ``DeviceStatus`` — every value is rendered
+# somewhere, and a reader may not collapse the set into present/absent.
+
+SampleStatus = Literal[
+    "sample_ok",            # Resolved to a regular file this account can read.
+    "sample_missing",       # Nothing is at the resolved path.
+    "sample_unreadable",    # Something is there; this account cannot read it.
+    "sample_not_a_file",    # Something is there; it is not a regular file.
+    "sample_unresolvable",  # Song-relative ref with no song directory to anchor it.
+]
+
+# Which kind of row named the file. One field rather than a second entry
+# family: the thing being checked — a path, and what is at it — is identical
+# for a clip and for a sampler, and the verdicts, the resolver and the fix are
+# the same. What differs is only how the row is addressed for the reader, so
+# that is what the field carries.
+SampleUseSite = Literal["clip", "device"]
+
+
+@dataclass
+class SampleEntry:
+    """One row in the sample half of the report — per reference to a file on
+    disk, from either column that carries one: an audio clip's
+    ``clips.audio_file`` or a sampler's ``devices.audio_file``.
+
+    ``audio_file`` is the reference exactly as the DB carries it (song-relative
+    POSIX or absolute); ``resolved_path`` is what it resolved to on this
+    machine, and is None only when there was no anchor to resolve it against.
+    Both are reported because a reader fixing a dangling sample needs the
+    reference to re-point AND the path that was looked for.
+
+    ``clip_name`` and ``slot`` address the reference SITE, and read according
+    to ``use_site``: the clip's name and its session slot for ``"clip"``, the
+    device's display name and its 1-based position in its chain for
+    ``"device"``. ``use_site`` is carried explicitly so a reader never has to
+    infer whether "slot 3" means a clip slot or a sampler's place in a chain —
+    the report's job is to name *which* sampler on *which* track points at
+    nothing.
+    """
+    track_name: str
+    clip_name: str
+    slot: int
+    audio_file: str
+    resolved_path: str | None
+    status: SampleStatus
+    use_site: SampleUseSite = "clip"
+    # Non-None for every status but ``sample_ok``: naming the fault without
+    # naming the path leaves the reader to re-derive the resolution that
+    # produced it, which is the report's whole job.
+    detail: str | None = None
 
 
 @dataclass
@@ -158,6 +269,11 @@ class CompatReport:
     song_slug: str
     song_title: str | None
     entries: list[DeviceEntry] = field(default_factory=list)
+    # The second family. Kept in its own list rather than mixed into
+    # ``entries`` so every device-side property, the JSON shape and the
+    # REQUIREMENTS section that read ``entries`` keep meaning exactly what
+    # they meant: devices, and only devices.
+    samples: list[SampleEntry] = field(default_factory=list)
     installed_provided: bool = False  # Was --installed-plugins given?
     # R-2.1: was --browser-dry-runs (or the in-process equivalent) given?
     # Mirrors ``installed_provided``: when False, preset_query devices
@@ -201,6 +317,49 @@ class CompatReport:
         return [e for e in self.entries if e.status == "preset_query_unverified"]
 
     @property
+    def pack_content(self) -> list[DeviceEntry]:
+        return [e for e in self.entries if e.status == "pack_content"]
+
+    @property
+    def pack_content_missing(self) -> list[DeviceEntry]:
+        return [e for e in self.entries if e.status == "pack_content_missing"]
+
+    @property
+    def user_content(self) -> list[DeviceEntry]:
+        return [e for e in self.entries if e.status == "user_content"]
+
+    @property
+    def samples_ok(self) -> list[SampleEntry]:
+        return [e for e in self.samples if e.status == "sample_ok"]
+
+    @property
+    def samples_missing(self) -> list[SampleEntry]:
+        return [e for e in self.samples if e.status == "sample_missing"]
+
+    @property
+    def samples_unreadable(self) -> list[SampleEntry]:
+        return [e for e in self.samples if e.status == "sample_unreadable"]
+
+    @property
+    def samples_not_a_file(self) -> list[SampleEntry]:
+        return [e for e in self.samples if e.status == "sample_not_a_file"]
+
+    @property
+    def samples_unresolvable(self) -> list[SampleEntry]:
+        return [e for e in self.samples if e.status == "sample_unresolvable"]
+
+    @property
+    def sample_issues(self) -> list[SampleEntry]:
+        """Every sample row the push gate must stop on.
+
+        Defined as "not ``sample_ok``" rather than as a list of the bad
+        statuses: a status added later is then an issue until someone
+        deliberately says otherwise, instead of passing silently through a
+        gate that was never taught about it.
+        """
+        return [e for e in self.samples if e.status != "sample_ok"]
+
+    @property
     def has_issues(self) -> bool:
         """True iff the push-preflight gate should refuse-and-confirm.
 
@@ -215,6 +374,23 @@ class CompatReport:
         is an issue for the same reason ``third_party_unverified`` is:
         the operator should explicitly confirm rather than discover at
         load time.
+
+        A sample that is not ``sample_ok`` is an issue too: the clips phase
+        refuses a row whose file it cannot resolve to something on disk, so
+        every one of these is a push that stops partway through unless the
+        operator has seen it first. That holds for a sampler's sample exactly
+        as it holds for a clip's — a Simpler pointing at a deleted file is an
+        empty sampler, discovered when the part plays silence.
+
+        Content provenance is asymmetric on purpose. ``pack_content_missing``
+        IS an issue: it was PROBED, and the Pack is demonstrably absent here,
+        so this push will load nothing into that device. ``pack_content`` and
+        ``user_content`` are NOT: the line is "this push, on this machine,
+        will not do what you asked", and both of those demonstrably loaded on
+        the machine the song was captured from. What another machine needs is
+        REQUIREMENTS.md's question, and it answers it there. Making them
+        issues would exit 1 forever on every song built from the author's own
+        library — which is how an operator learns to ignore a gate.
         """
         return bool(
             self.missing or self.unverified
@@ -222,6 +398,8 @@ class CompatReport:
             or self.kind_unresolvable
             or self.kind_ambiguous
             or self.preset_query_unverified
+            or self.pack_content_missing
+            or self.sample_issues
         )
 
     def to_json(self) -> dict:
@@ -231,7 +409,12 @@ class CompatReport:
             "installed_provided": self.installed_provided,
             "browser_dry_runs_provided": self.browser_dry_runs_provided,
             "entries": [asdict(e) for e in self.entries],
+            "samples": [asdict(e) for e in self.samples],
             "summary": {
+                # ``total`` and every bucket beside it count DEVICES; the
+                # sample family carries its own ``samples_*`` counts rather
+                # than widening a device number into something a reader would
+                # have to know the history of to interpret.
                 "total": len(self.entries),
                 "native": len(self.native),
                 "placeholders": len(self.placeholders),
@@ -242,6 +425,15 @@ class CompatReport:
                 "kind_unresolvable": len(self.kind_unresolvable),
                 "kind_ambiguous": len(self.kind_ambiguous),
                 "preset_query_unverified": len(self.preset_query_unverified),
+                "pack_content": len(self.pack_content),
+                "pack_content_missing": len(self.pack_content_missing),
+                "user_content": len(self.user_content),
+                "samples_total": len(self.samples),
+                "samples_ok": len(self.samples_ok),
+                "samples_missing": len(self.samples_missing),
+                "samples_unreadable": len(self.samples_unreadable),
+                "samples_not_a_file": len(self.samples_not_a_file),
+                "samples_unresolvable": len(self.samples_unresolvable),
                 "has_issues": self.has_issues,
             },
         }
@@ -311,20 +503,71 @@ def classify_preset_query(
             "preset_query_invalid",
             f"preset_query.pattern must be a string, got {type(pattern).__name__}",
         )
+    # SYN-6Q3D: `mode` and `case_sensitive` now ride the wire into
+    # `ableton_browser(action='search')`, so they are structural too. Without
+    # this check an unknown mode reaches the probe, the browser rejects the
+    # enum, and `_probe_browser_dry_runs` raises SystemExit — killing the WHOLE
+    # `--probe` report over one bad device instead of flagging that device. The
+    # enum is IMPORTED from `preset_query` (the lock-tested mirror of the
+    # MCP resolver) rather than restated, so the gate cannot drift from the
+    # matcher — the exact class of disagreement this item existed to fix.
+    # `"mode": null` is NOT the same as an absent key: absent means "use the
+    # default", while an explicit null reaches `name_matches` and raises
+    # "unknown search mode None". Keying on presence rather than truthiness
+    # keeps the gate and the loader agreeing — the exact disagreement SYN-6Q3D
+    # existed to fix, which a `pq.get("mode")` check would have reopened.
+    mode = pq["mode"] if "mode" in pq else _MATCH_MODE_DEFAULT
+    if mode not in _VALID_MATCH_MODES:
+        return (
+            "preset_query_invalid",
+            f"preset_query.mode={mode!r} not in {sorted(_VALID_MATCH_MODES)}",
+        )
+    # NOT the presence rule `mode` uses, deliberately — the justification does
+    # not transfer. An explicit `mode: null` REACHES `name_matches` and raises,
+    # so the gate must reject it to stay in step with the loader. An explicit
+    # `case_sensitive: null` degrades to False in every consumer (`name_matches`
+    # tests `if not case_sensitive`, `_dry_run_key` coerces via `bool(...)`, the
+    # MCP resolver does the same), so rejecting it would make this gate STRICTER
+    # than the loader — refusing a song that loads fine, which is the exact
+    # failure shape SYN-6Q3D existed to remove. Only a non-null non-bool is an
+    # authoring error worth reporting.
+    case_sensitive = pq.get("case_sensitive")
+    if case_sensitive is not None and not isinstance(case_sensitive, bool):
+        return (
+            "preset_query_invalid",
+            "preset_query.case_sensitive must be a boolean, got "
+            f"{type(case_sensitive).__name__}",
+        )
     # Structure is fine — caller will dispatch the dry-run.
     return None
 
 
-def _dry_run_key(preset_query: dict) -> tuple[str, str, tuple[str, ...]]:
+# The browser dry-run cache key: every field `preset_query.name_matches` reads.
+# Named rather than spelled out at each use so widening it (as SYN-6Q3D did,
+# adding mode + case_sensitive) is a one-line change, not an eight-site sweep.
+_DryRunKey = tuple[str, str, tuple[str, ...], str, bool]
+
+
+def _dry_run_key(preset_query: dict) -> _DryRunKey:
     """Canonical key for a precomputed browser-search dry-run cache.
 
-    Includes ``root``, ``pattern``, and a tuple-encoded ``path_prefix``
-    so the cache hash is stable across re-runs of the same query.
+    Carries every field ``preset_query.name_matches`` reads — ``root``,
+    ``pattern``, tuple-encoded ``path_prefix``, ``mode`` and
+    ``case_sensitive`` — so the cache hash is stable across re-runs AND two
+    queries that differ only in how they match cannot collide on one entry.
+
+    ``mode``/``case_sensitive`` were originally absent, which caused both
+    halves of SYN-6Q3D: the probe searched with the browser's default
+    substring matcher regardless of what the query declared, and two devices
+    differing only in ``mode`` shared a single match count. The defaults here
+    mirror :func:`hallucinote.preset_query.name_matches`.
     """
     return (
         str(preset_query.get("root", "")),
         str(preset_query.get("pattern", "")),
         tuple(preset_query.get("path_prefix") or []),
+        str(preset_query.get("mode", _MATCH_MODE_DEFAULT)),
+        bool(preset_query.get("case_sensitive", _CASE_SENSITIVE_DEFAULT)),
     )
 
 
@@ -371,6 +614,321 @@ def classify_device(
 
 
 # ---------------------------------------------------------------------------
+# Content provenance
+# ---------------------------------------------------------------------------
+#
+# The browser roots whose content does NOT ship inside Live. A device loaded
+# through one of these is a native class wrapping content from somewhere else:
+# an Ableton Pack the consumer can install, or the author's own library, which
+# nobody else can. `plugins` is deliberately absent — that root IS the
+# third-party family, already classified by `classify_device`.
+
+_PACK_ROOT = "packs"
+_USER_CONTENT_ROOTS: frozenset[str] = frozenset({"user_library", "samples"})
+
+
+def _pack_key(name: str) -> str:
+    """Normalize a Pack name for comparison.
+
+    Both sides are browser LABELS — the author's, stored in the DB, against
+    the consumer's, read live out of `browser.packs` — so the only safe
+    normalization is the one that cannot change which Pack is meant: trim and
+    case-fold. Anything cleverer (stripping version suffixes, fuzzy matching)
+    would silently equate two different Packs, and this comparison decides
+    whether a push is refused.
+    """
+    return name.strip().casefold()
+
+
+def _content_origin(
+    device_row: sqlite3.Row,
+) -> tuple[str, str | None, str] | None:
+    """Where this device's content comes from: ``(root, pack_name, column)``.
+
+    ``None`` when the content ships inside Live (or the row records nothing
+    about where it came from), which is the overwhelmingly common case.
+
+    ``preset_query`` is consulted first because it is the selector push
+    actually resolves on the CONSUMER's machine — its root is the tree that
+    will be walked there. ``browser_path_json`` is the fallback: it records
+    where the author's own load resolved, and is the only signal at all for a
+    device carrying just a per-machine ``preset_uri``, which is precisely the
+    device the dry-run probe never reaches.
+
+    The Pack name is ``path_prefix[0]`` under a ``packs`` root, or
+    ``browser_path_json[1]`` — the first segment BELOW the root, which is how
+    Live's Packs collection is shaped. It can be absent (a bare ``packs``
+    query with no prefix); the caller says so rather than inventing one.
+    """
+    raw_query = (
+        device_row["preset_query"]
+        if "preset_query" in device_row.keys() else None
+    )
+    if raw_query:
+        try:
+            pq = json.loads(raw_query)
+        except (json.JSONDecodeError, ValueError):
+            pq = None
+        if isinstance(pq, dict):
+            root = pq.get("root")
+            if root == _PACK_ROOT or root in _USER_CONTENT_ROOTS:
+                prefix = pq.get("path_prefix")
+                first = (
+                    prefix[0]
+                    if isinstance(prefix, list) and prefix
+                    and isinstance(prefix[0], str) and prefix[0].strip()
+                    else None
+                )
+                return str(root), first, "preset_query.root"
+    raw_path = (
+        device_row["browser_path_json"]
+        if "browser_path_json" in device_row.keys() else None
+    )
+    if raw_path:
+        try:
+            path = json.loads(raw_path)
+        except (json.JSONDecodeError, ValueError):
+            path = None
+        if isinstance(path, list) and path and isinstance(path[0], str):
+            root = path[0]
+            if root == _PACK_ROOT or root in _USER_CONTENT_ROOTS:
+                second = (
+                    path[1]
+                    if len(path) > 1 and isinstance(path[1], str)
+                    and path[1].strip()
+                    else None
+                )
+                return root, second, "browser_path_json[0]"
+    return None
+
+
+def classify_content_source(
+    device_row: sqlite3.Row,
+    *,
+    installed_packs: frozenset[str] | None,
+) -> tuple[DeviceStatus, str | None, str | None] | None:
+    """Classify a device by WHERE ITS CONTENT LIVES, not by its class.
+
+    Returns ``(status, pack_name, detail)``, or ``None`` when the content
+    ships inside Live and the class-based classifiers own the row.
+
+    ``installed_packs`` is the set of Pack names this machine actually has
+    (from ``ableton_browser(action='tree', root='packs', depth=1)``).
+    ``None`` means nobody looked — the offline path, where
+    ``regen_requirements`` runs — and offline NEVER escalates to
+    ``pack_content_missing``: a Pack device is then a requirement, not a
+    failure, because absence is not something this run observed.
+
+    Precedence, as ``_classify_device_full`` applies it:
+    ``preset_query_invalid`` > ``pack_content_missing`` >
+    ``kind_unresolvable`` / ``kind_ambiguous`` > ``pack_content`` /
+    ``user_content`` > ``preset_query_unverified`` > ``third_party_*`` >
+    ``native``. A known-absent Pack outranks the dry-run verdicts because the
+    dry-run's answer for that device is a foregone 0 matches, and reporting
+    that as ``kind_unresolvable`` blames the author for a snapshot that is
+    fine — "you are missing Pack X" is the true sentence and the actionable
+    one. Everything else stays below the dry-run: with the Pack present, 0 or
+    2+ matches really is an authoring fault.
+    """
+    origin = _content_origin(device_row)
+    if origin is None:
+        return None
+    root, pack_name, column = origin
+    if root in _USER_CONTENT_ROOTS:
+        return (
+            "user_content",
+            None,
+            f"content resolves through the {root!r} browser root ({column}) — "
+            "it lives in the author's own library, not inside Live and not in "
+            "any Pack a consumer can install. Nothing will load here on "
+            "another machine; supply equivalent content and re-point the "
+            "device.",
+        )
+    named = pack_name if pack_name else "an unnamed Pack"
+    if (
+        installed_packs is not None
+        and pack_name is not None
+        and _pack_key(pack_name) not in {_pack_key(p) for p in installed_packs}
+    ):
+        return (
+            "pack_content_missing",
+            pack_name,
+            f"content comes from the Ableton Pack {named!r} ({column}), which "
+            "is not installed on this machine — Live's browser has nothing to "
+            "load there, so this device would come up empty. Install the "
+            "Pack, or re-point the device at content this machine has.",
+        )
+    return (
+        "pack_content",
+        pack_name,
+        f"content comes from the Ableton Pack {named!r} ({column}). The class "
+        "ships with Live; the content does not, so a machine without that "
+        "Pack loads nothing here.",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Sample references
+# ---------------------------------------------------------------------------
+
+
+def _is_absolute_ref(ref: str) -> bool:
+    """Whether a ``clips.audio_file`` reference names an absolute path.
+
+    Both spellings, exactly as :func:`hallucinote.paths.resolve_audio_path`
+    tests them — the column is POSIX by contract but is read back on whatever
+    platform the consumer runs, and a gate that disagreed with the resolver
+    about which references need an anchor would refuse songs that push fine.
+    """
+    return PurePosixPath(ref).is_absolute() or Path(ref).is_absolute()
+
+
+def classify_sample(
+    ref: str,
+    *,
+    song_dir: Path | None,
+    use_site: SampleUseSite = "clip",
+) -> tuple[SampleStatus, Path | None, str | None]:
+    """Classify one ``audio_file`` reference by what is at its path.
+
+    The same check for both columns that carry one: ``clips.audio_file`` and
+    ``devices.audio_file``. ``use_site`` changes only the noun in the message
+    — telling the reader to "re-point the clip" when the reference is on a
+    Simpler sends them looking for a clip that does not exist.
+
+    Existence and readability only. A present, readable file is
+    ``sample_ok`` whatever its bytes hold: verifying content is the asset
+    manifest's job and finding a moved sample is Live's, and a compat check
+    that attempted either would report failures it cannot stand behind.
+
+    Resolution goes through :func:`hallucinote.paths.resolve_audio_path` —
+    the same resolver the clips push phase uses — so this gate and the phase
+    it gates cannot disagree about which file a reference names.
+
+    ``song_dir`` anchors a song-relative reference. ``None`` means the caller
+    had no anchor: an absolute reference is still checkable, a relative one is
+    not, and ``sample_unresolvable`` says so rather than guessing at a
+    directory and reporting a missing file that may well exist.
+
+    ``use_site`` names the kind of row that holds the reference.
+
+    Returns ``(status, resolved_path, detail)``. ``detail`` is None only for
+    ``sample_ok``; every other status names the reference AND the path it
+    resolved to, because the fix differs by which of the two is wrong.
+    """
+    site = "sampler" if use_site == "device" else "clip"
+    if _is_absolute_ref(ref):
+        resolved = Path(ref)
+    elif song_dir is None:
+        return (
+            "sample_unresolvable",
+            None,
+            f"audio_file={ref!r} is song-relative and no song directory was "
+            "available to resolve it against, so whether the sample exists "
+            "could not be determined. Open the song through its own DB file "
+            "(songs/<slug>/<slug>.db) and re-run.",
+        )
+    else:
+        resolved = resolve_audio_path(song_dir, ref)
+    try:
+        st = resolved.stat()
+    except (FileNotFoundError, NotADirectoryError):
+        return (
+            "sample_missing",
+            resolved,
+            f"audio_file={ref!r} resolves to {resolved}, where nothing is: "
+            f"the sample was moved or deleted after the {site} was authored. "
+            f"Restore the file at that path, or re-point the {site}.",
+        )
+    except PermissionError as exc:
+        return (
+            "sample_unreadable",
+            resolved,
+            f"audio_file={ref!r} resolves to {resolved}, which cannot even "
+            f"be inspected: {exc.strerror}. A directory on the way to it "
+            "denies access — this is a permissions fix, not a missing file.",
+        )
+    except OSError as exc:
+        return (
+            "sample_unreadable",
+            resolved,
+            f"audio_file={ref!r} resolves to {resolved}, which the "
+            f"filesystem refused to describe: {exc}.",
+        )
+    if not stat.S_ISREG(st.st_mode):
+        what = "a directory" if stat.S_ISDIR(st.st_mode) else "not a regular file"
+        return (
+            "sample_not_a_file",
+            resolved,
+            f"audio_file={ref!r} resolves to {resolved}, which is {what}. "
+            f"A {site} plays one file; point it at the sample itself.",
+        )
+    # Existence is not readability: a file restored from an archive, or
+    # copied out of another user's tree, sits exactly where the clip expects
+    # it and still cannot be opened. Reported apart from `sample_missing`
+    # because the fix is a permission, not a file.
+    if not os.access(resolved, os.R_OK):
+        return (
+            "sample_unreadable",
+            resolved,
+            f"audio_file={ref!r} resolves to {resolved}, which exists but "
+            f"this account cannot read (mode {stat.filemode(st.st_mode)}). "
+            f"Fix the permissions; the file is where the {site} expects it.",
+        )
+    return "sample_ok", resolved, None
+
+
+def _collect_sample_entries(
+    conn: sqlite3.Connection,
+    song_id: str,
+    *,
+    song_dir: Path | None,
+) -> list[SampleEntry]:
+    """Every ``clips.audio_file`` reference in the song, classified.
+
+    The clip half of the sample family; the device half
+    (``devices.audio_file``) is collected by the device walk, which already
+    knows each sampler's track and rack.
+
+    One row per reference SITE, not per unique file: two clips pointing at
+    the same moved sample are two clips to fix, and the REQUIREMENTS
+    generator groups them back together for the reader.
+
+    Rows with no reference are skipped rather than reported. A ``kind='audio'``
+    clip that names no file is a different defect with a different fix (the
+    row does not say what it plays), and the clips phase already refuses it by
+    name; there is no path here to check the existence of.
+    """
+    rows = conn.execute(
+        """SELECT c.slot AS slot, c.name AS clip_name,
+                  c.audio_file AS audio_file, t.name AS track_name
+             FROM clips c
+             JOIN tracks t ON t.id = c.track_id
+            WHERE t.song_id = ?
+              AND c.audio_file IS NOT NULL AND TRIM(c.audio_file) != ''
+            ORDER BY t.track_index, c.slot""",
+        (song_id,),
+    ).fetchall()
+    entries: list[SampleEntry] = []
+    for row in rows:
+        ref = str(row["audio_file"])
+        status, resolved, detail = classify_sample(
+            ref, song_dir=song_dir, use_site="clip",
+        )
+        entries.append(SampleEntry(
+            track_name=row["track_name"],
+            clip_name=row["clip_name"] or f"slot {row['slot']}",
+            slot=row["slot"],
+            audio_file=ref,
+            resolved_path=str(resolved) if resolved is not None else None,
+            status=status,
+            use_site="clip",
+            detail=detail,
+        ))
+    return entries
+
+
+# ---------------------------------------------------------------------------
 # Song walk
 # ---------------------------------------------------------------------------
 
@@ -379,9 +937,10 @@ def check_song(
     db_path: Path | str,
     *,
     installed_plugins: list[dict] | None = None,
-    browser_dry_runs: dict[tuple[str, str, tuple[str, ...]], int] | None = None,
+    browser_dry_runs: dict[_DryRunKey, int] | None = None,
+    installed_packs: frozenset[str] | None = None,
 ) -> CompatReport:
-    """Walk the song's DB and classify every device.
+    """Walk the song's DB and classify every device and every sample.
 
     Recurses into nested rack chains so plugin-inside-rack ("an FX rack
     wrapping a Spitfire VST") is detected — top-level-only would miss
@@ -401,6 +960,17 @@ def check_song(
     (mirrors the ``third_party_unverified`` design). When provided, the
     match count drives ``kind_unresolvable`` (0) /
     ``kind_ambiguous`` (2+) / native (1).
+
+    ``installed_packs`` (optional): the Pack names this machine actually has,
+    from ``ableton_browser(action='tree', root='packs', depth=1)``. ``None``
+    means nobody looked — the offline path — and a Pack-sourced device is then
+    ``pack_content`` (a requirement) rather than ``pack_content_missing`` (a
+    refusal): ``regen_requirements`` runs offline and must not assert an
+    absence it cannot observe.
+
+    The sample pass needs no parameter: an ``audio_file`` reference — from a
+    clip or from a sampler — is checked against the filesystem the caller is
+    already running on, anchored to the song directory the DB itself names.
     """
     # Open via init_db (not bare connect) so a song DB built by an earlier
     # release is migrated to the current schema first — check_song reads
@@ -433,6 +1003,8 @@ def check_song(
             browser_dry_runs_provided=browser_dry_runs is not None,
         )
 
+        song_dir = song_dir_for_conn(conn)
+
         tracks = conn.execute(
             "SELECT id, name FROM tracks WHERE song_id = ? AND kind != 'master' "
             "ORDER BY track_index",
@@ -444,6 +1016,7 @@ def check_song(
                     conn, chain, parent_label=t["name"], track_name=t["name"],
                     report=report, installed_names=installed_names,
                     browser_dry_runs=browser_dry_runs,
+                    installed_packs=installed_packs, song_dir=song_dir,
                 )
 
         returns = conn.execute(
@@ -456,7 +1029,17 @@ def check_song(
                     conn, chain, parent_label=r["name"], track_name=r["name"],
                     report=report, installed_names=installed_names,
                     browser_dry_runs=browser_dry_runs,
+                    installed_packs=installed_packs, song_dir=song_dir,
                 )
+
+        # The CLIP half of the sample pass is a flat query rather than a
+        # second walk: a sample hangs off a clip, which hangs off a track, and
+        # nothing about it nests the way a device inside a rack does. The
+        # DEVICE half was collected by the walk above, where the location that
+        # names the sampler is already in hand — hence extend, not assign.
+        report.samples.extend(_collect_sample_entries(
+            conn, song_id, song_dir=song_dir,
+        ))
 
         return report
     finally:
@@ -471,7 +1054,9 @@ def _walk_chain(
     track_name: str,
     report: CompatReport,
     installed_names: frozenset[str] | None,
-    browser_dry_runs: dict[tuple[str, str, tuple[str, ...]], int] | None,
+    browser_dry_runs: dict[_DryRunKey, int] | None,
+    installed_packs: frozenset[str] | None,
+    song_dir: Path | None,
 ) -> None:
     """Recursively walk a device chain, classifying each device.
 
@@ -479,11 +1064,19 @@ def _walk_chain(
     AudioEffectGroupDevice) carry their own inner chains via
     ``device_chains.parent_rack_device_id``. Recurse so plugin-inside-
     rack is detected.
+
+    A sampler's ``devices.audio_file`` is classified HERE rather than in a
+    second flat query: the walk already knows which track the device is on
+    and which rack it sits inside, and that location is what makes the
+    report's message ("which sampler, on which track") answerable at all.
+    A flat SELECT would have to re-derive it through a recursive join.
     """
     devices = Q.get_devices_for_chain(conn, chain["id"])
     for d in devices:
-        status, lookup, detail = _classify_device_full(
-            d, installed_names=installed_names, browser_dry_runs=browser_dry_runs,
+        status, lookup, detail, pack_name = _classify_device_full(
+            d, installed_names=installed_names,
+            browser_dry_runs=browser_dry_runs,
+            installed_packs=installed_packs,
         )
         report.entries.append(DeviceEntry(
             track_name=track_name,
@@ -495,7 +1088,24 @@ def _walk_chain(
             status=status,
             lookup_name=lookup,
             detail=detail,
+            pack_name=pack_name,
         ))
+        device_ref = d["audio_file"] if "audio_file" in d.keys() else None
+        if device_ref is not None and str(device_ref).strip():
+            ref = str(device_ref)
+            sample_status, resolved, sample_detail = classify_sample(
+                ref, song_dir=song_dir, use_site="device",
+            )
+            report.samples.append(SampleEntry(
+                track_name=track_name,
+                clip_name=d["display_name"] or f"position {d['position']}",
+                slot=d["position"],
+                audio_file=ref,
+                resolved_path=str(resolved) if resolved is not None else None,
+                status=sample_status,
+                use_site="device",
+                detail=sample_detail,
+            ))
         for inner in Q.get_device_chains_for_rack_device(conn, d["id"]):
             _walk_chain(
                 conn, inner,
@@ -503,6 +1113,8 @@ def _walk_chain(
                 track_name=track_name,
                 report=report, installed_names=installed_names,
                 browser_dry_runs=browser_dry_runs,
+                installed_packs=installed_packs,
+                song_dir=song_dir,
             )
 
 
@@ -510,33 +1122,48 @@ def _classify_device_full(
     device_row: sqlite3.Row,
     *,
     installed_names: frozenset[str] | None,
-    browser_dry_runs: dict[tuple[str, str, tuple[str, ...]], int] | None,
-) -> tuple[DeviceStatus, str | None, str | None]:
+    browser_dry_runs: dict[_DryRunKey, int] | None,
+    installed_packs: frozenset[str] | None = None,
+) -> tuple[DeviceStatus, str | None, str | None, str | None]:
     """Combined classifier — preset_query validation takes precedence
     over plugin-check, because a structurally-broken preset_query will
     refuse at load time regardless of whether the underlying class is
     native or third-party.
 
-    Returns ``(status, lookup_name, detail)``. ``detail`` is non-None
-    for the new preset_query failure modes; the legacy plugin path
-    leaves it None to keep its output stable.
+    Content provenance sits between the two: a device whose content comes
+    from a Pack or from the author's own library is neither a plugin to
+    install nor a Live built-in that needs nothing, and classifying it
+    ``native`` on the strength of its class name is the false-clean answer
+    this branch exists to remove. The full precedence is documented on
+    :func:`classify_content_source`.
+
+    Returns ``(status, lookup_name, detail, pack_name)``. ``detail`` is
+    non-None for the preset_query failure modes and for every content-source
+    status; the legacy plugin path leaves both trailing fields None to keep
+    its output stable.
     """
     # preset_query branch — structural check first, dry-run after.
     preset_query_raw = device_row["preset_query"] if "preset_query" in device_row.keys() else None
+    pq: dict | None = None
     if preset_query_raw is not None:
         structural = classify_preset_query(preset_query_raw)
         if structural is not None:
             status, detail = structural
-            return status, device_row["display_name"], detail
-        # Structurally valid → consult the dry-run cache (if available).
+            return status, device_row["display_name"], detail, None
         pq = json.loads(preset_query_raw)
-        if browser_dry_runs is None:
-            return (
-                "preset_query_unverified",
-                device_row["display_name"],
-                "no browser dry-runs provided (run `compat check <slug> --probe` "
-                "with Live + the MCP bridge available)",
-            )
+
+    content = classify_content_source(
+        device_row, installed_packs=installed_packs,
+    )
+    # A Pack this machine demonstrably lacks outranks every dry-run verdict.
+    # The dry-run's answer for such a device is a foregone 0 matches, and
+    # ``kind_unresolvable`` reads as "the author wrote a bad selector" — the
+    # wrong sentence, pointed at the wrong person. Name the Pack instead.
+    if content is not None and content[0] == "pack_content_missing":
+        status, pack_name, detail = content
+        return status, device_row["display_name"], detail, pack_name
+
+    if pq is not None and browser_dry_runs is not None:
         key = _dry_run_key(pq)
         match_count = browser_dry_runs.get(key)
         pattern = pq.get("pattern", "")
@@ -550,6 +1177,7 @@ def _classify_device_full(
                 f"0 matches for pattern={pattern!r} under root={root!r} "
                 f"path_prefix={path_str} — Live's browser has nothing at "
                 "that location. Tighten path_prefix or fix the pattern.",
+                None,
             )
         if match_count >= 2:
             return (
@@ -559,10 +1187,37 @@ def _classify_device_full(
                 f"root={root!r} path_prefix={path_str} — the strict loader "
                 "refuses on multi-match. Use a more specific pattern, an "
                 "explicit '.adv' suffix, or a tighter path_prefix.",
+                None,
             )
-        # match_count == 1 → resolves cleanly; fall through to plugin check
-        # since the SAME device could still be a third-party plugin needing
+        # match_count == 1 → resolves cleanly; fall through since the SAME
+        # device could still be Pack content, or a third-party plugin needing
         # the installed-plugin classifier.
+
+    # Content provenance outranks ``preset_query_unverified``: "you need Pack
+    # X" is a strictly more specific and more useful statement about the same
+    # device than "nobody resolved this selector", and REQUIREMENTS.md is
+    # generated on exactly this path (offline, no dry-run map) — leaving the
+    # unverified status to win here would leave the Pack unnamed in the one
+    # file that exists to name it. The unverified fact is not lost: it rides
+    # in the detail below.
+    if content is not None:
+        status, pack_name, detail = content
+        if browser_dry_runs is None and pq is not None:
+            detail = (
+                f"{detail} This selector was also never resolved against a "
+                "browser — run `compat check <slug> --probe` with Live "
+                "available to confirm it matches exactly one item."
+            )
+        return status, device_row["display_name"], detail, pack_name
+
+    if pq is not None and browser_dry_runs is None:
+        return (
+            "preset_query_unverified",
+            device_row["display_name"],
+            "no browser dry-runs provided (run `compat check <slug> --probe` "
+            "with Live + the MCP bridge available)",
+            None,
+        )
 
     # Arc 4 / D4: plugin classification keys off Live's INTERNAL class
     # name (PluginDevice / AuPluginDevice / Vst3PluginDevice — these are
@@ -583,7 +1238,7 @@ def _classify_device_full(
         display_name=device_row["display_name"],
         installed_plugin_names=installed_names,
     )
-    return status, lookup, None
+    return status, lookup, None, None
 
 
 # ---------------------------------------------------------------------------
@@ -600,6 +1255,14 @@ def format_requirements_md(report: CompatReport) -> str:
     "link, don't summarize" learning, the file points the consumer at
     the song's DB for authoritative device counts/positions rather than
     restating them here.
+
+    Both families are rendered, each in its own section and out of its own
+    status vocabulary: devices the consumer installs (and the Packs their
+    content comes from), samples the consumer must have on disk. The sample section is the one place a machine-absolute
+    path can reach this file, so its references and details go through
+    :func:`hallucinote.paths.portable_text` — REQUIREMENTS.md is checked in
+    beside the song, and the author's home directory has no business
+    travelling with it.
     """
     title = report.song_title or report.song_slug
     lines: list[str] = [
@@ -607,12 +1270,21 @@ def format_requirements_md(report: CompatReport) -> str:
         "",
         f"Song slug: `{report.song_slug}`",
         "",
-        "This file lists the third-party plugins this song uses. Install them "
-        "in Ableton Live before pushing the song. Generated by "
-        "`python -m hallucinote.sync.compat write-requirements <slug>` — re-run "
-        "after material changes to the song's device list.",
+        "This file lists what this song needs that your machine may not "
+        "have: the third-party plugins to install in Ableton Live, the "
+        "Ableton Packs its built-in devices load their content from, and the "
+        "samples its clips and samplers play. Read it before pushing the "
+        "song. "
+        "Generated by "
+        '`"<python>" -m hallucinote.cli compat write-requirements <slug>` '
+        "— re-run after material changes to the song's devices or samples.",
         "",
     ]
+
+    # Pack content is consumer-side-agnostic the same way third-party plugins
+    # are: whether THIS machine has the Pack changes the status, not whether
+    # the song needs it. Both statuses render in the same section.
+    pack_entries = report.pack_content + report.pack_content_missing
 
     # Group third-party entries by unique display_name so a plugin used on
     # multiple tracks appears once. Walk the full third-party set (ok +
@@ -648,9 +1320,151 @@ def format_requirements_md(report: CompatReport) -> str:
     else:
         lines.append("## Required third-party plugins")
         lines.append("")
+        if pack_entries or report.user_content:
+            lines.append(
+                "None — this song loads no third-party plugin. It does load "
+                "content that does not ship inside Live; see below."
+            )
+        else:
+            lines.append(
+                "None. Every device in this song was checked against the "
+                "three things that do not ship inside Live — third-party "
+                "plugins, Ableton Pack content, and content in the author's "
+                "own user library or samples folder — and it uses none of "
+                "them: only Live's built-in devices, no additional installs "
+                "needed."
+            )
+        lines.append("")
+
+    # Pack content. A native class whose sound lives in a Pack is the
+    # false-clean case this section exists for: it used to be summarised as a
+    # built-in that "doesn't need separate installation", which is the
+    # opposite of true on a machine without the Pack.
+    if pack_entries:
+        lines.append("## Required Ableton Packs")
+        lines.append("")
         lines.append(
-            "None. This song uses only Live's built-in devices — no "
-            "additional installs needed."
+            "These devices are Live's own classes wrapping content that lives "
+            "in an Ableton Pack. The class ships with Live; the content does "
+            "not, so on a machine without the Pack the device loads nothing. "
+            "Install each Pack below (Live's browser → Packs, or your Ableton "
+            "account) before pushing. **The names are the browser labels from "
+            "the author's machine, not catalogue identifiers** — Live records "
+            "no stable Pack id, so match them by eye against your own Packs "
+            "list."
+        )
+        lines.append("")
+        by_pack: dict[str, list[DeviceEntry]] = {}
+        for e in pack_entries:
+            by_pack.setdefault(
+                e.pack_name or "(Pack not named in this song's DB)", [],
+            ).append(e)
+        for pack in sorted(by_pack):
+            lines.append(f"- **{pack}**")
+            for e in by_pack[pack]:
+                lines.append(
+                    f"  - {e.display_name} at {e.chain_path} (position "
+                    f"{e.position}, class `{e.kind}`) — _{e.status}_"
+                )
+                if e.detail:
+                    lines.append(f"    - {portable_text(e.detail)}")
+        lines.append("")
+
+    # Content with no Pack behind it. Separated from the Pack section because
+    # the reader's action differs completely: a Pack can be installed, this
+    # cannot be obtained at all.
+    non_travelling_samples = [
+        e for e in report.samples
+        if _is_absolute_ref(e.audio_file) or e.status != "sample_ok"
+    ]
+    if report.user_content or non_travelling_samples:
+        lines.append("## Content that will not travel")
+        lines.append("")
+        lines.append(
+            "This content lives on the author's machine and there is nothing "
+            "for you to install that would supply it. Expect these to come up "
+            "empty and plan to substitute your own."
+        )
+        lines.append("")
+        for e in report.user_content:
+            lines.append(
+                f"- **{e.display_name}** at {e.chain_path} (position "
+                f"{e.position}, class `{e.kind}`) — _{e.status}_"
+            )
+            if e.detail:
+                lines.append(f"  - {portable_text(e.detail)}")
+        if non_travelling_samples:
+            lines.append(
+                f"- {len(non_travelling_samples)} sample reference(s) that "
+                "either sit outside the song directory or did not resolve on "
+                "the machine that generated this file — each one is named, "
+                "with its status and its resolved path, under *Referenced "
+                "samples* below."
+            )
+        lines.append("")
+
+    # The second family. A song-relative reference travels inside the song
+    # directory; an absolute one does not, and the consumer has to supply that
+    # file themselves — which is precisely what this section exists to say
+    # before they push and watch the clips phase refuse. Statuses appear here
+    # too: a reference already broken on the authoring machine is the author's
+    # to fix before the song ships.
+    lines.append("## Referenced samples")
+    lines.append("")
+    if report.samples:
+        lines.append(
+            "These clips and samplers play files from disk. A song-relative "
+            "path (canonically under `assets/`) travels with the song "
+            "directory; an absolute path does NOT — obtain that file yourself "
+            "and re-point the clip or sampler, or ask the author to move it "
+            "under `assets/`."
+        )
+        lines.append("")
+        by_ref: dict[str, list[SampleEntry]] = {}
+        for sample in report.samples:
+            by_ref.setdefault(sample.audio_file, []).append(sample)
+        for ref in sorted(by_ref):
+            sample_uses = by_ref[ref]
+            note = (
+                "not part of the song; supply this file yourself"
+                if _is_absolute_ref(ref)
+                else "travels with the song"
+            )
+            lines.append(f"- `{portable_text(ref)}` — {note}")
+            for sample in sample_uses:
+                # ``slot`` means different things per use site, so the label
+                # says which. "slot 3" on a sampler would send the reader
+                # looking through the session grid for a clip that isn't
+                # there.
+                where = (
+                    f"device position {sample.slot}"
+                    if sample.use_site == "device"
+                    else f"clip slot {sample.slot}"
+                )
+                lines.append(
+                    f"  - {sample.track_name} / {sample.clip_name} ({where})"
+                )
+            # One line per distinct fault, not per clip: every use of one
+            # reference resolves to one path and so fails the same way.
+            faults: dict[str, str | None] = {}
+            for sample in sample_uses:
+                if sample.status != "sample_ok":
+                    faults.setdefault(sample.status, sample.detail)
+            for status, detail in faults.items():
+                lines.append(f"  - **{status}** — {portable_text(detail or '')}")
+        lines.append("")
+        if report.sample_issues:
+            lines.append(
+                "Any status above was read off the machine that generated "
+                "this file: a sample flagged there was already broken before "
+                "the song shipped. Re-run "
+                '`"<python>" -m hallucinote.cli compat write-requirements '
+                "<slug>` once it is fixed."
+            )
+            lines.append("")
+    else:
+        lines.append(
+            "None. No clip and no sampler in this song plays a file from disk."
         )
         lines.append("")
 
@@ -674,28 +1488,50 @@ def format_requirements_md(report: CompatReport) -> str:
     # the consumer can't fix a structurally-broken snapshot by installing
     # plugins — the AUTHOR needs to repair the snapshot. Surfacing here
     # makes the fix list visible at the same time as the install list.
-    preset_query_issues = (
-        report.preset_query_invalid
-        + report.kind_unresolvable
-        + report.kind_ambiguous
-    )
-    if preset_query_issues:
-        lines.append("## preset_query authoring issues")
-        lines.append("")
-        lines.append(
+    #
+    # Two groups share the heading but carry SEPARATE framing, because the
+    # claim differs: the refusal statuses will fail at load time, while
+    # ``preset_query_unverified`` merely went unchecked (no dry-run map was
+    # supplied). Folding the unverified rows into the refusal sentence would
+    # assert a refusal this report can't stand behind; omitting them (the
+    # pre-fix behaviour) was worse — a preset_query device then appeared in
+    # NO section at all, leaving REQUIREMENTS.md claiming "None." while
+    # ``has_issues`` refused the push. Every DeviceStatus is rendered
+    # somewhere in this file; see the enum's caller contract above.
+    preset_query_groups = (
+        (
             "These devices have ``preset_query`` selectors the push planner "
             "will refuse at load time. Fix in the snapshot (or the "
-            "build.py that authored them) before re-pushing:"
-        )
+            "build.py that authored them) before re-pushing:",
+            report.preset_query_invalid
+            + report.kind_unresolvable
+            + report.kind_ambiguous,
+        ),
+        (
+            "These devices have structurally-valid ``preset_query`` selectors "
+            "that were never resolved against a browser — no dry-run map was "
+            "supplied, so this report can't say whether each one matches "
+            "exactly one device. Verify against a running Live (the push "
+            "preflight resolves them) before trusting the load:",
+            report.preset_query_unverified,
+        ),
+    )
+    if any(entries for _, entries in preset_query_groups):
+        lines.append("## preset_query authoring issues")
         lines.append("")
-        for e in preset_query_issues:
-            lines.append(
-                f"- **{e.display_name}** at {e.chain_path} position "
-                f"{e.position} — _{e.status}_"
-            )
-            if e.detail:
-                lines.append(f"  - {e.detail}")
-        lines.append("")
+        for intro, entries in preset_query_groups:
+            if not entries:
+                continue
+            lines.append(intro)
+            lines.append("")
+            for e in entries:
+                lines.append(
+                    f"- **{e.display_name}** at {e.chain_path} position "
+                    f"{e.position} — _{e.status}_"
+                )
+                if e.detail:
+                    lines.append(f"  - {e.detail}")
+            lines.append("")
 
     if report.native:
         unique_kinds = sorted({e.kind for e in report.native})
@@ -770,13 +1606,23 @@ def _resolve_send_fn():
     isn't installed (the core ``check_song`` walk doesn't need it; only
     ``--probe`` does).
     """
-    from hallucinote_mcp import client as _client  # type: ignore[import-not-found]
-    return _client.send
+    # Escalation-aware: a call that outruns Live's main-thread ceiling comes
+    # back ok=True carrying a job handle, and reading that as the call's result
+    # books work that has not landed. Resolving through the shared helper is
+    # what makes that true here without this module knowing the contract.
+    from hallucinote.sync.live_escalation import (
+        resolve_client_send,
+        stderr_progress,
+    )
+
+    return resolve_client_send(
+        progress_fn=stderr_progress,
+    )
 
 
 def _collect_preset_query_specs(
     conn: sqlite3.Connection,
-) -> list[tuple[tuple[str, str, tuple[str, ...]], dict]]:
+) -> list[tuple[_DryRunKey, dict]]:
     """Walk every device in the (single-song) DB and return unique
     structurally-valid preset_queries as ``(dry_run_key, query_dict)``
     pairs.
@@ -792,7 +1638,7 @@ def _collect_preset_query_specs(
     rows = conn.execute(
         "SELECT preset_query FROM devices WHERE preset_query IS NOT NULL"
     ).fetchall()
-    seen: dict[tuple[str, str, tuple[str, ...]], dict] = {}
+    seen: dict[_DryRunKey, dict] = {}
     for row in rows:
         raw = row["preset_query"]
         if classify_preset_query(raw) is not None:
@@ -814,7 +1660,7 @@ def _probe_browser_dry_runs(
     conn: sqlite3.Connection,
     *,
     send_fn=None,
-) -> dict[tuple[str, str, tuple[str, ...]], int]:
+) -> dict[_DryRunKey, int]:
     """Issue ``ableton_browser(action='search')`` for every unique
     structurally-valid preset_query in the song's DB and return a map
     suitable for :func:`check_song`'s ``browser_dry_runs=`` parameter.
@@ -835,7 +1681,7 @@ def _probe_browser_dry_runs(
         send_fn = _resolve_send_fn()
     from hallucinote_mcp.wire import Request  # type: ignore[import-not-found]
 
-    out: dict[tuple[str, str, tuple[str, ...]], int] = {}
+    out: dict[_DryRunKey, int] = {}
     for key, pq in specs:
         params: dict = {
             "pattern": pq.get("pattern", ""),
@@ -845,6 +1691,19 @@ def _probe_browser_dry_runs(
         path_prefix = pq.get("path_prefix") or []
         if path_prefix:
             params["path_prefix"] = list(path_prefix)
+        # Probe with the matcher the LOADER will use. Omitting these made the
+        # gate disagree with the thing it gates: an `exact` query was probed
+        # with the browser's default substring matcher, so a pattern matching
+        # one preset exactly but two by substring was refused as
+        # `kind_ambiguous` on a device that loads perfectly. Sent when the
+        # query declares one; `_dry_run_key` normalises both spellings to
+        # `"substring"`, so declaring the default explicitly changes nothing
+        # but the bytes.
+        mode = pq.get("mode")
+        if mode:
+            params["mode"] = str(mode)
+        if pq.get("case_sensitive"):
+            params["case_sensitive"] = True
         resp = send_fn(Request(
             tool="ableton_browser", action="search", params=params,
         ))
@@ -859,22 +1718,98 @@ def _probe_browser_dry_runs(
     return out
 
 
+def _song_references_packs(conn: sqlite3.Connection) -> bool:
+    """Whether any device in the (single-song) DB loads Pack content.
+
+    Gate on the probe the way ``_collect_preset_query_specs`` gates on the
+    dry-runs: a song with no Pack content has nothing to compare an installed
+    list against, so issuing the browser call would spend a round trip to
+    learn nothing.
+    """
+    rows = conn.execute(
+        "SELECT preset_query, browser_path_json FROM devices "
+        "WHERE preset_query IS NOT NULL OR browser_path_json IS NOT NULL"
+    ).fetchall()
+    return any(
+        (_content_origin(row) or (None,))[0] == _PACK_ROOT for row in rows
+    )
+
+
+def _probe_installed_packs(
+    conn: sqlite3.Connection,
+    *,
+    send_fn=None,
+) -> frozenset[str] | None:
+    """The Packs installed on THIS machine, or ``None`` if nothing asked.
+
+    ``ableton_browser(action='tree', root='packs', depth=1)`` — one call.
+    ``packs`` is a browser root like any other and its immediate children are
+    the installed Packs, so this needs no new MCP surface. ``depth=1`` because
+    only the names matter; walking into each Pack's contents would return the
+    library.
+
+    Returns ``None`` when the song references no Pack at all — there is then
+    nothing to compare, and ``check_song`` treats ``None`` as "nobody looked",
+    which is exactly right.
+
+    Any non-``ok`` response raises ``SystemExit`` with the upstream error, the
+    same failure shape ``_probe_browser_dry_runs`` uses: a partial or empty
+    Pack list would silently reclassify every Pack device as missing and
+    refuse a push that is fine.
+    """
+    if not _song_references_packs(conn):
+        return None
+    if send_fn is None:
+        send_fn = _resolve_send_fn()
+    from hallucinote_mcp.wire import Request  # type: ignore[import-not-found]
+
+    resp = send_fn(Request(
+        tool="ableton_browser", action="tree",
+        params={"root": "packs", "depth": 1},
+    ))
+    if not getattr(resp, "ok", False):
+        raise SystemExit(
+            "compat check --probe: ableton_browser(action='tree', "
+            "root='packs') failed — "
+            f"{getattr(resp, 'error', 'unknown error')}"
+        )
+    payload = getattr(resp, "result", None) or {}
+    tree = payload.get("tree") or {}
+    children = tree.get("children")
+    if children is None:
+        raise SystemExit(
+            "compat check --probe: ableton_browser(action='tree', "
+            "root='packs') returned no children key — this machine's Live "
+            "did not report its Packs collection, so an absent Pack cannot "
+            "be told from an unreported one. Re-run without --probe to get "
+            "the offline report."
+        )
+    return frozenset(
+        str(c.get("name", "")).strip()
+        for c in children
+        if isinstance(c, dict) and str(c.get("name", "")).strip()
+    )
+
+
 def _cmd_check(args: argparse.Namespace) -> int:
     db_path = _resolve_db(args.song)
     installed: list[dict] | None = None
     if args.installed_plugins:
         installed = _load_installed_plugins(Path(args.installed_plugins))
     browser_dry_runs = None
+    installed_packs = None
     if args.probe:
         conn = init_db(db_path)  # migrate-on-open; see check_song
         try:
             browser_dry_runs = _probe_browser_dry_runs(conn)
+            installed_packs = _probe_installed_packs(conn)
         finally:
             conn.close()
     report = check_song(
         db_path,
         installed_plugins=installed,
         browser_dry_runs=browser_dry_runs,
+        installed_packs=installed_packs,
     )
     json.dump(report.to_json(), sys.stdout, indent=2)
     sys.stdout.write("\n")
@@ -887,10 +1822,15 @@ def regen_requirements(song_slug: str) -> Path:
     Author-side: ``installed_plugins`` is ignored (REQUIREMENTS.md is
     consumer-side-agnostic). All third-party plugins surface as
     'third_party_unverified' which the formatter treats identically to
-    missing/ok in the required-plugins section.
+    missing/ok in the required-plugins section, and Pack content surfaces as
+    'pack_content' — a requirement, never 'pack_content_missing': this path
+    is offline and cannot observe another machine's Packs. Samples are the
+    one thing this file CAN report from the author's own machine — a
+    reference that does not resolve here was broken before the song shipped.
 
-    Callable seam for DOC-5W8B (auto-regen after a device-changing push)
-    and the ``write-requirements`` CLI command. Returns the written path;
+    Callable seam for the push CLI's auto-regen (any push that applied device
+    OR clip calls — this file lists both) and the ``write-requirements`` CLI
+    command. Returns the written path;
     raises ``SystemExit`` when the song dir doesn't resolve.
     """
     db_path = _resolve_db(song_slug)
@@ -915,8 +1855,10 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="hallucinote.sync.compat",
         description=(
-            "Detect third-party plugins a song needs and generate "
-            "REQUIREMENTS.md (W13-B). Both subcommands resolve the song's "
+            "Detect what a song needs that this machine may not have — "
+            "third-party plugins, the Ableton Packs its built-in devices "
+            "load content from, and the samples its clips and samplers "
+            "play — and generate REQUIREMENTS.md. Both subcommands resolve the song's "
             "DB and write REQUIREMENTS.md relative to the current working "
             "directory — run from the repo root."
         ),
@@ -926,8 +1868,11 @@ def main(argv: list[str] | None = None) -> int:
     p_check = sub.add_parser(
         "check",
         help=(
-            "Classify every device in the song; exit 1 if items need "
-            "user attention (missing/unverified third-party)."
+            "Classify every device and every referenced sample in the song; "
+            "exit 1 if items need user attention (missing/unverified "
+            "third-party, a sample — clip or sampler — that is not a "
+            "readable file, or, with --probe, an Ableton Pack this machine "
+            "does not have)."
         ),
     )
     p_check.add_argument("song", help="song slug")
@@ -944,8 +1889,13 @@ def main(argv: list[str] | None = None) -> int:
         help=(
             "Resolve every preset_query against Live's browser via the MCP "
             "bridge — issues ableton_browser(action='search') per unique "
-            "(root, pattern, path_prefix). Without this flag, structurally "
-            "valid preset_queries surface as 'preset_query_unverified'. "
+            "(root, pattern, path_prefix), and, when the song loads Pack "
+            "content, one ableton_browser(action='tree', root='packs') to "
+            "see which Packs THIS machine has. Without this flag, "
+            "structurally valid preset_queries surface as "
+            "'preset_query_unverified' and Pack content stays "
+            "'pack_content' (a requirement) rather than escalating to "
+            "'pack_content_missing' (a refusal). "
             "Requires hallucinote_mcp installed and a running Live with the "
             "Hallucinote Remote Script enabled."
         ),

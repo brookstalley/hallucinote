@@ -361,7 +361,7 @@ def main(argv: list[str] | None = None) -> int:
     print()
     print("Next steps:")
     print(f"  1. python songs/{args.slug}/build.py --reset    # populate the DB from the synthetic snapshot")
-    print(f"  2. pytest songs/{args.slug}/tests/ -v           # confirm shape tests pass")
+    print(f"  2. python -m hallucinote.cli verify-scaffold {args.slug}   # confirm the shape checks pass")
     print(f"  3. Open songs/{args.slug}/build.py — replace the `=== Compose-half ===` placeholder with your music")
     print(f"  4. /ableton-push {args.slug} <session_id>       # push to a running Live set")
     return 0

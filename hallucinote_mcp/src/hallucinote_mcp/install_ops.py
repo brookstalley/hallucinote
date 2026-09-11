@@ -25,9 +25,10 @@ import shutil
 from .install_paths import (
     REMOTE_SCRIPT_EXCLUDE_DIRS_ANY,
     REMOTE_SCRIPT_EXCLUDE_FILE_GLOBS_ANY,
-    REMOTE_SCRIPT_EXCLUDE_TOP_LEVEL_FILES,
     package_root,
     remote_script_stub_text,
+    vendor_ignore,
+    vendored_files,
 )
 
 
@@ -73,35 +74,6 @@ class AnalyzerResult:
 
 
 # --- internal helpers ------------------------------------------------------
-
-def _make_ignore(source_root: pathlib.Path):
-    """Build a ``shutil.copytree``-compatible ``ignore(dir, names)`` predicate.
-
-    Reproduces rsync's anchoring in pure Python: the package-root ``server.py``
-    (FastMCP-dependent — Live's embedded Python can't import it) is excluded
-    **only at the source root**, so ``remote_script/server.py`` (the Control
-    Surface entry point Live loads) survives. Directory names and ``*.pyc``
-    globs are excluded anywhere.
-    """
-    root_resolved = pathlib.Path(source_root).resolve()
-
-    def _ignore(dirpath, names):
-        out: set[str] = set()
-        try:
-            at_root = pathlib.Path(dirpath).resolve() == root_resolved
-        except OSError:
-            at_root = False
-        for name in names:
-            if at_root and name in REMOTE_SCRIPT_EXCLUDE_TOP_LEVEL_FILES:
-                out.add(name)
-            elif name in REMOTE_SCRIPT_EXCLUDE_DIRS_ANY:
-                out.add(name)
-            elif any(fnmatch.fnmatch(name, pat) for pat in REMOTE_SCRIPT_EXCLUDE_FILE_GLOBS_ANY):
-                out.add(name)
-        return out
-
-    return _ignore
-
 
 def _rmtree_quiet(path: pathlib.Path) -> None:
     """Best-effort removal of a temp staging/backup path.
@@ -162,17 +134,11 @@ def verify_remote_script(
         return VerifyResult(ok=False, missing=tuple(missing), unexpected=())
 
     # Completeness — every non-excluded source file must be present in the copy.
-    ignore = _make_ignore(source_root)
-    for src_dir, dirnames, filenames in os.walk(source_root):
-        ignored = ignore(src_dir, list(dirnames) + list(filenames))
-        dirnames[:] = [d for d in dirnames if d not in ignored]
-        rel_dir = os.path.relpath(src_dir, source_root)
-        for fn in filenames:
-            if fn in ignored:
-                continue
-            rel = os.path.normpath(os.path.join(rel_dir, fn))
-            if not (pkg / rel).is_file():
-                missing.append(f"hallucinote_mcp/{rel}")
+    # The expectation is enumerated by the same helper the copy is driven by, so
+    # a file the install would ship and a file this check demands are one list.
+    for rel, _ in vendored_files(source_root):
+        if not (pkg / rel).is_file():
+            missing.append(f"hallucinote_mcp/{rel}")
 
     # Excludes held — the anchored package-root server.py and any-position dirs/globs.
     if (pkg / "server.py").exists():
@@ -230,7 +196,7 @@ def vendor_remote_script(
     try:
         staging.mkdir(parents=True)
         write_remote_script_stub(staging)
-        shutil.copytree(source_root, staging / "hallucinote_mcp", ignore=_make_ignore(source_root))
+        shutil.copytree(source_root, staging / "hallucinote_mcp", ignore=vendor_ignore(source_root))
         result = verify_remote_script(staging, source_root=source_root)
         if not result.ok:
             raise InstallError(

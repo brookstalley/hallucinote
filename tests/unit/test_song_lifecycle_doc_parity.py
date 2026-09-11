@@ -1,12 +1,12 @@
 """Doc-drift lock for the song lifecycle map and its stage exit criteria.
 
-The lifecycle is enumerated across seven surfaces (README, two docs pages, the
-`/song-workflow` skill, the MCP primer string, the MCP getting-started resource,
-and `docs/skills.md`), and nine skills deep-link into one anchor for the
-per-stage definitions of done. When stage 0 (`/song-brief`) was added, three of
-those surfaces kept the pre-brief arc and one skill contradicted itself inside a
-single file — the same multi-site drift `test_docs_pipeline_parity.py` exists to
-catch for the push pipeline.
+The lifecycle is enumerated across every surface in `_LIFECYCLE_SURFACES` below
+— CLAUDE.md, the README, three docs pages, the `/song-workflow` skill, the MCP
+primer string and the MCP getting-started resource — and skills across the repo
+deep-link into one anchor for the per-stage definitions of done. When stage 0
+(`/song-brief`) was added, three of those surfaces kept the pre-brief arc and one
+skill contradicted itself inside a single file — the same multi-site drift
+`test_docs_pipeline_parity.py` exists to catch for the push pipeline.
 
 The exit-criteria table also shipped in TWO places at once and had already
 diverged on arrival, which is what the repo's "link, don't summarize" learning
@@ -15,6 +15,7 @@ is about. `test_stage_criteria_table_has_exactly_one_home` is the lock on that.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from pathlib import Path
 
 _REPO = Path(__file__).resolve().parents[2]
@@ -61,11 +62,18 @@ _STAGES = (
 
 
 def _github_anchor(heading_text: str) -> str:
-    """GitHub's heading->anchor slug: lowercase, drop punctuation, spaces to
-    hyphens. Good enough for the plain ASCII headings this repo uses."""
+    """GitHub's heading->anchor slug: lowercase, drop punctuation, then one
+    hyphen per remaining space.
+
+    Each space maps to its own hyphen — runs are NOT collapsed. That matters
+    here because dropping an em-dash from `Foo — bar` leaves two spaces, and
+    GitHub's real slug is `foo--bar`. Collapsing them produced `foo-bar`, which
+    marked a correct link as dangling and, worse, would have accepted a link
+    that GitHub resolves to nothing.
+    """
     slug = heading_text.strip().lower()
     slug = re.sub(r"[^\w\s-]", "", slug)
-    return re.sub(r"\s+", "-", slug)
+    return re.sub(r"\s", "-", slug)
 
 
 def _anchors_in(doc: Path) -> set[str]:
@@ -75,13 +83,64 @@ def _anchors_in(doc: Path) -> set[str]:
     }
 
 
+# Append-only records: a change-log entry, a shipped release note or an archived
+# doc states what was true when it was written and is never edited afterwards, so
+# a heading renamed later would strand a link there permanently and the only way
+# to green the suite would be to rewrite history. Living docs are policed; the
+# record of the past is not.
+_APPEND_ONLY = (
+    "CHANGELOG.md",
+    ".prawduct/change-log.md",
+    ".prawduct/release-notes.md",
+    ".prawduct/reflections.md",
+    # The backlog cut over to GitHub Issues and its own header now reads
+    # "FROZEN HISTORY ... Preserve it verbatim" — it is the migration's source
+    # corpus, which `verify-migration` and any rollback read. Its references
+    # therefore cannot be repaired even when a heading they cite is renamed
+    # later, which is the same bind the entries above are exempted for.
+    ".prawduct/backlog.md",
+)
+_APPEND_ONLY_DIRS = ("archive", "reflections-archive")
+
+
 def _markdown_files() -> list[Path]:
     skip = {".git", "node_modules", "__pycache__", ".venv", "venv", "songs"}
-    return [
-        p
-        for p in _REPO.rglob("*.md")
-        if not any(part in skip for part in p.relative_to(_REPO).parts)
-    ]
+    out = []
+    for p in _REPO.rglob("*.md"):
+        rel = p.relative_to(_REPO)
+        if any(part in skip for part in rel.parts):
+            continue
+        if rel.as_posix() in _APPEND_ONLY:
+            continue
+        if any(d in part for part in rel.parts for d in _APPEND_ONLY_DIRS):
+            continue
+        out.append(p)
+    return out
+
+
+def _resolve_refs(
+    pattern: re.Pattern[str],
+    resolve: "Callable[[Path, str], Path]",
+) -> list[str]:
+    """Report every `<doc>.md#<anchor>` reference `pattern` finds that does not
+    land on a real heading in a real file. `resolve` turns a reference's path
+    text into an absolute path — the two callers differ only there (one link
+    form is relative to the citing file, the other to the repo root)."""
+    cache: dict[Path, set[str]] = {}
+    broken: list[str] = []
+    for md in _markdown_files():
+        for m in pattern.finditer(md.read_text("utf-8")):
+            rel, anchor = m.group(1), m.group(2)
+            here = md.relative_to(_REPO)
+            target = resolve(md, rel)
+            if not target.exists():
+                broken.append(f"{here} -> {rel} (no such file)")
+                continue
+            if target not in cache:
+                cache[target] = _anchors_in(target)
+            if anchor not in cache[target]:
+                broken.append(f"{here} -> {rel}#{anchor}")
+    return broken
 
 
 def test_song_workflow_doc_carries_both_linked_anchors():
@@ -95,16 +154,46 @@ def test_song_workflow_doc_carries_both_linked_anchors():
         )
 
 
-def test_every_song_workflow_deeplink_resolves():
-    """Any `song-workflow.md#some-anchor` link anywhere in the repo must hit a
-    real heading."""
-    anchors = _anchors_in(_WORKFLOW_DOC)
-    broken: list[str] = []
-    for md in _markdown_files():
-        for m in re.finditer(r"song-workflow\.md#([\w-]+)", md.read_text("utf-8")):
-            if m.group(1) not in anchors:
-                broken.append(f"{md.relative_to(_REPO)} -> #{m.group(1)}")
-    assert not broken, "dangling song-workflow.md anchors: " + "; ".join(broken)
+_MARKDOWN_LINK = re.compile(r"\]\((?!https?:)([^)\s]+\.md)#([\w-]+)\)")
+
+
+def test_every_markdown_deeplink_resolves():
+    """Every relative `some-doc.md#anchor` link in the repo must hit a real
+    heading in a real file.
+
+    Scoped to `song-workflow.md` originally, which is why a renamed heading in
+    a design artifact sat dangling: the link that pointed at it lived in the
+    backlog and named a different file. A cross-file rename breaks links
+    wherever they happen to live, so the check has to be repo-wide.
+    """
+    broken = _resolve_refs(_MARKDOWN_LINK, lambda md, rel: (md.parent / rel).resolve())
+    assert not broken, "dangling markdown anchors: " + "; ".join(broken)
+
+
+# Bare repo-root-relative doc references — the shape the backlog's `refs:` field
+# uses. They carry no link syntax, so the check above cannot see them, and both
+# of the dangling anchors this test was widened for lived in exactly this form.
+_BARE_DOC_REF = re.compile(
+    r"(?<![(\w/])"
+    r"((?:\.prawduct|docs|skills|examples)/[\w./-]+\.md)"
+    r"#([\w-]+)"
+)
+
+
+def test_every_bare_doc_reference_resolves():
+    """A `path/to/doc.md#anchor` written as bare text — the backlog's `refs:`
+    idiom — must resolve too.
+
+    Currently matches NOTHING, and that is not a defect to fix by loosening the
+    exclusion. The idiom belonged to `.prawduct/backlog.md`, which froze on the
+    cutover to GitHub Issues and is therefore in `_APPEND_ONLY`; every bare ref
+    in the repo lives in that one file. What survives here is a guard against
+    the idiom reappearing in a living doc, which it can at any time — a `refs:`
+    line pasted out of an issue is all it takes. Said out loud because a test
+    that cannot currently fail should say so rather than read as coverage.
+    """
+    broken = _resolve_refs(_BARE_DOC_REF, lambda md, rel: _REPO / rel)
+    assert not broken, "dangling bare doc references: " + "; ".join(broken)
 
 
 def test_every_lifecycle_surface_names_the_brief_stage():

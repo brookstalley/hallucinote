@@ -298,7 +298,7 @@ _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     # authored and resolved at push via paths.resolve_audio_path (the SAME
     # resolver clips.audio_file uses). NULL for every non-sampler device. Window
     # / reverse / pitch / gain stay device_parameters + envelopes, not columns.
-    # See .prawduct/artifacts/plans/SMP-7K2D/design.md.
+    # See .prawduct/artifacts/plans/SMP-7K2D/archive/design.md.
     ("devices", "audio_file", "TEXT"),
     # SDC-7K3M: device sidechain SOURCE routing (symmetric with track input
     # routing) — a semantic FK to the source track + the input channel. Existing
@@ -308,11 +308,15 @@ _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("devices", "sidechain_source_track_id",
      "TEXT REFERENCES tracks(id) ON DELETE SET NULL"),
     ("devices", "sidechain_source_channel", "TEXT"),
-    # AUD-7R3M / SMP-7K2D: clips gain `reverse` — the missing playback-param
-    # sibling of the CLP-AUD1 family (NULL/0 = forward, 1 = reversed). Existing
-    # rows get NULL (forward). Materialized at push as Live's clip reverse, a
-    # playback parameter, not a derived file.
+    # AUD-7R3M / SMP-7K2D: clips gain `reverse` (NULL/0 = forward, 1 =
+    # reversed). Existing rows get NULL (forward). A Live Clip exposes no
+    # settable reverse and Simpler has no Reverse parameter (probe rows 14, 19),
+    # so the column materializes only as a reversed DERIVED ASSET the clip is
+    # pointed at — see the clips block in schema.sql and #237.
     ("clips", "reverse", "INTEGER"),
+    # NOTE (no row): clips.slot carries `CHECK (slot >= 1)` on a fresh DB
+    # (Live's clip_index is 1-based). SQLite cannot add a CHECK by ALTER, so a
+    # pre-existing DB relies on the mutator's `_require_slot_floor` alone.
     # RTE-1K9T: track signal routing (output + input) + monitor switch (D6).
     # Existing rows get NULL across all seven (no routing authored) -- the
     # DEFAULT-NULL keeps every pre-column track valid. The routing target is a
@@ -374,6 +378,29 @@ _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     # set_song_tuning; the core path reads neither. See hallucinote.tuning.
     ("songs", "tuning_ref", "TEXT"),
     ("songs", "tuning_data", "TEXT"),
+    # #496: bar-ruler provenance on the three bar-position tables. `uniform` =
+    # bars accumulated against one beats_per_bar (what `Arrangement.materialize`
+    # does, and the only thing that can diverge from the meter map); `map` = a
+    # position authored directly against `time_signature_map`, which is the
+    # mutator default. NULL = written before this column, which the push
+    # planner reports as unrecorded rather than guessing at. The CHECK text
+    # below must stay BYTE-IDENTICAL to schema.sql's CREATE TABLE declarations:
+    # the canary compares column presence only and cannot see a drifted CHECK.
+    (
+        "arrangement_clips",
+        "bar_ruler",
+        "TEXT CHECK (bar_ruler IS NULL OR bar_ruler IN ('uniform','map'))",
+    ),
+    (
+        "sections",
+        "bar_ruler",
+        "TEXT CHECK (bar_ruler IS NULL OR bar_ruler IN ('uniform','map'))",
+    ),
+    (
+        "cue_points",
+        "bar_ruler",
+        "TEXT CHECK (bar_ruler IS NULL OR bar_ruler IN ('uniform','map'))",
+    ),
 )
 
 
@@ -481,14 +508,17 @@ def resolve_db_path(
 
     - **explicit `root`** — `<root>/<slug>/…`. `build.py` passes
       `root=Path(__file__).parent.parent`, so a song resolves its own DB
-      relative to its file regardless of cwd. Byte-identical to the historical
-      behavior; the git branch is probed in the process cwd.
+      relative to its file regardless of cwd.
     - **resolved `root`** (the default) — the song dir is resolved via the
       project-root contract (`HALLUCINOTE_SONGS_ROOT` → a `hallucinote.toml`
       marker → legacy `songs/<slug>`; see `hallucinote.workspace`). This is
       what lets a long-running MCP server, launched with cwd ≠ the song's repo,
-      still find a song that lives in its own repo. The branch is probed in the
-      *resolved song dir* (the song's repo), not the server's cwd.
+      still find a song that lives in its own repo.
+
+    **Either way the branch is probed in the resolved song dir** — the song's
+    own repo — falling back to the process cwd only when that dir does not
+    exist yet. So the two forms return the same filename for the same song, and
+    neither depends on where the process was launched from.
 
     The branch name is sanitized by replacing `/` with `--` so `feature/foo`
     becomes `feature--foo` — mirrors `.prawduct/.pr-reviews/` naming so
@@ -500,13 +530,24 @@ def resolve_db_path(
     """
     if root is _ROOT_RESOLVE:
         song_dir = resolve_song_dir(slug)
-        # Probe the song's OWN repo (it may differ from the process cwd), but
-        # only if it already exists — a not-yet-built song dir falls back to
-        # the process cwd so a fresh `build.py --reset` still gets the branch.
-        probe_cwd = song_dir if song_dir.is_dir() else None
     else:
         song_dir = Path(root) / slug
-        probe_cwd = None  # explicit root: probe the process cwd (unchanged)
+    # Probe the song's OWN repo (it may differ from the process cwd), but only
+    # if it already exists — a not-yet-built song dir falls back to the process
+    # cwd so a fresh `build.py --reset` still gets the branch.
+    #
+    # BOTH root paths probe the same place, deliberately: the explicit-root
+    # branch used to probe the process cwd instead, which broke the very
+    # guarantee `root=` exists to provide. `build.py` passes
+    # `root=Path(__file__).parent.parent` so a song resolves its DB relative to
+    # its own file regardless of cwd — but with a cwd probe the *filename* was
+    # still cwd-dependent, so running a song's build.py from a checkout of
+    # another repo minted `<slug>-<that-repo's-branch>.db` while every reader
+    # looked for `<slug>-<songs-repo-branch>.db`. Two DBs for one song, plus
+    # duplicated sibling push-state files, split by which shell you happened to
+    # be in. Keeping the two paths identical is what makes
+    # `resolve_db_path(slug)` and `resolve_db_path(slug, root=...)` agree.
+    probe_cwd = song_dir if song_dir.is_dir() else None
     if branch is _BRANCH_PROBE_GIT:
         resolved_branch = _git_current_branch(cwd=probe_cwd)
     else:
@@ -565,7 +606,7 @@ def transaction(conn: sqlite3.Connection) -> Iterator[None]:
         try:
             try:
                 yield
-            except BaseException:  # prawduct:ok-broad-except
+            except BaseException:  # prawduct:allow prawduct/broad-except -- ROLLBACK must run for KeyboardInterrupt/SystemExit/CancelledError too — a Ctrl-C mid-batch must not leave a half-written DB. Re-raises.
                 # Roll back on ANY exception — including KeyboardInterrupt /
                 # SystemExit / asyncio.CancelledError — then re-raise. The DB
                 # must not be left in a half-written state because the user
@@ -574,7 +615,7 @@ def transaction(conn: sqlite3.Connection) -> Iterator[None]:
                 raise
             try:
                 conn.execute("COMMIT")
-            except BaseException:  # prawduct:ok-broad-except
+            except BaseException:  # prawduct:allow prawduct/broad-except -- a failed COMMIT (e.g. disk I/O) leaves the transaction open; roll back so the connection stays usable, then surface the COMMIT failure. Re-raises.
                 # A failed COMMIT (e.g. disk I/O error) leaves the
                 # transaction open — roll it back so the connection stays
                 # usable, then surface the COMMIT failure.
@@ -593,7 +634,7 @@ def transaction(conn: sqlite3.Connection) -> Iterator[None]:
         try:
             try:
                 yield
-            except BaseException:  # prawduct:ok-broad-except
+            except BaseException:  # prawduct:allow prawduct/broad-except -- the nested-SAVEPOINT unwind must run for BaseException too, or an inner failure poisons the outer transaction. Re-raises.
                 conn.execute(f"ROLLBACK TO SAVEPOINT {sp}")
                 conn.execute(f"RELEASE SAVEPOINT {sp}")
                 raise

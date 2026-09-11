@@ -25,23 +25,15 @@ from hallucinote.db import mutations as M, queries as Q
 # ---------------------------------------------------------------------------
 
 
-# W18-D: Live 12.x's brand-new-set scaffold ships these track names. Detection
-# of the "first push onto a fresh default set" case keys off this exact set —
-# any drift (rename, locale change, user customization) means the tracks are
-# no longer recognisable defaults and we fall back to the standard "continue
-# alongside?" confirmation.
-CANONICAL_DEFAULT_SCAFFOLD_TRACK_NAMES: frozenset[str] = frozenset({
-    "1-MIDI", "2-MIDI", "3-Audio", "4-Audio",
-})
-
-# Returns in Live's brand-new-set ship under these prefixed names. The
-# probe-and-link returns matcher strips the ``[A-Z]-`` slot prefix and
-# matches against the DB's stripped form (W4-C); cleanup keys off the
-# raw Live names because cleanup is about deleting Live-side defaults
-# the song hasn't claimed, not matching by stripped name.
-CANONICAL_DEFAULT_SCAFFOLD_RETURN_NAMES: frozenset[str] = frozenset({
-    "A-Reverb", "B-Delay",
-})
+# W18-D: detection of the "first push onto a fresh default set" case keys off
+# these exact names. They live in a neutral module because capture reads them
+# too, from the other side of the Live↔model boundary — see
+# :mod:`hallucinote.default_scaffold` for why they are not defined here, and
+# re-exported so every existing reader of `sync.push.probe` keeps working.
+from hallucinote.default_scaffold import (  # noqa: F401  (re-export)
+    CANONICAL_DEFAULT_SCAFFOLD_RETURN_NAMES,
+    CANONICAL_DEFAULT_SCAFFOLD_TRACK_NAMES,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -1038,7 +1030,10 @@ def _bind_parent_devices(
                 f"device drift at {parent_kind}#{ableton_index} "
                 f"position {pos}: DB has {db_class!r}, Live has "
                 f"{live_class!r}; not linking (the devices planner refuses "
-                f"rather than loading a duplicate over the top)"
+                f"rather than loading a duplicate over the top). Re-snapshot "
+                f"to accept Live's order, or run `hallucinote chain-rebuild "
+                f"--from-position {pos}` to make the DB's order true without "
+                f"losing the downstream devices' dialed state"
             )
             continue
         M.link_db_to_ableton(
@@ -1086,9 +1081,15 @@ def _match_devices_for_linked_parents(
 
     Match rule: position equality (DB ``devices.position`` = Live
     ``device_index``) AND class equality (DB ``devices.kind`` =
-    Live ``class_name``). Mismatched class at the same position is a
-    drift note — push will still load over the wrong device, but the
-    note surfaces the situation so the user can rename or rebuild.
+    Live ``class_name``). Mismatched class at the same position writes NO link
+    and emits a drift note. Push does not load over the mismatched device — the
+    devices planner refuses the whole phase rather than tail-appending a
+    duplicate (PSH-DEVDUP) — so the note is a description of a chain that needs
+    reconciling, and its remedy is either to re-snapshot the set (accept Live's
+    order) or to run ``hallucinote chain-rebuild`` / ``push execute
+    --reconcile-chains`` (make the DB's order true, carrying the downstream
+    devices' dialed state across). A reconcile re-records the links from the
+    rebuilt positions, so the note fires once and not on every push forever.
 
     Nested rack-chain devices are not LINKED here — only top-level devices
     carry an ableton_link binding. (DEEP-RACK-ADDR: their dialed params ARE

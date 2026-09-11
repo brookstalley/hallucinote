@@ -9,7 +9,14 @@ track / return / master (validated by ``_resolve_parent``), and its ``path`` +
 rack paragraph below). A few shallow, top-level-only ops (``list`` / ``info`` /
 ``delete``) still take the flat ``track_index`` / ``return_index`` / ``master``
 root directly — they never address into a chain, so a structured ``node`` would
-be ceremony.
+be ceremony. ``assign_sample`` takes the flat root plus ``device_index`` /
+``device_path`` and re-expresses it as a NodeAddr internally: it does descend
+racks, but its caller (the devices push phase) already holds the flat parts.
+
+A sampler's assigned file rides the ``list`` and ``info`` reads as
+``sample_file_path`` — present (possibly ``None``) exactly when the device has
+a sample slot at all, so the same read answers both "what is loaded?" and "can
+this device hold a sample?" (see ``_sample_surface``).
 
 set_parameter handles both continuous and enum values via ``value_type``.
 Live's DeviceParameter has ``value`` (always a float — for enum params it
@@ -32,6 +39,7 @@ of nested params is tracked as NODE-ADDR Chunk B.
 """
 from __future__ import annotations
 
+import os
 from typing import Any, NoReturn
 
 from .. import device_names
@@ -48,6 +56,34 @@ _PARENT_KINDS = ("track", "return", "master")
 # index is reserved (not surfaced to callers) so downstream code that pattern-
 # matches on `parent_idx` still has a stable shape.
 _MASTER_SENTINEL_INDEX = 0
+
+# How `set_sidechain` recognizes a device's sidechain ENABLE and GAIN
+# parameters: lowercase substrings matched against the parameter name. Native
+# Live spells them 'S/C On' / 'S/C Gain'; the rest are naming variants seen on
+# third-party devices.
+#
+# PUBLIC on purpose. `hallucinote.capture.SIDECHAIN_ENABLE_PARAM_HINTS` is a
+# mirror of the enable set — the engine asks the same question ("is this
+# device's sidechain armed?") from the other side of a package boundary whose
+# dependency direction is MCP→engine, so the engine cannot import this and
+# mirrors it instead. Naming the set here is what lets the guard that keeps the
+# mirror honest compare two IMPORTED collections; it used to scrape this
+# function's source text between two literal anchors, which broke on
+# reformatting rather than on divergence.
+#
+# The gain set is UNDERSCORE-PRIVATE, and the asymmetry is the point. The
+# enable set is public because something outside this module mirrors it and a
+# guard imports it; the gain set has no mirror, no guard and no outside
+# consumer, so a public name beside it would advertise protection it does not
+# have — the next contributor mirroring it engine-side would get none of what
+# the matching name implies.
+SIDECHAIN_ENABLE_PARAM_HINTS: tuple[str, ...] = (
+    "s/c on", "sidechain on", "sidechain active", "side enable",
+    "external sidechain",
+)
+_SIDECHAIN_GAIN_PARAM_HINTS: tuple[str, ...] = (
+    "s/c gain", "sidechain gain", "side gain",
+)
 
 
 def _resolve_parent(
@@ -111,7 +147,11 @@ def _resolve_device(parent: Any, device_index: int) -> Any:
 # Defensive cap on device_path depth. Live racks can't nest cyclically, so
 # this is a backstop against pathological wire input, not a real capability
 # ceiling — real device trees are a handful of levels deep at most.
-_DEVICE_PATH_DEPTH_CAP = 16
+#
+# PUBLIC (no underscore) because it is shared: the analysis extract's nested-rack
+# walk imports it so the extract and `device_path` cannot disagree about how deep
+# a rack may go.
+DEVICE_PATH_DEPTH_CAP = 16
 
 
 def _nth_device(chain: Any, device_position: int) -> Any:
@@ -140,10 +180,10 @@ def _validate_device_path(device_path: Any) -> list[dict[str, int]]:
             "device_path must be a list of {chain_index, device_position} "
             f"steps, got {type(device_path).__name__}"
         )
-    if len(device_path) > _DEVICE_PATH_DEPTH_CAP:
+    if len(device_path) > DEVICE_PATH_DEPTH_CAP:
         raise ValueError(
             f"device_path depth {len(device_path)} exceeds the cap of "
-            f"{_DEVICE_PATH_DEPTH_CAP} — Live racks don't nest this deeply; "
+            f"{DEVICE_PATH_DEPTH_CAP} — Live racks don't nest this deeply; "
             "rebuild the path from ableton_device(action='get_device_chains')."
         )
     steps: list[dict[str, int]] = []
@@ -507,6 +547,36 @@ def _parent_address(kind: str, index: int) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Sampler surface
+# ---------------------------------------------------------------------------
+
+
+def _sample_surface(device: Any) -> dict[str, Any]:
+    """The ``sample_file_path`` fragment for one device, or ``{}``.
+
+    Two states, and the caller must be able to tell them apart:
+
+    * the device HAS a sample slot — it answers ``.sample`` (a Simpler does so
+      before anything is loaded into it, where the value is ``None``). The
+      fragment carries ``sample_file_path``, whose value is the assigned file
+      or ``None`` for an empty slot.
+    * the device has NO sample slot (a Compressor, an Operator, a plugin). The
+      fragment is empty, so the key is ABSENT.
+
+    Key-present-with-``None`` versus key-absent is therefore the capability
+    signal the push planner reads: it is what lets a plan refuse
+    ``devices.audio_file`` on a device that could never play it, without
+    whitelisting device classes.
+    """
+    try:
+        sample = device.sample
+    except (AttributeError, RuntimeError):
+        return {}
+    file_path = getattr(sample, "file_path", None) if sample is not None else None
+    return {"sample_file_path": str(file_path) if file_path else None}
+
+
+# ---------------------------------------------------------------------------
 # list / info / get_parameters
 # ---------------------------------------------------------------------------
 
@@ -538,13 +608,19 @@ def list_handler(
     )
     devices_out: list[dict[str, Any]] = []
     for i, dev in enumerate(parent.devices, start=1):
-        devices_out.append({
+        entry: dict[str, Any] = {
             "device_index": i,
             "name": getattr(dev, "name", ""),
             "class_name": getattr(dev, "class_name", ""),
             "class_display_name": getattr(dev, "class_display_name", None),
             "is_active": bool(getattr(dev, "is_active", True)),
-        })
+        }
+        # The chain listing is the probe the push devices phase diffs against,
+        # so a sampler's assigned file rides the same read rather than costing
+        # a second round trip per device (see `_sample_surface` for what the
+        # key's presence means).
+        entry.update(_sample_surface(dev))
+        devices_out.append(entry)
     result: dict[str, Any] = {"parent_kind": kind, "devices": devices_out}
     result.update(_parent_address(kind, idx))
     return result
@@ -576,6 +652,7 @@ def info_handler(
         "can_have_chains": bool(getattr(dev, "can_have_chains", False)),
         "parent_kind": kind,
     }
+    result.update(_sample_surface(dev))
     result.update(_parent_address(kind, idx))
     return result
 
@@ -633,6 +710,17 @@ def get_parameters_handler(
                     entry["value_items"] = list(items)
             else:
                 entry["is_enum"] = False
+            # Whether Live will accept a WRITE to this parameter. A macro-mapped
+            # or otherwise locked parameter reads fine and refuses every write
+            # ("Value cannot be set, the parameter is disabled"), so a caller
+            # restoring captured state needs to know BEFORE it tries — the
+            # difference between "this is macro-mapped, re-map it" and "the
+            # write failed". Omitted rather than defaulted when Live does not
+            # expose it, because absent must read as unknown, not as writable.
+            try:
+                entry["is_enabled"] = bool(p.is_enabled)
+            except (AttributeError, RuntimeError):
+                pass
         params_out.append(entry)
     result: dict[str, Any] = {
         "device_index": spec["device_index"],
@@ -961,6 +1049,26 @@ def _canonical_class_name(device: Any) -> str:
         or getattr(device, "class_name", None)
         or ""
     )
+
+
+def _grew_at(before_classes: list[str], after_classes: list[str]) -> int:
+    """0-based position where a grown device chain gained its new device.
+
+    Live keeps a device chain in canonical order — MIDI effects, then the
+    instrument, then audio effects — so a load is NOT always an append. A MIDI
+    effect loaded onto a track that holds an instrument lands at position 0 and
+    pushes the instrument down; reading the tail then names the DISPLACED
+    device, a real device that is not the one loaded, which nothing downstream
+    can tell is wrong (`device_index` also feeds push's device linking).
+
+    Comparing the two class lists position by position finds where the chain
+    actually grew: the first index at which they diverge, or the end of
+    ``before`` when every shared position still matches (the plain append).
+    """
+    for i, (before, after) in enumerate(zip(before_classes, after_classes)):
+        if after != before:
+            return i
+    return len(before_classes)
 
 
 def _raise_silent_noop(
@@ -1646,9 +1754,14 @@ def load_handler(
         census_before, census_after, target=target_key
     )
     if len(chain_after) > len(chain_before_classes):
-        # Append case (the common shape): Live grew the chain by N >= 1.
-        new_index = len(chain_after)
-        new_device = chain_after[-1]
+        # Live grew the chain by N >= 1 — at the end in the common case, but
+        # not always: Live re-orders the chain into MIDI-effects / instrument /
+        # audio-effects order, so the new device can land anywhere. Diff the
+        # class lists positionally to find where it actually went, the same way
+        # the equal-length branch below does.
+        grew_at = _grew_at(chain_before_classes, chain_after_classes)
+        new_index = grew_at + 1
+        new_device = chain_after[grew_at]
     elif len(chain_after) == len(chain_before_classes):
         # Same length — either replace-in-place (one position changed
         # class) or a silent no-op (Live did nothing because a matching
@@ -1778,7 +1891,54 @@ def load_handler(
         result["warning"] = (
             f"{result['warning']} {note}" if "warning" in result else note
         )
+    tap_note = _analyzer_tap_note(chain_after, new_index)
+    if tap_note is not None:
+        result["note"] = tap_note
     return result
+
+
+def _analyzer_tap_note(
+    chain: list[Any], new_index: int,
+) -> str | None:
+    """Say so when a load lands BEHIND the HallucinoteAnalyzer tap.
+
+    A `note`, not a `warning`, because no harm is reachable and the distinction
+    is the whole point: a warning asks the operator to do something, and here
+    there is nothing to do. `render(start)` re-seats the tap to the chain's end
+    before it captures anything, so the state is transient and self-heals. But
+    an operator who reads the chain order after a load sees a mid-chain tap and
+    reasonably concludes the new device is excluded from stem capture — which
+    is what a reader of this state concluded once already. The condition is
+    real and only the source said it was harmless; now the response does.
+    """
+    # Local import: `analyzer.setup` imports THIS module, so naming these at
+    # module scope would close the cycle. The import is function-local for that
+    # reason alone — `find_analyzer_index` is public precisely because this
+    # cross-module use exists, so the name being reached for is not a private
+    # one, only a late-bound one.
+    #
+    # `find_analyzer_index` rather than a name comparison written here. The
+    # MCP side identifies the tap by BOTH `class_display_name == "Max Audio
+    # Effect"` and the name, because name alone collides with a user-saved
+    # non-M4L preset — and this note promises the re-seat sweep will pick the
+    # device up, a promise only the sweep's own predicate can make. Matching on
+    # name here would be a third rule for one identity, and the case it gets
+    # wrong is the note telling an operator not to worry about a device the
+    # sweep will never touch.
+    from ..analyzer.setup import ANALYZER_DEVICE_NAME, find_analyzer_index
+
+    tap_index = find_analyzer_index(chain)
+    if tap_index is None or new_index <= tap_index:
+        return None
+    return (
+        f"this device sits at position {new_index}, BEHIND the "
+        f"{ANALYZER_DEVICE_NAME} tap at position {tap_index} — Live "
+        f"appends a browser load to the end of the chain and exposes no "
+        f"reorder API, so a rendered track always loads behind its tap. "
+        f"Nothing is under-measured: ableton_render(action='start') re-seats "
+        f"the tap to the end of the chain before it captures, so the next "
+        f"render already includes this device. No action needed."
+    )
 
 
 def delete_handler(
@@ -1805,6 +1965,125 @@ def delete_handler(
         "deleted_device_index": device_index,
         "parent_kind": kind,
     }
+    result.update(_parent_address(kind, idx))
+    return result
+
+
+# ---------------------------------------------------------------------------
+# assign_sample
+# ---------------------------------------------------------------------------
+
+
+def _validated_sample_path(sample_path: Any) -> str:
+    """The absolute, on-disk path ``replace_sample`` will accept, or a refusal.
+
+    Checked here rather than left to Live because Live's own refusals arrive as
+    two different exception types with two different strings, and one of them
+    ("does not appear to point to a valid audio file") is returned for a path
+    that is simply not there — which reads as "your file is corrupt" when the
+    real fix is "that file is somewhere else". Checking first lets each cause
+    say its own name.
+    """
+    if not isinstance(sample_path, str) or not sample_path:
+        raise ValueError(
+            "assign_sample needs sample_path — the audio file the sampler "
+            "should play, as an absolute path on the machine running Live."
+        )
+    if not os.path.isabs(sample_path):
+        raise ValueError(
+            f"assign_sample: sample_path must be ABSOLUTE, got {sample_path!r}. "
+            "Live resolves nothing relative to a working directory; pass the "
+            "full path (a song-relative reference is resolved by the push "
+            "planner before it reaches the wire)."
+        )
+    if not os.path.isfile(sample_path):
+        raise ValueError(
+            f"assign_sample: there is no file at {sample_path!r}. The sampler "
+            "was left as it was. Check the path, or render / ingest the asset "
+            "before assigning it."
+        )
+    return sample_path
+
+
+def assign_sample_handler(
+    context: LiveContext,
+    *,
+    device_index: int,
+    sample_path: str,
+    track_index: int | None = None,
+    return_index: int | None = None,
+    master: bool | None = None,
+    device_path: list[dict[str, int]] | None = None,
+) -> dict[str, Any]:
+    """Point a sampler instrument at an audio file.
+
+    Re-callable by construction: ``replace_sample`` REPLACES whatever the
+    device carried, so a push that runs twice leaves one sample assigned, not
+    two — which is what lets the devices phase emit this without tracking
+    whether it already ran.
+
+    ``device_path`` reaches a sampler nested inside a rack, at any depth; the
+    address is the same one ``get_device_chains`` reports.
+    """
+    _, kind, idx = _resolve_parent(
+        context, track_index=track_index, return_index=return_index, master=master,
+    )
+    # The flat address is re-expressed as a NodeAddr so the descent into a rack
+    # — and every teaching error along it — comes from the one resolver every
+    # other device surface uses, rather than a second implementation of it.
+    node = build_node_addr(
+        _parent_address(kind, idx), device_index=device_index, path=device_path,
+    )
+    dev, kind, idx, spec = _resolve_device_node(
+        context, node, action="assign_sample"
+    )
+    path = _validated_sample_path(sample_path)
+    replace_sample = getattr(dev, "replace_sample", None)
+    if not callable(replace_sample):
+        raise ValueError(
+            f"assign_sample: the device at device_index={device_index} on "
+            f"{kind} {idx} is "
+            f"{_canonical_class_name(dev) or '(unknown class)'!r} "
+            f"({getattr(dev, 'name', '')!r}), which has no sample slot — only "
+            "a sampler instrument takes one (Simpler, and Live's Sampler). "
+            "Load a Simpler at that position, or drop the sample from this "
+            "device's authoring."
+        )
+    try:
+        replace_sample(path)
+    except (RuntimeError, ValueError) as exc:
+        raise ValueError(
+            f"assign_sample: Live refused {path!r} for the sampler at "
+            f"device_index={device_index} on {kind} {idx}: {exc}. The file "
+            "exists, so the likely cause is a format Live cannot decode — "
+            "convert it to WAV or AIFF and assign that."
+        ) from None
+    assigned = _sample_surface(dev).get("sample_file_path")
+    if not assigned:
+        raise RuntimeError(
+            f"assign_sample: replace_sample returned without error but the "
+            f"sampler at device_index={device_index} on {kind} {idx} still "
+            f"reports no sample. Nothing was assigned; {path!r} may be an "
+            "audio file Live opened and then discarded."
+        )
+    if os.path.realpath(str(assigned)) != os.path.realpath(path):
+        # A sampler that already held a sample answers `.sample` either way;
+        # only the read-back path says whether THIS file landed.
+        raise RuntimeError(
+            f"assign_sample: replace_sample returned without error but the "
+            f"sampler at device_index={device_index} on {kind} {idx} reports "
+            f"{assigned!r}, not {path!r}. Live kept the previous sample; the "
+            "file may be one it opened and then discarded."
+        )
+    result: dict[str, Any] = {
+        "device_index": spec["device_index"],
+        "parent_kind": kind,
+        "name": getattr(dev, "name", ""),
+        "class_name": getattr(dev, "class_name", ""),
+        "sample_file_path": assigned,
+    }
+    if spec.get("path"):
+        result["device_path"] = spec["path"]
     result.update(_parent_address(kind, idx))
     return result
 
@@ -2313,18 +2592,12 @@ def set_sidechain_handler(
     gain_param = None
     for p in getattr(dev, "parameters", ()):
         lname = (p.name or "").lower()
-        if enable_param is None and (
-            "s/c on" in lname
-            or "sidechain on" in lname
-            or "sidechain active" in lname
-            or "side enable" in lname
-            or "external sidechain" in lname
+        if enable_param is None and any(
+            hint in lname for hint in SIDECHAIN_ENABLE_PARAM_HINTS
         ):
             enable_param = p
-        if gain_param is None and (
-            "s/c gain" in lname
-            or "sidechain gain" in lname
-            or "side gain" in lname
+        if gain_param is None and any(
+            hint in lname for hint in _SIDECHAIN_GAIN_PARAM_HINTS
         ):
             gain_param = p
 
@@ -2978,8 +3251,13 @@ def _load_into_rack_chain(
             f"exactly one device (chain length {len(chain_before_classes)} → "
             f"{len(chain_after)}). Post-insert chain: [{existing_str}]."
         )
-    nested_position = len(chain_after)
-    new_device = chain_after[-1]
+    # Same positional diff as the main-chain loader: `insert_device` was probed
+    # as a plain append (2026-06-15), where the diff and the tail agree — but if
+    # Live ever re-orders a nested chain the way it re-orders the track's main
+    # one, the diff names the inserted device and the tail names its neighbour.
+    grew_at = _grew_at(chain_before_classes, chain_after_classes)
+    nested_position = grew_at + 1
+    new_device = chain_after[grew_at]
     result: dict[str, Any] = {
         "device_index": device_index,
         "chain_index": chain_index,
@@ -3001,6 +3279,7 @@ __all__ = [
     "get_parameters_handler",
     "load_handler",
     "delete_handler",
+    "assign_sample_handler",
     "enable_handler",
     "disable_handler",
     "set_parameter_handler",

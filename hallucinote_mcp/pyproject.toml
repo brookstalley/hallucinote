@@ -8,7 +8,7 @@ name = "hallucinote-mcp"
 # tests/unit/test_version_parity.py fails on drift. This is the PACKAGE
 # distribution version, distinct from hallucinote_mcp.BASE_VERSION (the
 # decoupled wire-protocol epoch used in the Live handshake string).
-version = "1.8.6"
+version = "1.9.0"
 description = "Ableton Live MCP server: 12 unified tools with action dispatch, designed for low-context-cost agent interaction."
 requires-python = ">=3.10"
 authors = [
@@ -47,6 +47,11 @@ hallucinote_mcp = [
 # so a targeted `pytest hallucinote_mcp/tests/...` — whose nearest configfile is
 # THIS file — imports the worktree tree, not the editable-install `.pth` target
 # (the PRIMARY checkout). Mirrors the root pyproject's pythonpath; see its note.
-pythonpath = ["src", "../src"]
+# `..` is the repo root, for `tools/` — a test here imports the repo's own
+# publish gate rather than restating its FORBIDDEN list. Without it, running
+# this subtree ALONE failed at collection while a whole-repo run passed,
+# because collecting the root `tests/` package puts the repo root on sys.path
+# and this subtree then inherited it. Same reason `../src` is here.
+pythonpath = ["src", "../src", ".."]
 testpaths = ["tests"]
 python_files = ["test_*.py"]

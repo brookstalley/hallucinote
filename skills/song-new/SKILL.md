@@ -3,7 +3,7 @@ name: song-new
 description: Scaffold a new Hallucinote song from templates, on values that are already resolved. Creates songs/<slug>/ with build.py, captured_session.json, tests/, decisions/, annotations/, attempts/ (the try→outcome ledger), and a song.md overview. Use when tempo, meter and the section list are ALREADY settled — given explicitly, or resolved by `/song-brief`. Starting from an open-ended prompt instead? Run `/song-brief` first: the scaffold takes those three values as required arguments, so invoking this against an unresolved prompt means inventing them, and the invented values become the song. Replaces the "copy from falling-walking" pattern that Wave 0 surfaced as a major onboarding friction.
 user-invocable: true
 disable-model-invocation: false
-allowed-tools: Read, Write, Bash, Bash(pytest songs/*), Skill(song-brief)
+allowed-tools: Read, Write, Bash, Skill(song-brief)
 argument-hint: >-
   <slug> "<title>" <tempo> <signature> <sections-csv> [optional: <key>] [optional: <intent>]
 ---
@@ -27,8 +27,10 @@ Form **no judgment about the user's musical expertise** — no novice/expert bra
 
 **Two modes, one discipline:**
 
-1. **Open elicitation** — request underspecified, user has more in their head: ask, lightly, *only* the load-bearing unknowns (where a wrong guess wastes real work or is a creative lock-in — tonal concept, form, the central tension). At most one or two questions before you hand them something concrete; more is interrogation.
-2. **Proposal elicitation** — when open questions stop yielding direction (the user says "I don't know, you decide," repeats a vague answer, or trails off): **stop asking, start proposing.** A concrete, redirectable proposal — ideally a small set of *distinct* options. Choosing between concretes is the easiest way to discover what you actually wanted. Read "that's all I've got" as *propose now*, never *assume now*, and never *ask a fourth question*.
+1. **Open elicitation** — request underspecified, user has more in their head: ask, lightly, *only* the load-bearing unknowns (where a wrong guess wastes real work or is a creative lock-in — tonal concept, form, the central tension). **Per turn**, only the few that change the song most before you hand them something concrete — `/song-brief` sets the count, and stacking the whole sweep into one turn is an interrogation.
+2. **Proposal elicitation** — when open questions stop yielding direction (the user says "I don't know, you decide," repeats a vague answer, or trails off): **stop asking, start proposing.** A concrete, redirectable proposal — ideally a small set of *distinct* options. Choosing between concretes is the easiest way to discover what you actually wanted. Read "that's all I've got" as *propose now*, never *assume now* — and don't answer it with yet another question; put something concrete in front of them.
+
+**Both counts above bound a *turn*, never the conversation.** The conversation runs until the user hands off — however many turns that takes — and `/song-brief` owns how it is run (Phase 1 below). Nothing here licenses closing early because a question budget ran out.
 
 **The one discipline across both: never assume-and-go.** Every gap is either elicited or proposed-and-reacted-to.
 
@@ -36,7 +38,7 @@ Form **no judgment about the user's musical expertise** — no novice/expert bra
 
 **Name the why.** When you propose, carry the reasoning in *one plain collaborator's sentence* — "I held the verse back so the chorus opens up," never "this is a deceptive cadence, which in theory…". The expert skims it; the novice learns from it; you never decided which is which. The theory vocabulary only surfaces if the user reaches for it. **Never a classroom; never homework.**
 
-**The third register — directed-but-under-articulated.** When the user asks for something they can't yet specify — "make it feel like Bach," "a pop song like Madonna" — that is neither a directive to execute nor a question to fire back. **Open the domain:** propose concrete, *hearable* options (e.g. walking bass under the kit vs late-resolving suspensions), name the why in one sentence, and offer a real choice. This fires on the **request** (the dimension is unpinned), never on a judgment that the user is a novice. **Never** silently generate a best-guess and move on — that is the core failure.
+**The third register — directed-but-under-articulated — is the loaded prompt.** When the user asks for something they can't yet specify — "make it feel like Bach," "a pop song like Madonna" — that is neither a directive to execute nor a question to fire back. These are the same situation under two names, and the move is the one [`collaboration-turn-model.md`](../../.prawduct/artifacts/collaboration-turn-model.md) defines for a **loaded prompt**: unpack what the words imply, state which implications you take as read so they are correctable in a word, and ask about the two or three whose answer would change the song most. Where you can show rather than ask, propose concrete *hearable* options (walking bass under the kit vs late-resolving suspensions) with the why in one sentence. This fires on the **request** (the dimension is unpinned), never on a judgment that the user is a novice. **Never** silently generate a best-guess and move on — that is the core failure.
 
 **Gap-inversion for thin dimensions.** Per the capability-honesty note below, when a request leans on a thin dimension (melody *authoring* ◐, vocal synthesis ✗), invert the gap into an invitation — "sketch your topline in Ableton and I'll build the track under it, then read whether the line lands its intent" (round-trip is fully supported; the melody lens reads the line — `/compose-review`). Caveat the thin dimension, deliver the rest, never silently substitute.
 
@@ -44,11 +46,11 @@ Form **no judgment about the user's musical expertise** — no novice/expert bra
 
 Do **not** ask the user to pick "build it all for me" vs "just scaffold it" — offering the do-it-for-you path surfaces the dependence framing. **Read** the deliverable shape from what they asked, state your read in one sentence so they can correct it, and proceed:
 
-- **Creative product prompt** ("make / build / write me a song like X" — a thing to press play on): drive end-to-end to a playable result, *collaborating on the elementary choices you'd otherwise guess at*. Skill boundaries (`/song-new` → `/song-pick-instruments` → `/ableton-push` → compose → re-push → mix) are NOT user-facing checkpoints — chain through them, stopping only for high-stakes decisions, must-answer questions, or a collaborative proposal at a creative lock-in (see CLAUDE.md "Hallucinote Behavioral Norms"). "Drive end-to-end" never means "decide the elementary musical choices silently" — propose them.
+- **Creative product prompt** ("make / build / write me a song like X" — a thing to press play on): the deliverable is still the finished, playable song. What changes is the pacing — **drive to the next hearable unit, offer a hearing, continue.** Never author past one hearable unit without having offered to play it; never *require* a listen to proceed ("keep going" is a complete answer and authorizes the next unit, and a decline that carries a scope — "build it all, I'll listen at the end" — is recorded and not re-asked). Skill boundaries (`/song-new` → `/song-pick-instruments` → `/ableton-push` → compose → re-push → mix) are NOT user-facing checkpoints — chain through them, stopping only for high-stakes decisions, must-answer questions, the hearing offer, or a collaborative proposal at a creative lock-in (CLAUDE.md → *Hallucinote Behavioral Norms*; *hearable unit*, *the status offer* and *decline with scope* are defined in [`collaboration-turn-model.md`](../../.prawduct/artifacts/collaboration-turn-model.md)). Driving never means deciding the elementary musical choices silently — propose them; a choice the user already directed is executed, not re-opened.
 - **Scaffold request** (structured slash-command call with explicit args like `/song-new my-song "Title" 120 4/4 intro,verse,chorus`, or "set up / scaffold a song"): this *is* directed action — produce the scaffold + instrument picks + the "Next steps" report, and don't over-collaborate on choices the user deferred to a later sitting.
 - **The build-it-all-for-me path exists but is never *offered*.** A user can ask for it outright ("just make me something, I trust you") and you oblige — but never put it on the table as a menu choice.
 
-When ambiguous, state your inference ("Reading this as a finished song — I'll drive through to a playable mix, checking with you at the creative forks") and proceed.
+When ambiguous, state your inference ("Reading this as a finished song — I'll get one section playable so you can hear it, then carry on from what you say") and proceed.
 
 ## What you do
 
@@ -58,10 +60,12 @@ Two phases, in order:
 
 **The elicitation pass is its own stage and it runs first.** Invoke
 **`/song-brief`** with the user's starting prompt. It sweeps the load-bearing
-dimensions (marking each DECIDED / UNDECIDED / NOT-APPLICABLE), closes the
-undecided ones in **one consolidated turn of informed proposals**, and writes
-`annotations/01-the-brief.md`. `docs/song-new-checklist.md` is the dimension
-reference it draws on.
+dimensions (marking each DECIDED / UNDECIDED / NOT-APPLICABLE) and closes the
+undecided ones through the conversation it runs with the user — a conversation
+that ends when they hand off, not after a fixed number of turns — keeping
+`annotations/01-the-brief.md` current as it goes.
+`docs/song-new-checklist.md` is the dimension reference it draws on. How that
+conversation is run is `/song-brief`'s to say, not this skill's.
 
 **This matters structurally, not just procedurally.** The scaffold command below
 takes tempo, meter and the section list as **required arguments** — exactly the
@@ -84,16 +88,23 @@ For each non-trivial decision (especially must-haves), **write a markdown file u
 
 **First, confirm you're in a songs workspace** (high-stakes: it decides where the song lives). Run `"$PY" -m hallucinote.cli init-workspace --check` and read `already_workspace`. If it's `false`, the scaffold would land in `./songs/<slug>` relative to cwd — *not* a tracked Hallucinote workspace. Surface it and offer to fix it before scaffolding: *"You're not in a songs workspace — want me to create one here? (writes the `hallucinote.toml` marker, a `.gitignore` for regenerable artifacts, and `git init`s)"* → on yes, `"$PY" -m hallucinote.cli init-workspace`; or let the user `cd` to their existing songs repo and restart. **Never scaffold into a non-workspace silently.**
 
+The same JSON carries **`governed_repo`**. When it's `true`, this directory is at or inside a Prawduct-governed engineering repo, and song work started here inherits an engineering register — governance advisories and status footers arriving in the middle of a creative conversation. Say so in one sentence before you scaffold, then carry on unless they redirect you:
+
+> Heads up: this is a governed engineering repo, so you may see governance chatter around the music. A songs workspace of its own keeps the session about the song — say the word and I'll set one up instead.
+
+This is a **heads-up, never a block.** A governed repo can legitimately hold songs (this one ships the `examples/` demo workspace), the flag is independent of `already_workspace`, and it is not a question you wait on an answer to.
+
 Given the resolved slug + title + tempo + signature + sections (and optional key + intent from Phase 1), you:
 
 1. Validate the inputs (slug shape, signature shape, non-empty section list).
 2. Run `"$PY" -m hallucinote.cli scaffold <slug> --title "..." --tempo X --signature N/D --sections ...` to produce `songs/<slug>/`.
 3. Run `"$PY" songs/<slug>/build.py --reset` to populate the song's DB from the synthetic snapshot.
-4. Run `pytest songs/<slug>/tests/ -v` to confirm the shape tests pass.
+4. Run `"$PY" -m hallucinote.cli verify-scaffold <slug> --expect-sections a,b,c --expect-tempo N --expect-signature N/D` to confirm the shape checks pass. Pass the same three values you passed to `scaffold` — they came from the brief, and this is what checks that the song actually materializes them. Exit 0 = verified; 1 = a named check failed; 2 = there was no song to verify. **Do not run `pytest` here** — `$PY` is the plugin's inline env and has neither pytest nor pip, so the step would fail on a missing module. `verify-scaffold` runs the same checks in-process against a throwaway DB (the song's own DB is untouched). The scaffolded `tests/test_<slug>_build.py` still ships as the song's own regression suite — run it later with `pytest` from an env that has it.
 5. **Write Phase 1's decisions** to `songs/<slug>/decisions/NN-<topic>.md` — one file per decision. Number prefix (`01-intent.md`, `02-genre.md`, ...) for ordering.
-6. **Pick instruments** by invoking the `/song-pick-instruments` skill with the user's resolved instrumentation. Default `portability=strict` (stock Live content) unless the user signaled tolerance for third-party plugins. The picks land in `captured_session.json` either via Sweep B's `preset_query` (composer-time portable selector — see `docs/snapshot-schema.md`) or via load-then-recapture once Live is staged.
-7. **Postlude:** call `ableton_render(action='ensure_loaded')` silently — **with no other params**. It loads the analyzer onto every existing surface; unlike `render`, it takes no `song_slug` (passing one errors `unknown param(s)`).
-8. Report the result + tell the user what to do next.
+6. **Pick instruments for the first hearable unit only** — invoke `/song-pick-instruments` with the parts *that one section needs*, not the whole resolved instrumentation. Loading twelve chains before a note exists is CTM-11 (*"shouldn't I be hearing something?"* forty-five minutes in, zero notes written); the rest of the palette follows the first hearing. Default `portability=strict` (stock Live content) unless the user signaled tolerance for third-party plugins. The picks land in `captured_session.json` either via Sweep B's `preset_query` (composer-time portable selector — see `docs/snapshot-schema.md`) or via load-then-recapture once Live is staged.
+7. **Compose that unit, push it, and offer a hearing** — `/compose-part` for the section, one full `/ableton-push` to create and link the structure (its scoped `push-notes` only reaches already-linked clips), then the status offer. *"Keep going"* authorizes the next unit; a decline carrying a scope is recorded and not re-asked. Only then the rest of the palette and the remaining sections.
+8. **Postlude:** call `ableton_render(action='ensure_loaded')` silently — **with no other params**. It loads the analyzer onto every existing surface; unlike `render`, it takes no `song_slug` (passing one errors `unknown param(s)`).
+9. Report the result + tell the user what to do next.
 
 ## Gathering input
 
@@ -108,14 +119,17 @@ The user usually invokes this conversationally ("let's start a new song called '
 - **intent** (optional) — one-paragraph composer intent that goes into `songs/<slug>/<slug>.md`. If the user just gave you a vibe ("make it feel like late-night driving"), pass that as `--intent`.
 
 If anything's missing or ambiguous, that is a gap for `/song-brief` to close —
-**not** a value to default silently at the command line. Don't interrogate; one
-consolidated turn of proposals settles it.
+**not** a value to default silently at the command line. Don't interrogate:
+propose a reading, and let the conversation close it.
 
 ## Exit criteria — this stage is done when
 
 - Tempo, meter and the section/bar list are **values from the brief**, not
   invented to satisfy the CLI.
-- The scaffold builds (`build.py --reset`) and its shape tests pass.
+- The scaffold builds and its shape checks pass — `"$PY" -m hallucinote.cli
+  verify-scaffold <slug> --expect-sections … --expect-tempo … --expect-signature …`
+  exits 0. That one command is the criterion: it runs `build.py --reset` and every
+  shape check in-process, with the interpreter you already resolved.
 - Each of the brief's substantive resolutions is filed in `decisions/`.
 - Nothing this stage wrote is DESCRIBED-BUT-UNBUILT — no `<slug>.md` or decision
   record names a mechanism that doesn't exist.
@@ -150,11 +164,19 @@ Two important defaults the scaffold uses:
 
 After the build + tests succeed, your behaviour depends on the **deliverable shape** you read at the start.
 
-**Creative product prompt** — keep going. The deliverable is the playable song, not the scaffold. Don't list "next steps" as user-facing checkpoints. State briefly what you did and what you're proceeding to (instruments → push → compose → mix), then do it:
+**Creative product prompt** — keep going. The deliverable is the playable song, not the scaffold. Don't list "next steps" as user-facing checkpoints — and don't announce an uninterrupted drive to the finish either. **The next thing you build is the first hearable unit: typically one part or one section, pushed and audible — and it comes *before* the rest of the palette and the rest of the composition.** Say briefly what you did and what you're building next, then build it:
 
-> Scaffolded `songs/<slug>/` with N decisions in `decisions/`. Proceeding to instrument picks (chains, not bare instruments — saturation + bus processing baked in per "sound design is composition"), then push to a fresh Live set, then compose with per-part feel, then mix. I'll stop only if I hit a real decision point.
+> Scaffolded `songs/<slug>/` with N decisions in `decisions/`. Next I'll get you something to hear: instruments for the chorus — chains, not bare instruments (saturation + bus processing baked in per "sound design is composition") — pushed to a fresh Live set, then that section composed with its per-part feel.
 
-Then immediately invoke `/song-pick-instruments` and continue. Compose work happens in `build.py`; sound design (chains) ships in `captured_session.json` (see `docs/snapshot-schema.md` "Sound design is authorship"). Per-part `feel` (microtiming) is baked into generator calls, not a post-hoc humanize pass. Mix-time effects (sends, sidechain, bus glue) are part of the deliverable, not a follow-up list.
+Invoke `/song-pick-instruments` for the parts that section needs, `/ableton-push` to a fresh Live set, compose the section, push again — so there is audio.
+
+**Then make the status offer**: what is settled, hear it or keep going, and what hasn't come up yet — *named*, not asked (naming is an invitation; asking is a demand). For example:
+
+> That's the chorus: harmony, drums and bass, with the guitar pushing ahead of the kit. Want to hear it before I carry on, or keep going? We haven't talked about the outro, or how heavy the low end sits.
+
+Then follow their answer. "Keep going" authorizes the next unit, after which you offer again — unless the decline carried a scope ("build it all, I'll listen at the end"), which you record as theirs in the brief's owner column and stop re-asking. Anything they directed is executed, not re-proposed. From there: the rest of the palette and the remaining sections, offering a hearing at each unit, then the mix.
+
+Compose work happens in `build.py`; sound design (chains) ships in `captured_session.json` (see `docs/snapshot-schema.md` "Sound design is authorship"). Per-part `feel` (microtiming) is baked into generator calls, not a post-hoc humanize pass. Mix-time effects (sends, sidechain, bus glue) are part of the deliverable, not a follow-up list.
 
 **After the first compositional pass, evaluate it against intent — `/compose-review`.** Novices can generate but not yet *evaluate*; this is where the lesson consolidates. Before (and separately from) the mix, help the user hear whether the composition does what the song is trying to do — "you wanted the chorus to lift; here's whether it does; here's the one thing holding it back" — framed as a question, never a verdict. It teaches contrast and subtraction by ear, and learns section/song intent back into the corpus. Don't skip straight to mixing a composition the user hasn't been helped to hear.
 
@@ -174,12 +196,18 @@ Stop after the scaffold + decisions + picks land, so the user can review and dri
 ```
 0. "$PY" -m hallucinote.cli init-workspace --check
    → if already_workspace is false, offer to create one (high-stakes: where the song lands).
+   → if governed_repo is true, say so in a sentence before scaffolding (heads-up, not a block).
 1. Validate inputs (slug, signature, sections).
 2. "$PY" -m hallucinote.cli scaffold <slug> --title "..." --tempo N \
        --signature N/D --sections a,b,c [--key K] [--intent "..."]
 3. "$PY" songs/<slug>/build.py --reset
-4. pytest songs/<slug>/tests/ -v
-5. Report.
+4. "$PY" -m hallucinote.cli verify-scaffold <slug> \
+       --expect-sections a,b,c --expect-tempo N --expect-signature N/D
+   → exit 0 = the scaffold builds and its shape checks pass. NOT pytest: $PY has none.
+5. /song-pick-instruments — for the parts the FIRST hearable unit needs, not the whole palette.
+6. /compose-part that section -> one full /ableton-push -> offer a hearing.
+   → "keep going" authorizes the next unit; a decline with a scope is recorded, not re-asked.
+7. The rest of the palette and sections, offering at each unit. Then report.
 ```
 
 ## Conventions
@@ -188,4 +216,4 @@ Stop after the scaffold + decisions + picks land, so the user can review and dri
 - Sections default to 8 bars each. The scaffold uses this for cue-point placement; the user can adjust constants in `build.py` afterwards.
 - Generators today assume 4/4. For non-4/4 songs, hand-author until meter-parametrized generators ship.
 - Master/group/return automation IS supported — author the envelope in `build.py`; push performs it into arrangement automation (transport plays in real time, fingerprint-gated). Plain MIDI/audio-track envelopes are also supported (ENV-9P4T): a song-spanning / clip-independent ride performs as a continuous arrangement lane; a within-one-clip ride routes through that session clip.
-- **No within-song meter change can be recorded today** — `M.add_time_signature_point` raises for any `start_bar > 1.0`, per-section changes included (Live 12.4's MCP has no `song_signature` automation target). Scaffold with the song's *primary* meter as the global one. This is a **projection** limitation, not a modelling one: the song is in 7/4 if it's in 7/4. Record the true meter in the brief, mark the row open with the engine as its owner, and realize the rest as felt groove over the single ruler — never ask the user to accommodate it. See `docs/song-authoring-conventions.md` → *Meter*.
+- **Within-song meter changes ARE recordable** — `M.add_time_signature_point` takes one row per change, at the bar it starts on. The `--signature` argument here is the song's *primary* meter (it becomes the bar-1 row); author the rest in `build.py`. Only the bar-1 row reaches Live (Live 12.4's MCP has no `song_signature` automation target) and push alerts on the rest, so realize the other meters as felt groove over the single ruler — never ask the user to accommodate that. See `docs/song-authoring-conventions.md` → *Meter*.

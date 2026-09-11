@@ -39,7 +39,7 @@ dist/
 # decision. Crashed/aborted flow can leave it behind — keep it untrackable.
 **/captured_session.refresh.json
 
-# Prawduct session files
+# Prawduct session files — one block; add new entries here, not a new header.
 .claude/settings.local.json
 .claude/worktrees/
 .prawduct/.critic-findings.json
@@ -60,6 +60,12 @@ dist/
 .prawduct/reflections-archive-*.md
 .prawduct/sync-manifest.json
 .claude/scheduled_tasks.lock
+.prawduct/.advisories.json
+.prawduct/.critic-active
+.prawduct/.critic-partials/
+.prawduct/.session-base-tree
+.prawduct/.critic-partials-archive/
+.prawduct/.delegate-brief.md
 
 # E2E push-test ephemera (Wave 3 throwaway artifacts until ableton-push skill ships)
 .prawduct/.push-clip-*.json
@@ -95,16 +101,8 @@ tests/scenarios/results/*
 !tests/scenarios/results/README.md
 !tests/scenarios/results/canonical-*
 
-# Prawduct session files
-.prawduct/.advisories.json
-
 # Prawduct plugin version marker (per-repo last-seen)
 .prawduct/.prawduct-version
-
-# Prawduct session files
-.prawduct/.critic-active
-.prawduct/.critic-partials/
-.prawduct/.session-base-tree
 
 # Incoming bug-report drop-zone, including archives/ — local working notes, never
 # published (owner decision 2026-08-06, at the point the repo went public). Raw
@@ -113,10 +111,6 @@ tests/scenarios/results/*
 # "Incoming-bugs triage". Nothing tracked may cite a path in here — it would
 # dangle for every reader without the local file.
 incoming-bugs/
-
-# Prawduct session files
-.prawduct/.critic-partials-archive/
-.prawduct/.handoff-notes.md
 
 # The example workspace generates the same per-song build artifacts as songs/,
 # so it needs the same exclusions — otherwise a demo push commits its rendered
@@ -129,3 +123,6 @@ examples/*/captures/
 # Tour capture working directory — shoot liberally here, commit selectively.
 # The committed evidence lives in docs/assets/ under a hard byte budget.
 examples/*/_capture/
+
+# Delegate briefs are per-worktree dispatch records, never committed.
+.prawduct/.delegate-brief.md

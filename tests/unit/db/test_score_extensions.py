@@ -383,7 +383,12 @@ def test_score_tables_cascade_with_song(conn):
         assert cnt == 0, f"{table} did not cascade"
 
 
-# ---------- W10-H: meter-ratchet refusal ----------
+# ---------- within-song meter: the DB records what the song IS ----------
+#
+# Live 12.4 can only show one global signature, but that is a limit on the
+# projection, not on the work. The mutators therefore accept a real meter map;
+# the "this will not reach Live" statement is made once, by
+# plan_push_time_signature_map (see tests/unit/sync/test_push_score.py).
 
 
 def test_add_time_signature_point_at_bar_1_allowed(conn, song):
@@ -394,62 +399,91 @@ def test_add_time_signature_point_at_bar_1_allowed(conn, song):
     assert pid
 
 
-def test_add_time_signature_point_refuses_post_bar_1(conn, song):
-    """W10-H: Live 12.4's MCP has no song_signature automation target,
-    so within-song meter ratchets can't reach Live. Refuse at the mutator
-    layer so invalid state never enters the DB."""
+def test_add_time_signature_point_accepts_post_bar_1(conn, song):
+    """A within-song meter change is authored state and must be recordable."""
     M.add_time_signature_point(
         conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
     )
-    with pytest.raises(ValueError, match="meter ratchets can't reach Live"):
+    pid = M.add_time_signature_point(
+        conn, song_id=song, start_bar=17.0, numerator=7, denominator=8,
+    )
+    assert pid
+    row = next(
+        r for r in Q.get_time_signature_map(conn, song)
+        if r["start_bar"] == 17.0
+    )
+    assert (row["numerator"], row["denominator"]) == (7, 8)
+    last = _events(conn)[-1]
+    assert last["kind"] == E.TIME_SIGNATURE_POINT_ADDED
+    assert json.loads(last["payload_json"])["point_id"] == pid
+
+
+def test_time_signature_map_round_trips_a_real_meter_map(conn, song):
+    """The motivating case: a song that is 4/4, then 3/4, then 7/4."""
+    for start_bar, num, den in ((1.0, 4, 4), (5.0, 3, 4), (9.0, 7, 4)):
         M.add_time_signature_point(
-            conn, song_id=song, start_bar=17.0, numerator=7, denominator=8,
+            conn, song_id=song, start_bar=start_bar,
+            numerator=num, denominator=den,
+        )
+    rows = Q.get_time_signature_map(conn, song)
+    assert [
+        (r["start_bar"], r["numerator"], r["denominator"]) for r in rows
+    ] == [(1.0, 4, 4), (5.0, 3, 4), (9.0, 7, 4)]
+
+
+def test_add_time_signature_point_still_refuses_below_bar_1(conn, song):
+    """The bar-floor guard is a 1-based-convention invariant, not a Live
+    limit — it stays."""
+    with pytest.raises(ValueError, match="1-based bar convention"):
+        M.add_time_signature_point(
+            conn, song_id=song, start_bar=0.5, numerator=7, denominator=8,
         )
 
 
 def test_add_time_signature_point_idempotent_repeats_at_post_bar_1_position(
     conn, song,
 ):
-    """W10-H + W12-A: an idempotent re-add at the same position with the
-    same values is a no-op. This preserves the build.py converger story for
-    legacy pre-W10-H DBs whose rows happen to already exist at non-bar-1
-    positions (those still need cleanup, but build.py shouldn't fail on
-    re-run while the operator decides what to do)."""
-    # Insert a legacy non-bar-1 row directly (bypassing the mutator's
-    # refusal — this models a pre-W10-H DB).
-    pid_legacy = "abc1234567890abc1234567890abc12"
-    conn.execute(
-        """INSERT INTO time_signature_map
-               (id, song_id, start_bar, numerator, denominator)
-           VALUES (?, ?, ?, ?, ?)""",
-        (pid_legacy, song, 17.0, 7, 8),
+    """W12-A: a re-add at the same position with the same values is a no-op,
+    so a build.py converger re-run produces zero net state change."""
+    pid = M.add_time_signature_point(
+        conn, song_id=song, start_bar=17.0, numerator=7, denominator=8,
     )
-    # Re-add with the same values: should return 'unchanged', not raise.
     result = M.add_time_signature_point(
         conn, song_id=song, start_bar=17.0, numerator=7, denominator=8,
     )
-    assert result == pid_legacy
+    assert result == pid
     assert result.kind == "unchanged"
 
 
-def test_update_time_signature_point_refuses_at_post_bar_1(conn, song):
-    """W10-H: updates to non-bar-1 rows are also refused (same reason as
-    adds — the underlying state can't reach Live)."""
-    pid_legacy = "def4567890abcdef4567890abcdef45"
-    conn.execute(
-        """INSERT INTO time_signature_map
-               (id, song_id, start_bar, numerator, denominator)
-           VALUES (?, ?, ?, ?, ?)""",
-        (pid_legacy, song, 17.0, 7, 8),
+def test_add_time_signature_point_updates_in_place_at_post_bar_1(conn, song):
+    """Re-adding at a taken position with different values updates that row
+    rather than creating a second one."""
+    pid = M.add_time_signature_point(
+        conn, song_id=song, start_bar=17.0, numerator=7, denominator=8,
     )
-    with pytest.raises(ValueError, match="meter ratchets can't reach Live"):
-        M.update_time_signature_point(
-            conn, point_id=pid_legacy, numerator=5, denominator=8,
-        )
+    result = M.add_time_signature_point(
+        conn, song_id=song, start_bar=17.0, numerator=5, denominator=8,
+    )
+    assert result == pid
+    assert result.kind == "updated"
+    rows = Q.get_time_signature_map(conn, song)
+    assert len(rows) == 1
+    assert (rows[0]["numerator"], rows[0]["denominator"]) == (5, 8)
+
+
+def test_update_time_signature_point_accepts_post_bar_1(conn, song):
+    pid = M.add_time_signature_point(
+        conn, song_id=song, start_bar=17.0, numerator=7, denominator=8,
+    )
+    M.update_time_signature_point(
+        conn, point_id=pid, numerator=5, denominator=8,
+    )
+    sig = Q.get_time_signature_map(conn, song)[0]
+    assert (sig["numerator"], sig["denominator"]) == (5, 8)
 
 
 def test_update_time_signature_point_at_bar_1_still_works(conn, song):
-    """Bar-1 updates remain functional (the global meter is the v1 reality)."""
+    """Bar-1 updates remain functional (bar 1 is the global meter)."""
     pid = M.add_time_signature_point(
         conn, song_id=song, start_bar=1.0, numerator=4, denominator=4,
     )
@@ -461,14 +495,8 @@ def test_update_time_signature_point_at_bar_1_still_works(conn, song):
 
 
 def test_remove_time_signature_point_at_post_bar_1_still_works(conn, song):
-    """W10-H: removes always allowed — legacy non-bar-1 rows need a path
-    out of the DB. Only adds + updates refuse."""
-    pid_legacy = "111222333444555666777888999aaab"
-    conn.execute(
-        """INSERT INTO time_signature_map
-               (id, song_id, start_bar, numerator, denominator)
-           VALUES (?, ?, ?, ?, ?)""",
-        (pid_legacy, song, 17.0, 7, 8),
+    pid = M.add_time_signature_point(
+        conn, song_id=song, start_bar=17.0, numerator=7, denominator=8,
     )
-    M.remove_time_signature_point(conn, point_id=pid_legacy)
+    M.remove_time_signature_point(conn, point_id=pid)
     assert Q.get_time_signature_map(conn, song) == []

@@ -372,7 +372,7 @@ catchier" memorability lever.
 THEORY of motivic development resists computation, but adjacent COMPUTABLE facts
 survive.** A first pass framed this angle as "is there a validated *theory of
 motivic development*" and returned **no surviving claims**. A dedicated pass-3
-(`.prawduct/artifacts/plans/MEL-1A7K/research.md`, deep + adversarially verified)
+(`.prawduct/artifacts/plans/MEL-1A7K/archive/research.md`, deep + adversarially verified)
 reframed it as "is there a *computable, perceptually-grounded structural fact about
 repetition and phrasing*" and found a sharp split:
 

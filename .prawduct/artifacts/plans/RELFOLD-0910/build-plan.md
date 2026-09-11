@@ -240,3 +240,23 @@ is checked out in `../hallucinote-release-readiness` and belongs to that session
 `.../handlers/render.py`, both inside `_FINGERPRINT_PATHS`. Nothing in this scope
 exists in Live until the Remote Script is re-vendored and Live is fully
 restarted — the same clock the RENDERGUARD solo guard is already on.
+
+## Close
+
+Five Critic rounds; `check-cumulative-critic` satisfied at `bb509a3`
+(3 review facts, 0 unresolved blocking). Nine commits. Suite green, ruff and
+mypy clean.
+
+Findings across the rounds: 1 blocking + 12 warnings + 6 notes (cumulative),
+0 (verify), 0 blocking + 7 warnings + 4 notes (cumulative), 1 blocking (verify),
+0 (verify). Everything fixed or accepted with a recorded reason.
+
+**Not archived deliberately.** On gitflow this plan archives at the
+`develop→main` release via `plan-backfill`, not at the feature merge — the same
+rule that keeps the RENDERGUARD-0910 plan live. A briefing advisory suggesting
+otherwise during this window is expected.
+
+**One item is carried forward rather than dropped**: the chain-solo advisory
+envelope's mixed branch (some chains soloed, some unreadable) is untested. It is
+written into `.prawduct/.handoff-notes.md` with the one-line test that closes
+it, for whatever commit next touches this branch.

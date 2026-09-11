@@ -1827,6 +1827,10 @@ def test_a_soloed_rack_chain_warns_and_the_render_proceeds(
         "device_name": "Drum Bus",
         "chain_index": 2,
         "chain_name": "Sub",
+        # True, not merely present: `None` is a distinct state (Live did not
+        # answer) and a consumer told to join on these rows must be able to
+        # tell the two apart.
+        "solo": True,
     }]
 
 
@@ -1904,3 +1908,48 @@ def test_a_clean_render_carries_no_chain_solo_and_no_warnings(
         row["soloed_chains"] == []
         for row in out["manifest"]["mixer_state"]
     )
+
+
+def test_a_chain_that_does_not_report_solo_is_listed_as_unknown(
+    tmp_path, ctx_two_tracks_one_return, osc_factory, stub_sidecar,
+):
+    """`None`, never `False` — the rule `_row`'s `_flag` states for the surface
+    flags, and sharper here: these rows go into `manifest.json` and
+    `boundary-patterns.md` tells consumers to JOIN on them.
+
+    A chain that did not answer, recorded as "not soloed", is a false negative
+    asserted as fact to a reader who has no way to check it. So it is listed,
+    flagged unknown, and the warning says which it is — the warn-tier analogue
+    of the surface guard refusing on an unreadable flag.
+    """
+    class _MuteChain(_FakeChain):
+        def __init__(self, name):
+            super().__init__(name)
+            del self.solo  # Live did not present the attribute at all
+
+    rack = _FakeDevice(
+        class_display_name="Audio Effect Rack", name="Drum Bus",
+        chains=[_MuteChain("Clean")],
+    )
+    ctx_two_tracks_one_return.song.tracks[0].devices.append(rack)
+
+    out = render_handlers.render_handler(
+        ctx_two_tracks_one_return,
+        song_slug="t",
+        output_dir=str(tmp_path / "c"),
+        _osc_factory=osc_factory,
+        _sidecar=stub_sidecar,
+        _clock_source=lambda: 999.0,
+    )
+
+    # Not refused — an unreadable CHAIN flag is not the whole-song silencing
+    # that an unreadable SURFACE flag could be hiding.
+    assert ctx_two_tracks_one_return.song.start_playing_calls == 1
+    assert out["manifest"]["mixer_state"][0]["soloed_chains"] == [{
+        "device_position": 1,
+        "device_name": "Drum Bus",
+        "chain_index": 1,
+        "chain_name": "Clean",
+        "solo": None,
+    }]
+    assert "did NOT report whether it is soloed" in out["warning"]

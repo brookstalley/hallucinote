@@ -275,8 +275,12 @@ When changing this surface:
   refusing (owner decision, 2026-09-10). It appears in two representations,
   and a consumer should know which to join on:
   - `mixer_state[].soloed_chains` — **structured**, the machine-readable one:
-    `{device_position, device_name, chain_index, chain_name}` per soloed chain,
-    already keyed to the row's surface. Join on this.
+    `{device_position, device_name, chain_index, chain_name, solo}` per entry,
+    already keyed to the row's surface. Join on this. **`solo` is `true` or
+    `null`, never `false`** — same rule as the surface flags beside it, and for
+    a sharper reason: an entry is only listed when the chain is soloed OR did
+    not answer, so `null` means UNKNOWN and a consumer must not read the
+    entry's presence as a confirmed solo.
   - a top-level `soloed_chains` — the same information as **prose strings**,
     one per soloed chain, for a reader rather than a parser. The render result
     also carries a single `warning` string built from them, which is what
@@ -285,10 +289,13 @@ When changing this surface:
   **`device_position` and `chain_index` are PHYSICAL Live positions, not DB
   ordinals**, and the position is read BEFORE `ensure_analyzers_loaded` appends
   the analyzer — so a `device_position` here will not match a post-render chain
-  read that includes the tap. Scope: a top-level rack's MAIN chains only — a rack nested
-  inside another rack's chain is not walked, a rack's RETURN chains are not read
-  (they carry `solo` like any other chain), and chain mute and chain volume are
-  not read. A consumer diagnosing a surprising master from `solo`/`mute`/`volume`
+  read that includes the tap. Scope: a top-level rack's MAIN chains, on TRACKS and RETURNS
+  only. A rack nested inside another rack's chain is not walked; a rack's RETURN
+  chains are not read (they carry `solo` like any other chain); chain mute and
+  chain volume are not read; and **the master strip is not walked at all**,
+  though `master.wav` is a captured stem — so a rack on the master with a soloed
+  chain is invisible here (tracked at #552, which explains why the master
+  needs its own case rather than another row). A consumer diagnosing a surprising master from `solo`/`mute`/`volume`
   alone will miss a rack that rendered as a fraction of itself. Absence is not
   failure: manifests predating this field omit it.
 - **Deleter**: `hallucinote/takes.py` (`plan_sweep`/`execute_sweep`), driven

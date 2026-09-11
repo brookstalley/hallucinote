@@ -188,6 +188,40 @@ covered is uncovered. What chunk 05 was actually missing was the OTHER half —
 that a faithful round trip does NOT report a mismatch — and that test is new and
 stays.
 
+**The chain-solo read had no unknown, beside a surface solo that insists on
+one.** Four reviewers reached one line from four angles. `_soloed_chains` read
+`bool(getattr(chain, "solo", False))`, collapsing "Live did not answer" into
+"not soloed" — forty lines below the sibling comment that forbids exactly that,
+and sharper here than there: these rows go into `manifest.json`, and the
+boundary artifact edited in this same work tells consumers to JOIN on them. A
+chain that never answered, recorded as clear, is a false negative asserted as
+fact to a reader with no way to check it. `solo` is now `true` or `null`, never
+`false`, an unreadable chain is listed as unknown, and the warning says which it
+is — the warn-tier analogue of the surface guard refusing on a flag it cannot
+read.
+
+**The advisory was fixed in code and still dropped one hop later.** The blocking
+finding's fix carried it through `Job.status_result`; `skills/render-analyze/`
+and the two `actions/render.py` descriptions still enumerated the status keys
+without it, and those are what a caller actually follows. All three now relay
+it, and the action description names `Job.status_result` as the authority rather
+than pretending a prose list can stay closed.
+
+**Two limits the read never had, one of them now a backlog item.** `_mixer_state`
+walks tracks and returns and never the master strip — and `master.wav` is a
+captured stem, so a rack on the master with a soloed chain is invisible. That is
+**#552**, filed rather than described, because the master needs handling as its
+own case: Live's master carries no `solo` at all, so a naive master row would
+read `None` and the existing guard would refuse every render. A rack's return
+chains are the other, stated alongside.
+
+**And an append-only file was edited.** An earlier hunk of this entry pasted its
+own test-consolidation paragraph into the 2026-09-09 `RELBLK-V19` entry as well,
+because the replace that inserted it carried no count. That entry now matches
+its pre-branch bytes exactly. The mechanism is worth naming: a blind
+string-replace against a file whose sections repeat a common phrase edits
+history nobody was reading.
+
 **Re-vendor: REQUIRED.** Three chunks touch `handlers/device.py` and
 `handlers/render.py`, both inside `_FINGERPRINT_PATHS`. Batched for exactly that
 reason — one restart pays for all three. Nothing here exists in Live until the
@@ -853,16 +887,39 @@ it. The counts were wrong in both directions too: the "bounded N" alert was
 emitted before the executor's filter ran, and the withheld count counted calls
 rather than copies, doubling every number.
 
-**One test was consolidated, and the reason belongs here rather than only in a
-docstring.** Chunk 05 added `test_a_parameter_left_at_its_default_is_still_caught`
-and it was a second witness, not new coverage — identical setup
-(`live.swallow_set_parameter = True`) and identical expectation to
-`test_verify_fails_when_a_restored_parameter_reads_back_at_its_default`, which
-already existed in the same file. It contributed two assertions on the mismatch
-message's exact text, and those moved into the surviving test; nothing it
-covered is uncovered. What chunk 05 was actually missing was the OTHER half —
-that a faithful round trip does NOT report a mismatch — and that test is new and
-stays.
+**The chain-solo read had no unknown, beside a surface solo that insists on
+one.** Four reviewers reached one line from four angles. `_soloed_chains` read
+`bool(getattr(chain, "solo", False))`, collapsing "Live did not answer" into
+"not soloed" — forty lines below the sibling comment that forbids exactly that,
+and sharper here than there: these rows go into `manifest.json`, and the
+boundary artifact edited in this same work tells consumers to JOIN on them. A
+chain that never answered, recorded as clear, is a false negative asserted as
+fact to a reader with no way to check it. `solo` is now `true` or `null`, never
+`false`, an unreadable chain is listed as unknown, and the warning says which it
+is — the warn-tier analogue of the surface guard refusing on a flag it cannot
+read.
+
+**The advisory was fixed in code and still dropped one hop later.** The blocking
+finding's fix carried it through `Job.status_result`; `skills/render-analyze/`
+and the two `actions/render.py` descriptions still enumerated the status keys
+without it, and those are what a caller actually follows. All three now relay
+it, and the action description names `Job.status_result` as the authority rather
+than pretending a prose list can stay closed.
+
+**Two limits the read never had, one of them now a backlog item.** `_mixer_state`
+walks tracks and returns and never the master strip — and `master.wav` is a
+captured stem, so a rack on the master with a soloed chain is invisible. That is
+**#552**, filed rather than described, because the master needs handling as its
+own case: Live's master carries no `solo` at all, so a naive master row would
+read `None` and the existing guard would refuse every render. A rack's return
+chains are the other, stated alongside.
+
+**And an append-only file was edited.** An earlier hunk of this entry pasted its
+own test-consolidation paragraph into the 2026-09-09 `RELBLK-V19` entry as well,
+because the replace that inserted it carried no count. That entry now matches
+its pre-branch bytes exactly. The mechanism is worth naming: a blind
+string-replace against a file whose sections repeat a common phrase edits
+history nobody was reading.
 
 **Re-vendor: REQUIRED.** `handlers/clip.py`, `actions/clip.py` and
 `handlers/render.py` are all inside `_FINGERPRINT_PATHS` — the tuple names the

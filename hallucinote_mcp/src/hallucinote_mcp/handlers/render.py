@@ -312,6 +312,14 @@ def _soloed_chains(track: Any) -> list[dict[str, Any]]:
       covers the one an author actually leaves engaged.
     - **A rack's main chains only.** Live racks also expose RETURN chains,
       which carry `solo` like any other chain and are not read here.
+    - **Tracks and returns only, never the master strip.** `_mixer_state`
+      walks `song.tracks` and `song.return_tracks`, and the master is a
+      captured surface (`master.wav` is a stem), so a rack on the master with a
+      soloed chain is invisible. Adding a master row here is NOT a free
+      extension: Live's master track carries no `solo`, so `_flag` would read
+      `None` and `_refuse_under_solo` refuses on an unreadable flag — every
+      render would stop. Closing this needs the master handled as its own case,
+      which is new scope rather than a missing line — tracked at #552.
 
     Chain mute and chain volume are not read at all — a mute is a plausible
     authoring choice and a volume is not a silencing state, so neither is the
@@ -325,13 +333,24 @@ def _soloed_chains(track: Any) -> list[dict[str, Any]]:
         if chains is None:
             continue
         for chain_index, chain in enumerate(chains, start=1):
-            if not bool(getattr(chain, "solo", False)):
+            raw = getattr(chain, "solo", None)
+            # `None` when Live did not present the attribute, NEVER False —
+            # the same rule `_row`'s `_flag` states forty lines up, and for a
+            # sharper reason here: these rows go into `manifest.json`, and
+            # `boundary-patterns.md` tells consumers to JOIN on them. A chain
+            # that did not answer, recorded as "not soloed", is a false
+            # negative asserted as fact to a reader who cannot check it.
+            solo = None if raw is None else bool(raw)
+            if solo is False:
                 continue
             found.append({
                 "device_position": position,
                 "device_name": getattr(device, "name", "") or "<unnamed>",
                 "chain_index": chain_index,
                 "chain_name": getattr(chain, "name", "") or "<unnamed>",
+                # True = soloed. None = unreadable, and therefore UNKNOWN
+                # rather than safe: it is listed so the warning can say so.
+                "solo": solo,
             })
     return found
 
@@ -350,8 +369,11 @@ def _warn_under_chain_solo(mixer_state: list[dict[str, Any]]) -> list[str]:
     """
     return [
         f"{row['surface_kind']} {row['surface_index']} "
-        f"({row['surface_name']!r}): chain {chain['chain_name']!r} is soloed "
-        f"inside rack {chain['device_name']!r} at position "
+        f"({row['surface_name']!r}): chain {chain['chain_name']!r} "
+        + ("is soloed" if chain.get("solo") else
+           "did NOT report whether it is soloed, so this render may have been "
+           "made under one")
+        + f" inside rack {chain['device_name']!r} at position "
         f"{chain['device_position']}"
         for row in mixer_state
         for chain in row.get("soloed_chains") or ()

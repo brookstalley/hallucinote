@@ -1912,9 +1912,12 @@ def _analyzer_tap_note(
     real and only the source said it was harmless; now the response does.
     """
     # Local import: `analyzer.setup` imports THIS module, so naming these at
-    # module scope would close the cycle.
+    # module scope would close the cycle. The import is function-local for that
+    # reason alone — `find_analyzer_index` is public precisely because this
+    # cross-module use exists, so the name being reached for is not a private
+    # one, only a late-bound one.
     #
-    # `_find_analyzer_index` rather than a name comparison written here. The
+    # `find_analyzer_index` rather than a name comparison written here. The
     # MCP side identifies the tap by BOTH `class_display_name == "Max Audio
     # Effect"` and the name, because name alone collides with a user-saved
     # non-M4L preset — and this note promises the re-seat sweep will pick the
@@ -1922,9 +1925,9 @@ def _analyzer_tap_note(
     # name here would be a third rule for one identity, and the case it gets
     # wrong is the note telling an operator not to worry about a device the
     # sweep will never touch.
-    from ..analyzer.setup import ANALYZER_DEVICE_NAME, _find_analyzer_index
+    from ..analyzer.setup import ANALYZER_DEVICE_NAME, find_analyzer_index
 
-    tap_index = _find_analyzer_index(chain)
+    tap_index = find_analyzer_index(chain)
     if tap_index is None or new_index <= tap_index:
         return None
     return (

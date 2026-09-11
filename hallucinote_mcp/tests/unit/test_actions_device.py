@@ -4125,7 +4125,7 @@ def test_a_non_m4l_device_named_like_the_analyzer_is_not_the_tap(loaded_actions)
     """Identity here is the package's rule, not a name comparison written at
     this call site.
 
-    `_find_analyzer_index` requires `class_display_name == "Max Audio Effect"`
+    `find_analyzer_index` requires `class_display_name == "Max Audio Effect"`
     AND the name, because a user-saved preset can carry any name. Matching on
     name alone would make this note promise that "the next render already
     includes this device" — a promise only the re-seat sweep can keep, and the

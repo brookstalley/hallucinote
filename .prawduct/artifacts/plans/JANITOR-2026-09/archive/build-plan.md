@@ -16,7 +16,13 @@ governed_by:
 partition: serial — Chunk 05 records the outcome of 01-04 and must run last; 01-04 touch disjoint surfaces and could interleave
 last_validated: 2026-09-08
 rulings: R1-R7 + 9-item bulk (2026-09-08); R2 mechanism (2026-09-08)
+lifecycle: completed
+archived: 2026-09-11
+released_in: v1.9.0
+maintained: false
 ---
+
+> **Archived — no longer maintained.** This plan records what was built, not what will be. Do not edit it to reflect later changes; write those where they are true.
 
 # Build plan — JANITOR-2026-09: first Norm Health sweep + accumulated maintenance
 

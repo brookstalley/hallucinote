@@ -31,7 +31,13 @@ partition: >
   refusal cannot anticipate — so if only one ships, it should be 01.
 last_validated: 2026-09-10
 critic_mode: cumulative-final
+lifecycle: completed
+archived: 2026-09-11
+released_in: v1.9.0
+maintained: false
 ---
+
+> **Archived — no longer maintained.** This plan records what was built, not what will be. Do not edit it to reflect later changes; write those where they are true.
 
 # Build plan — RENDERGUARD-0910: a render under a soloed track is refused, and a master that is not the mix cannot be reported as a changed mix
 

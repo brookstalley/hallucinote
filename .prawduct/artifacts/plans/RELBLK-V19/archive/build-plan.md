@@ -4,7 +4,13 @@ version: 1
 scope: RELBLK-V19
 branch: fix/release-blockers-v19
 last_validated: 2026-09-09
+lifecycle: completed
+archived: 2026-09-11
+released_in: v1.9.0
+maintained: false
 ---
+
+> **Archived — no longer maintained.** This plan records what was built, not what will be. Do not edit it to reflect later changes; write those where they are true.
 
 # Build plan — RELBLK-V19: the release blockers
 

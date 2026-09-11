@@ -1175,7 +1175,12 @@ def test_verify_fails_when_a_restored_parameter_reads_back_at_its_default(
         _rebuild(conn, song, session, live, song_dir)
     message = str(exc.value)
     assert "did not read back equal" in message
-    assert "'1 Frequency A'" in message
+    # The values themselves, not just the parameter name: this message is the
+    # operator's copy of what the journal holds, and a mismatch report that
+    # says only WHICH parameter drifted sends them to the file to find out
+    # what it drifted from.
+    assert "'1 Frequency A' was 0.42, reads back 0.0" in message
+    assert "The journal is intact." in message
     assert chain_rebuild.journal_path_for(song_dir, "track", 3).exists()
 
 
@@ -1952,15 +1957,29 @@ def test_an_unreadable_sidechain_source_warns_before_the_first_delete(
         "the fixture must expose NO routing surface — that is the case"
     )
 
+    # The ordering claim, proved AT the first delete rather than after the run.
+    # Asserting on stderr once `_rebuild` has returned cannot tell "warned
+    # before the demolish" from "warned during report assembly" — and the
+    # second is worthless, because by then the device is gone.
+    seen_at_first_delete: list[str] = []
+
+    def _on_delete(_params):
+        if not seen_at_first_delete:
+            seen_at_first_delete.append(capsys.readouterr().err)
+
+    live.watch[("ableton_device", "delete")] = [_on_delete]
+
     result = _rebuild(conn, song, session, live, song_dir)
+
+    assert seen_at_first_delete, "the rebuild never deleted anything"
+    assert "sidechain source NOT machine-readable" in seen_at_first_delete[0], (
+        "the warning must be on screen BEFORE the first delete — after it, the "
+        "source it names is already destroyed"
+    )
 
     assert any("sidechain source NOT machine-readable" in a
                for a in result.alerts), result.alerts
     assert any("'Erosion'" in a for a in result.alerts), result.alerts
-
-    # On stderr while the chain was still intact, not only in the report.
-    err = capsys.readouterr().err
-    assert "sidechain source NOT machine-readable" in err
 
 
 def test_a_readable_sidechain_source_adds_no_unreadable_warning(
@@ -2020,6 +2039,10 @@ def test_the_verify_tolerance_is_never_consulted_in_anger(
     an AUTHORED value (from the DB, or computed) into the restore, the premise
     is gone and the tolerance has to be reconsidered — this test is what should
     fail and say so.
+
+    Its pair is `test_verify_fails_when_a_restored_parameter_reads_back_at_its_
+    default` above: a tolerance that never fires is indistinguishable from one
+    that cannot, and that test is what tells them apart.
     """
     # The two shapes the probe found breaching, as Live would report them.
     eq = live.chains[("track", 3)][1]
@@ -2037,29 +2060,6 @@ def test_the_verify_tolerance_is_never_consulted_in_anger(
     # …and they really did land, rather than passing by never being written.
     assert eq.params["1 Frequency A"]["value"] == 22000.0
     assert eq.params["Note PB Range"]["value"] == 41.0
-
-
-def test_a_parameter_left_at_its_default_is_still_caught(
-    conn, song, session, revoice, live, song_dir,
-):
-    """The regression the tolerance exists for, and the other half of the test
-    above: a tolerance that never fires is indistinguishable from one that
-    cannot fire, and this is what tells them apart.
-
-    A freshly loaded device comes back at class defaults. When the restore
-    reports a write that Live silently did not apply, the read-back is the
-    default and the verify has to say so — otherwise a chain rebuilt to
-    defaults, which is audibly wrong, reports ok.
-    """
-    live.swallow_set_parameter = True
-
-    with pytest.raises(chain_rebuild.RebuildVerifyFailed) as excinfo:
-        _rebuild(conn, song, session, live, song_dir)
-
-    # It names the values, so the journal is not the only way to learn them.
-    msg = str(excinfo.value)
-    assert "'1 Frequency A' was 0.42, reads back 0.0" in msg
-    assert "The journal is intact." in msg
 
 
 def test_a_failed_routing_read_is_alerted_and_not_called_unreadable(

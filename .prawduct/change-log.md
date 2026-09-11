@@ -134,6 +134,60 @@ this release ships a blocking gate over a sum that can read high for a benign
 reason, and the RENDERGUARD operator-verification box that prices that false
 positive is the one still owed.
 
+**The Critic's blocking finding was that the chain-solo warning never reached a
+caller, and it is the entry worth reading second.** A render is async: the
+handler's `result` is projected to the operator by `Job.status_result`, which
+copies a per-kind **allowlist** — `manifest`, `manifest_path`, `render_status`.
+The new advisory was not in it, so the field was computed, written, and dropped
+in production while four tests calling the handler in-process stayed green. Two
+reviewers found it independently from opposite ends. The projection now carries
+it, and the test that keeps it honest is a JOB-level one, because no in-process
+handler test can see that boundary at all.
+
+The same finding renamed the field. It had been `result["warnings"]`, a list —
+and `warnings` is already `wire.Response.warnings`, a documented advisory
+channel that serializes at the top of the response rather than inside `result`.
+One payload carrying both under one name is two things a reader cannot tell
+apart. It is `warning: str` now, the convention every sibling handler uses.
+
+**Three more from the same round, each a rule this diff had quietly made a
+second copy of.** The tap note identified the analyzer by name where the MCP
+side requires name AND `class_display_name == "Max Audio Effect"` — a third
+discriminator for one identity, and the case it gets wrong is a note telling an
+operator not to worry about a device the re-seat sweep will never touch; it
+calls `_find_analyzer_index` now. The "warns before the first delete" claim was
+asserted only after the run returned, which cannot tell that apart from warning
+at report-assembly time, when the device is already gone; it is proved at the
+first delete now. And the chain-solo read's limits — top-level racks only, chain
+mute and volume unread, the positions PHYSICAL and read before the analyzer is
+appended — were visible only in a docstring; `boundary-patterns.md` owns that
+contract and now carries them, along with which of the two representations a
+consumer should join on.
+
+**A scope-out this work broke, recorded rather than quietly kept.** Chunk 02
+scoped out the gain-param match and then refactored it anyway, because naming
+one hint set while leaving its neighbour an inline `or` chain leaves two idioms
+for one thing. The plan says so now. The gain constant is underscore-private
+where the enable one is public: what the scope-out was protecting is the
+*guard*, and the gain set still has no engine mirror and no drift test, so a
+public name beside the enable set would advertise protection it does not have.
+
+**And a re-scope that was announced but not performed.** An earlier draft of
+this entry said #529 had been re-scoped when the item had only been commented
+on — body and stage untouched. The item is actually re-scoped now, to the half
+that is still open: the read side never learned the manifest records faders.
+
+**One test was consolidated, and the reason belongs here rather than only in a
+docstring.** Chunk 05 added `test_a_parameter_left_at_its_default_is_still_caught`
+and it was a second witness, not new coverage — identical setup
+(`live.swallow_set_parameter = True`) and identical expectation to
+`test_verify_fails_when_a_restored_parameter_reads_back_at_its_default`, which
+already existed in the same file. It contributed two assertions on the mismatch
+message's exact text, and those moved into the surviving test; nothing it
+covered is uncovered. What chunk 05 was actually missing was the OTHER half —
+that a faithful round trip does NOT report a mismatch — and that test is new and
+stays.
+
 **Re-vendor: REQUIRED.** Three chunks touch `handlers/device.py` and
 `handlers/render.py`, both inside `_FINGERPRINT_PATHS`. Batched for exactly that
 reason — one restart pays for all three. Nothing here exists in Live until the
@@ -798,6 +852,17 @@ clear-and-rebuild projection and a re-push does retry. The verify pass blocked o
 it. The counts were wrong in both directions too: the "bounded N" alert was
 emitted before the executor's filter ran, and the withheld count counted calls
 rather than copies, doubling every number.
+
+**One test was consolidated, and the reason belongs here rather than only in a
+docstring.** Chunk 05 added `test_a_parameter_left_at_its_default_is_still_caught`
+and it was a second witness, not new coverage — identical setup
+(`live.swallow_set_parameter = True`) and identical expectation to
+`test_verify_fails_when_a_restored_parameter_reads_back_at_its_default`, which
+already existed in the same file. It contributed two assertions on the mismatch
+message's exact text, and those moved into the surviving test; nothing it
+covered is uncovered. What chunk 05 was actually missing was the OTHER half —
+that a faithful round trip does NOT report a mismatch — and that test is new and
+stays.
 
 **Re-vendor: REQUIRED.** `handlers/clip.py`, `actions/clip.py` and
 `handlers/render.py` are all inside `_FINGERPRINT_PATHS` — the tuple names the

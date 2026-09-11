@@ -134,6 +134,15 @@ class Job:
                 # 'ok' | 'incomplete' from the render itself (distinct from the
                 # job state, which is 'done' once the render returns at all).
                 out["render_status"] = self.result.get("status")
+                # Advisories the render raised without refusing (a soloed rack
+                # chain today). Only present when there is one — an always-set
+                # key would make "nothing to say" and "said nothing" the same
+                # payload. This allowlist is the ONLY path from a render result
+                # to a caller, so a handler that adds an advisory and stops
+                # here has added nothing.
+                warning = self.result.get("warning")
+                if warning:
+                    out["warning"] = warning
             elif self.kind == "analyze":
                 out["report"] = self.result.get("report")
                 out["report_path"] = self.result.get("report_path")

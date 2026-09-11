@@ -15,7 +15,9 @@ governed_by:
       - "The MCP surface is versioned by content fingerprint, never a hand-maintained number → APPLIES. Chunks 03 and 04 both touch fingerprinted paths under `handlers/`, so this scope REQUIRES a re-vendor and a full Live restart. Batched deliberately: one re-vendor, not two."
       - "No compatibility shims for consumers that cannot exist → conforms (03 and 04 add response/manifest fields; no existing caller changes shape)"
       - "Mutator signatures keyword-only after conn → inapplicable; no chunk touches a mutator"
-      - "Timing transforms stay in the engine, off the MCP surface → inapplicable"
+      - "Timing transforms stay in the engine, off the MCP surface → inapplicable; no chunk touches timing"
+      - "The MCP tool surface stays inside the band where tool-selection accuracy holds → conforms; no tool and no action is added, only fields on existing responses"
+      - "These interfaces stay internally scoped → conforms; nothing changes about what is published"
 partition: >
   serial. Six chunks, but three of them (05, 06 and the bookkeeping half of 01)
   are documentation and backlog state that only the coordinator may write, and
@@ -83,7 +85,7 @@ epsilon safe. **Flagged rather than silently dropped**, per the norm.
 
 ## Chunks
 
-### 01 — chain-rebuild warns before it destroys an unreadable sidechain source (#544)
+### Chunk 01: chain-rebuild warns before it destroys an unreadable sidechain source (#544)
 
 The unreadable-sidechain-source warning fires on two surfaces — `capture.py:2019`
 and `push/plan.py:817` — and not on the third, which is the destructive one.
@@ -105,7 +107,7 @@ write it *attempted*.
 
 **Done when:** both tests pass and no fourth copy of the arming predicate exists.
 
-### 02 — the sidechain-enable hints are named on the MCP side (#545)
+### Chunk 02: the sidechain-enable hints are named on the MCP side (#545)
 
 `SIDECHAIN_ENABLE_PARAM_HINTS` is mirrored across a package boundary the engine
 cannot import across, and the guard keeping the mirror honest scrapes handler
@@ -117,9 +119,18 @@ brittle against reformatting.
 - [x] The guard imports both sides — no source scraping, regex, or anchors.
 - [x] Adding a hint on one side alone still fails the guard.
 
-**Scope-out:** the gain-param match beside it (same shape, separate change).
+**Scope-out, AMENDED mid-build:** the gain-param match was originally scoped
+out ("same shape, separate change") and was then folded in anyway, because
+naming the enable set while leaving its neighbour an inline `or` chain leaves
+the module with two idioms for one thing. Recorded rather than left for a reader
+to discover: the refactor is literal-for-literal, and the gain constant is
+underscore-PRIVATE where the enable one is public. That asymmetry is the whole
+scope-out surviving — what the original scope-out protected was the *guard*, and
+the gain set still has no engine mirror, no drift guard and no dispatcher test,
+so a public name beside the enable set would advertise protection it does not
+have.
 
-### 03 — `device load` says it landed past the analyzer tap (#546)
+### Chunk 03: `device load` says it landed past the analyzer tap (#546)
 
 `ableton_device(action='load')` onto a rendered track lands past the
 `HallucinoteAnalyzer` and says nothing; an operator reading the chain order
@@ -132,7 +143,7 @@ the tap before any capture — but only the source says so. An *Errors teach* ga
 **Scope-out:** changing *where* `load` places the device, or making it re-seat
 the tap — the render-start sweep owns that.
 
-### 04 — a soloed rack chain warns, and the manifest records it (#550)
+### Chunk 04: a soloed rack chain warns, and the manifest records it (#550)
 
 The shipped solo guard refuses a render under a soloed **track or return**. A
 soloed rack **chain** is invisible, and chain solo is first-class here
@@ -150,9 +161,27 @@ does. Record the reason in `decisions/`-equivalent (the change-log entry).
 - [x] Manifest `mixer_state` carries chain solo whether or not anything warned.
 - [x] Track/return solo still **refuses** — this chunk must not weaken #548.
 
-**Scope-out:** chain mute and chain volume.
+**Scope-out:** chain mute and chain volume. Racks nested inside a rack chain
+(top-level racks only) — stated in the docstring, in `architecture.md` §
+*What is deliberately not modeled*, and in `boundary-patterns.md`.
 
-### 05 — the epsilon's safety is pinned by a test (#534, re-scoped)
+**Consumer investigation (Capture Manifest is a declared contract surface).**
+Done rather than asserted. `boundary-patterns.md` enumerates the manifest's
+consumers — `audio/io.py` `load_capture` and `resolve_baseline`, `takes.py`
+`recency_key`, `tools/make_demo_media.py` (the one published consumer) and
+`server._record_audio_capture_event`. A repo-wide sweep
+(`grep -rn 'mixer_state\|muted_tracks\|soloed_chains' src/ hallucinote_mcp/src/
+tools/`) returns **no manifest consumer at all**: the only hits are
+`node_features.py` / `handlers/device.py`, which are the unrelated device-chain
+`mixer_state`. The manifest's whole mixer block is write-only today — read by
+people and by reports, by no code. No consumer iterates manifest keys
+generically either (`audio/io.py` reads `tracks` and `returns` by name), so the
+two new members break nothing and need no migration.
+
+That absence is itself the finding #529 now carries: the write side records the
+mixer and the read side never learned it was there.
+
+### Chunk 05: the epsilon's safety is pinned by a test (#534, re-scoped)
 
 No production defect (see above), but the property that makes `_PARAM_EPSILON`
 safe is untested — nothing in `tests/` references `_verify_parameters` or the
@@ -167,7 +196,7 @@ pinning that a number exists, never that anything depends on it.
 - [x] Re-scope #534 to the residue: the epsilon is safe only because the restore
       never invents a value, and that is now a pinned contract.
 
-### 06 — the bookkeeping the release cannot ship with (no code)
+### Chunk 06: the bookkeeping the release cannot ship with (no code)
 
 - [x] **#533 → `status=shipped`.** Fixed at `chain_rebuild.py:826`; change-log
       carries `scope=CHAIN-RESTORE-STR`. Open-but-shipped.

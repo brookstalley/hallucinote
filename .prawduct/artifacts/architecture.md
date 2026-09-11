@@ -187,6 +187,17 @@ is truthful either way.
   depth-N, a rack sitting on another rack's chain is outside the pull planner's scope,
   and `diff_snapshots`/`merge_snapshots` itemize one level and summarize deeper subtrees
   — a preview simplification, not a data limit.
+- **Chain solo below the top level of a rack.** The pre-render mixer read enumerates
+  `solo` on the chains of top-level rack devices on tracks and returns, and warns rather
+  than refusing — a chain solo silences its sibling chains inside one rack, not the song,
+  so the master bus still carries every track (owner decision, 2026-09-10; a soloed
+  *track* or *return* still refuses). A rack nested inside another rack's chain can hold
+  a soloed chain too, and that one is invisible: walking to arbitrary depth would pay a
+  full device-tree traversal on every render for a case nobody has hit. A rack's
+  **return chains** carry `solo` like any other chain and are not read either. Chain
+  **mute** and chain **volume** are not read at all. Stated here because a limit that lives only
+  in a docstring is a limit the next reader re-discovers.
+
 - **Human audio.** A recorded vocal take or a hand-ridden automation lane lives only in
   the `.als`; the bridge cannot pull it into a song's source. This is a boundary, not a
   bug — see the README's Known Issues.

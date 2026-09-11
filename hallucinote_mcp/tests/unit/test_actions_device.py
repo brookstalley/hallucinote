@@ -4045,7 +4045,7 @@ def test_a_load_behind_the_analyzer_tap_says_it_is_transient(loaded_actions):
     It isn't — `render(start)` re-seats the tap before capturing — but only the
     source said so, and someone read it cold once already.
     """
-    tap = FakeDevice("HallucinoteAnalyzer", class_name="MxDeviceAudioEffect")
+    tap = FakeDevice("HallucinoteAnalyzer", class_name="Max Audio Effect")
     ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1", devices=[tap])]))
     _add_browser_item(ctx, "audio_effects", "Compressor2",
                       uri="query:Compressor2")
@@ -4092,7 +4092,7 @@ def test_a_load_that_lands_ahead_of_the_tap_says_nothing_new(loaded_actions):
     """Live re-orders a chain into MIDI-effect / instrument / audio-effect
     order, so an INSTRUMENT load can land ahead of a tap that is already there.
     That device is inside the measured span and there is nothing to explain."""
-    tap = FakeDevice("HallucinoteAnalyzer", class_name="MxDeviceAudioEffect")
+    tap = FakeDevice("HallucinoteAnalyzer", class_name="Max Audio Effect")
     track = FakeTrack("T1", devices=[tap])
     ctx = FakeCtx(FakeSong(tracks=[track]))
     _add_browser_item(ctx, "instruments", "Operator", uri="query:Operator")
@@ -4118,4 +4118,32 @@ def test_a_load_that_lands_ahead_of_the_tap_says_nothing_new(loaded_actions):
     )
     assert resp.ok is True, resp.error
     assert resp.result["device_index"] == 1, "the fixture must place it first"
+    assert "note" not in resp.result
+
+
+def test_a_non_m4l_device_named_like_the_analyzer_is_not_the_tap(loaded_actions):
+    """Identity here is the package's rule, not a name comparison written at
+    this call site.
+
+    `_find_analyzer_index` requires `class_display_name == "Max Audio Effect"`
+    AND the name, because a user-saved preset can carry any name. Matching on
+    name alone would make this note promise that "the next render already
+    includes this device" — a promise only the re-seat sweep can keep, and the
+    sweep does not recognize a non-M4L device as the tap. The note would be
+    telling an operator not to worry about something nothing will fix.
+    """
+    impostor = FakeDevice("HallucinoteAnalyzer", class_name="Compressor2")
+    ctx = FakeCtx(FakeSong(tracks=[FakeTrack("T1", devices=[impostor])]))
+    _add_browser_item(ctx, "audio_effects", "Compressor2",
+                      uri="query:Compressor2")
+    resp = dispatch(
+        Request(
+            tool="ableton_device", action="load",
+            params={"node": {"parent": {"kind": "track", "index": 1},
+                             "terminal": "track"},
+                    "kind": "Compressor2"},
+        ),
+        context=ctx,
+    )
+    assert resp.ok is True, resp.error
     assert "note" not in resp.result

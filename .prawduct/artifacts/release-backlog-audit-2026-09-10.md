@@ -18,13 +18,43 @@ bookkeeping claim that is now false. The rest are honest follow-on.
 | # | Effort | Why it is coupled | Verified |
 | --- | --- | --- | --- |
 | **#533** | — | **Already fixed; the item was never closed.** `_param_write_kwargs` hands the wire a string (`chain_rebuild.py:826`), and `scope=CHAIN-RESTORE-STR` is in the change-log. This is a `status=shipped`, not work. | `chain_rebuild.py:826-838` |
-| **#534** | M/M | `chain-rebuild`'s post-rebuild verify ships in this release and is **measured** to lie. `_PARAM_EPSILON = 1e-6` is absolute while float32 round-trip error is relative, and integer-stepped params breach it outright (`Note PB Range` wrote 41.424, read 41). Numbers came off Live 12.4.5, not from reasoning. | `chain_rebuild.py:1185`, used `:1249` |
+| **#534** | M/M | ~~`chain-rebuild`'s post-rebuild verify is **measured** to lie: `_PARAM_EPSILON = 1e-6` is absolute while float32 round-trip error is relative, and integer-stepped params breach it outright.~~ **WRONG — see the correction below.** The measurements are real and describe a path this module does not take. | `chain_rebuild.py:1185`, used `:1249` |
 | **#544** | S/M | The unreadable-sidechain-source warning exists and fires on **two** surfaces — capture and push — and not on the third, which is the **destructive** one: `chain-rebuild` deletes and reloads, so a hand-set source is destroyed outright and silently. ~4 lines, no new predicate. | helpers at `capture.py:1909/:1929`; callers `capture.py:2019`, `push/plan.py:817`; **absent** from `chain_rebuild.py` |
 | **#546** | S/S | Residue of #532, whose other half shipped. `device load` lands past the analyzer tap and says nothing; the state is transient and self-healing, but only the source says so. | zero `analyzer` references in `actions/device.py` |
 | **#545** | S/S | Same sidechain cluster as #544 — cheaper together than twice. | — |
 | **#526** | — | **An obligation this release created.** #537 closed today. #526's body says in terms: *"must NOT be built as currently written"* and *"not to be closed on #537's merge without someone reading the residue first."* That read is owed now, before the cut classifies the scope. | #537 `CLOSED 2026-09-10T20:28:03Z` |
 
-Four of the six are S-effort or smaller; #534 is the only real build.
+Four of the six are S-effort or smaller; #534 read as the only real build and
+turned out not to be one.
+
+### Correction — #534 is not reachable, and this audit got it wrong
+
+Added 2026-09-10, after the fold-in. **This row was the audit's one bad
+recommendation and it is left standing above rather than quietly rewritten**,
+because the reason it was wrong is the lesson.
+
+The defect cannot reach the path `chain-rebuild` takes. `capture_chain` reads
+every parameter **off Live**, `_restore` writes that same journal value back
+verbatim, and `_verify_parameters` compares the two — so both ends are the same
+Live-sourced float and the delta is zero by construction, not by tolerance. A
+22 kHz frequency and a 41-step bend range round-trip at **exactly 0.0** through
+the module.
+
+That reproduces the item's own **Pass 1**. The item documents two measurement
+passes and says in a heading *do not conflate them*: Pass 1 re-wrote each
+parameter's existing value and round-tripped at 0.0 across 29 parameters; Pass 2
+perturbed values off-grid and produced the breaching deltas. Every number in the
+item's Actual section is Pass 2 — and Pass 1 is the production path.
+
+**The audit repeated the item's framing instead of checking its premise against
+the code.** Three of the six coupled items turned out to be wrong about the code
+they described (#534 here, #544's mechanism, #526's blocker), and all three were
+filed within three days by agents with the code in front of them. A backlog item
+is a claim with a timestamp, not a finding. The fix to this audit's method is one
+five-minute code read per item *before* recommending it, not after.
+
+What shipped instead: two tests pinning the property that makes the tolerance
+safe — the restore never invents a value — because nothing pinned it before.
 
 ## Decide before the cut — do not let these ship silently
 
@@ -86,8 +116,9 @@ already the intent.
 ## Recommendation
 
 Fold in **#533** (a close), **#544 + #545 + #546** (one small sidechain-and-tap
-batch), and settle **#526**'s residue read. Build **#534** if the release can
-carry one M — the verify path ships either way, and it is measured wrong.
+batch), and settle **#526**'s residue read. ~~Build **#534**~~ — **withdrawn**,
+see the correction above: the defect is unreachable, and what it needed was the
+test that pins why, not a tolerance change.
 Decide **#550** explicitly. Leave **#482** out on the prior session's reasoning,
 but say so in the release notes rather than silently.
 

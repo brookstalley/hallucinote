@@ -1801,16 +1801,18 @@ def test_a_soloed_rack_chain_warns_and_the_render_proceeds(
     # It did NOT refuse.
     assert ctx_two_tracks_one_return.song.start_playing_calls == 1
 
-    warnings = out["warnings"]
-    assert len(warnings) == 1
-    assert "'Sub'" in warnings[0] and "'Drum Bus'" in warnings[0]
-    assert f"track 1 ({track.name!r})" in warnings[0]
-    # The warning explains the blast radius, not just the fact — "a chain is
-    # soloed" alone reads as the whole-song silencing that DOES refuse.
-    assert "SIBLING" in warnings[0] and "not refused" in warnings[0]
+    # `warning: str` — the convention every sibling handler uses. NOT
+    # `warnings: list`, which is `wire.Response.warnings`, a different channel
+    # serialized at the top of the response rather than inside `result`.
+    warning = out["warning"]
+    assert "'Sub'" in warning and "'Drum Bus'" in warning
+    assert f"track 1 ({track.name!r})" in warning
+    # It explains the blast radius, not just the fact — "a chain is soloed"
+    # alone reads as the whole-song silencing that DOES refuse.
+    assert "SIBLING" in warning and "not refused" in warning
 
     # Recorded in the manifest too — a report is read long after Live moved on.
-    # The manifest carries the per-surface labels; `warnings` wraps them in the
+    # The manifest carries the per-surface labels; `warning` wraps them in the
     # prose that says what to do, so the two are not the same string.
     # Position 1 literally: the rack is the track's first device. NOT
     # len(track.devices) — the render appends the analyzer to that list, so
@@ -1849,9 +1851,8 @@ def test_a_soloed_chain_on_a_RETURN_is_seen_too(
         _clock_source=lambda: 999.0,
     )
 
-    assert len(out["warnings"]) == 1
-    assert f"return 1 ({ret.name!r})" in out["warnings"][0]
-    assert "'Plate'" in out["warnings"][0]
+    assert f"return 1 ({ret.name!r})" in out["warning"]
+    assert "'Plate'" in out["warning"]
 
 
 def test_a_track_solo_still_REFUSES_even_with_a_clean_rack(
@@ -1897,7 +1898,7 @@ def test_a_clean_render_carries_no_chain_solo_and_no_warnings(
         _clock_source=lambda: 999.0,
     )
 
-    assert "warnings" not in out
+    assert "warning" not in out
     assert out["manifest"]["soloed_chains"] == []
     assert all(
         row["soloed_chains"] == []

@@ -71,13 +71,17 @@ _MASTER_SENTINEL_INDEX = 0
 # function's source text between two literal anchors, which broke on
 # reformatting rather than on divergence.
 #
-# The gain set has no engine-side mirror and therefore no guard — nothing
-# outside this module asks that question.
+# The gain set is UNDERSCORE-PRIVATE, and the asymmetry is the point. The
+# enable set is public because something outside this module mirrors it and a
+# guard imports it; the gain set has no mirror, no guard and no outside
+# consumer, so a public name beside it would advertise protection it does not
+# have — the next contributor mirroring it engine-side would get none of what
+# the matching name implies.
 SIDECHAIN_ENABLE_PARAM_HINTS: tuple[str, ...] = (
     "s/c on", "sidechain on", "sidechain active", "side enable",
     "external sidechain",
 )
-SIDECHAIN_GAIN_PARAM_HINTS: tuple[str, ...] = (
+_SIDECHAIN_GAIN_PARAM_HINTS: tuple[str, ...] = (
     "s/c gain", "sidechain gain", "side gain",
 )
 
@@ -1907,19 +1911,25 @@ def _analyzer_tap_note(
     is what a reader of this state concluded once already. The condition is
     real and only the source said it was harmless; now the response does.
     """
-    # Local import: `analyzer.setup` imports THIS module, so naming it at
+    # Local import: `analyzer.setup` imports THIS module, so naming these at
     # module scope would close the cycle.
-    from ..analyzer.setup import ANALYZER_DEVICE_NAME
+    #
+    # `_find_analyzer_index` rather than a name comparison written here. The
+    # MCP side identifies the tap by BOTH `class_display_name == "Max Audio
+    # Effect"` and the name, because name alone collides with a user-saved
+    # non-M4L preset — and this note promises the re-seat sweep will pick the
+    # device up, a promise only the sweep's own predicate can make. Matching on
+    # name here would be a third rule for one identity, and the case it gets
+    # wrong is the note telling an operator not to worry about a device the
+    # sweep will never touch.
+    from ..analyzer.setup import ANALYZER_DEVICE_NAME, _find_analyzer_index
 
-    tap_positions = [
-        i for i, d in enumerate(chain, start=1)
-        if getattr(d, "name", "") == ANALYZER_DEVICE_NAME
-    ]
-    if not tap_positions or new_index <= min(tap_positions):
+    tap_index = _find_analyzer_index(chain)
+    if tap_index is None or new_index <= tap_index:
         return None
     return (
         f"this device sits at position {new_index}, BEHIND the "
-        f"{ANALYZER_DEVICE_NAME} tap at position {min(tap_positions)} — Live "
+        f"{ANALYZER_DEVICE_NAME} tap at position {tap_index} — Live "
         f"appends a browser load to the end of the chain and exposes no "
         f"reorder API, so a rendered track always loads behind its tap. "
         f"Nothing is under-measured: ableton_render(action='start') re-seats "
@@ -2584,7 +2594,7 @@ def set_sidechain_handler(
         ):
             enable_param = p
         if gain_param is None and any(
-            hint in lname for hint in SIDECHAIN_GAIN_PARAM_HINTS
+            hint in lname for hint in _SIDECHAIN_GAIN_PARAM_HINTS
         ):
             gain_param = p
 

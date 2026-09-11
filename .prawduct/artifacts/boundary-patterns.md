@@ -262,12 +262,35 @@ When changing this surface:
   faithful; they describe whether the thing captured was the song. A report is
   read long after Live has moved on, so without them a surprising master can
   only be diagnosed by probing a session that no longer holds the state that
-  produced it. `solo` cannot be true here: a soloed track or return is refused
-  before the transport rolls, because solo silences everything else and the
-  master bus then carries a fraction of the song while every unsoloed stem
+  produced it. **Surface** `solo` cannot be true here: a soloed track or return is
+  refused before the transport rolls, because solo silences everything else and
+  the master bus then carries a fraction of the song while every unsoloed stem
   captures silence. A mute is not refused — it is a plausible authoring choice for one
   render — so `muted_tracks` names them and the render proceeds. Absence is
   not failure here either: manifests predating these fields omit them.
+- **`soloed_chains` is the one solo that DOES reach the file**, and it is the
+  reason the sentence above says *surface* solo. A soloed rack **chain**
+  silences its sibling chains inside one rack rather than the song, so the
+  master bus still carries every track and the render **warns** instead of
+  refusing (owner decision, 2026-09-10). It appears in two representations,
+  and a consumer should know which to join on:
+  - `mixer_state[].soloed_chains` — **structured**, the machine-readable one:
+    `{device_position, device_name, chain_index, chain_name}` per soloed chain,
+    already keyed to the row's surface. Join on this.
+  - a top-level `soloed_chains` — the same information as **prose strings**,
+    one per soloed chain, for a reader rather than a parser. The render result
+    also carries a single `warning` string built from them, which is what
+    reaches an operator through `Job.status_result`.
+
+  **`device_position` and `chain_index` are PHYSICAL Live positions, not DB
+  ordinals**, and the position is read BEFORE `ensure_analyzers_loaded` appends
+  the analyzer — so a `device_position` here will not match a post-render chain
+  read that includes the tap. Scope: a top-level rack's MAIN chains only — a rack nested
+  inside another rack's chain is not walked, a rack's RETURN chains are not read
+  (they carry `solo` like any other chain), and chain mute and chain volume are
+  not read. A consumer diagnosing a surprising master from `solo`/`mute`/`volume`
+  alone will miss a rack that rendered as a fraction of itself. Absence is not
+  failure: manifests predating this field omit it.
 - **Deleter**: `hallucinote/takes.py` (`plan_sweep`/`execute_sweep`), driven
   automatically from `server._sweep_stale_takes` at render start and manually
   from `hallucinote captures prune`. This is the manifest's only *destructive*

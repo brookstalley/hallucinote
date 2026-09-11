@@ -96,12 +96,12 @@ probe **cannot read** is captured as *absent*, so the restore writes nothing,
 the delete/reload destroys it, and nothing warns — the restore only alerts on a
 write it *attempted*.
 
-- [ ] Import `sidechain_armed_in_probe` / `unreadable_sidechain_source_warning`
+- [x] Import `sidechain_armed_in_probe` / `unreadable_sidechain_source_warning`
       and call them on the probed parameter list the journal is built from.
-- [ ] The warning fires **before the first delete**, so the operator can abort.
-- [ ] Test: an armed device whose source is unreadable warns, naming the device.
-- [ ] Test: an armed device whose source IS readable adds no warning.
-- [ ] Correct #544's body — the "never journaled" claim.
+- [x] The warning fires **before the first delete**, so the operator can abort.
+- [x] Test: an armed device whose source is unreadable warns, naming the device.
+- [x] Test: an armed device whose source IS readable adds no warning.
+- [x] Correct #544's body — the "never journaled" claim.
 
 **Done when:** both tests pass and no fourth copy of the arming predicate exists.
 
@@ -112,10 +112,10 @@ cannot import across, and the guard keeping the mirror honest scrapes handler
 **source text** between two literal anchors. It works and fails loudly; it is
 brittle against reformatting.
 
-- [ ] The handler exposes the hints as a named module constant and matches
+- [x] The handler exposes the hints as a named module constant and matches
       against it.
-- [ ] The guard imports both sides — no source scraping, regex, or anchors.
-- [ ] Adding a hint on one side alone still fails the guard.
+- [x] The guard imports both sides — no source scraping, regex, or anchors.
+- [x] Adding a hint on one side alone still fails the guard.
 
 **Scope-out:** the gain-param match beside it (same shape, separate change).
 
@@ -126,8 +126,8 @@ brittle against reformatting.
 infers silent under-measurement. No harm is reachable — `render(start)` re-seats
 the tap before any capture — but only the source says so. An *Errors teach* gap.
 
-- [ ] Such a load returns a note naming the transient state and the re-seat.
-- [ ] A load with no analyzer, or one landing before the tap, says nothing new.
+- [x] Such a load returns a note naming the transient state and the re-seat.
+- [x] A load with no analyzer, or one landing before the tap, says nothing new.
 
 **Scope-out:** changing *where* `load` places the device, or making it re-seat
 the tap — the render-start sweep owns that.
@@ -144,11 +144,11 @@ track — so the blast radius is narrower than a track or return solo, and
 rendering while auditioning one layer of a rack is a thing an author legitimately
 does. Record the reason in `decisions/`-equivalent (the change-log entry).
 
-- [ ] The pre-render mixer read enumerates chain solo for rack devices on tracks
+- [x] The pre-render mixer read enumerates chain solo for rack devices on tracks
       **and** on returns.
-- [ ] A soloed chain warns, naming the rack and the chain, and the render proceeds.
-- [ ] Manifest `mixer_state` carries chain solo whether or not anything warned.
-- [ ] Track/return solo still **refuses** — this chunk must not weaken #548.
+- [x] A soloed chain warns, naming the rack and the chain, and the render proceeds.
+- [x] Manifest `mixer_state` carries chain solo whether or not anything warned.
+- [x] Track/return solo still **refuses** — this chunk must not weaken #548.
 
 **Scope-out:** chain mute and chain volume.
 
@@ -159,44 +159,44 @@ safe is untested — nothing in `tests/` references `_verify_parameters` or the
 constant. That is the same shape as the defect the previous cycle found: tests
 pinning that a number exists, never that anything depends on it.
 
-- [ ] Test: a capture→restore→verify round trip over Live-sourced values —
+- [x] Test: a capture→restore→verify round trip over Live-sourced values —
       including a large-magnitude frequency and an integer-stepped parameter —
       reports **no** mismatch.
-- [ ] Test: a parameter left at its class default (the regression the epsilon
+- [x] Test: a parameter left at its class default (the regression the epsilon
       exists to catch) IS reported.
-- [ ] Re-scope #534 to the residue: the epsilon is safe only because the restore
+- [x] Re-scope #534 to the residue: the epsilon is safe only because the restore
       never invents a value, and that is now a pinned contract.
 
 ### 06 — the bookkeeping the release cannot ship with (no code)
 
-- [ ] **#533 → `status=shipped`.** Fixed at `chain_rebuild.py:826`; change-log
+- [x] **#533 → `status=shipped`.** Fixed at `chain_rebuild.py:826`; change-log
       carries `scope=CHAIN-RESTORE-STR`. Open-but-shipped.
-- [ ] **#526 residue read.** #537 closed 2026-09-10; #526's body says in terms it
+- [x] **#526 residue read.** #537 closed 2026-09-10; #526's body says in terms it
       "must NOT be built as currently written" and must not be closed on #537's
       merge without someone reading the residue. Read it and re-scope.
-- [ ] **#529 re-scope.** Its premise ("`manifest.json` records no fader values")
+- [x] **#529 re-scope.** Its premise ("`manifest.json` records no fader values")
       is now partly false — RENDERGUARD added per-surface `mixer_state`.
-- [ ] **`architecture.md` learns three new packages.** `assets` (9 files / 2,491
+- [x] **`architecture.md` learns three new packages.** `assets` (9 files / 2,491
       lines), `features` (8 / 1,413) and `spectral` (7 / 1,763) are all new since
       v1.8.6 and carry zero mentions. This is what the briefing's staleness
       advisory is pointing at.
-- [ ] **The five bare release-pending scopes** — `CHAIN-RESTORE-STR`,
+- [x] **The five bare release-pending scopes** — `CHAIN-RESTORE-STR`,
       `docs-hygiene`, `governance-file-sizes`, `advisory-clearing`,
       `effort-s-burndown` — get a plan or an explicit recorded no-plan
       disposition, so `check-releasability`'s warning is answered rather than
       carried.
-- [ ] **#482's exclusion is recorded** in the release notes, not left silent.
-- [ ] **#489 surfaced** to the owner: the R5 upstream report is unsent and this
+- [x] **#482's exclusion is recorded** in the release notes, not left silent.
+- [x] **#489 surfaced** to the owner: the R5 upstream report is unsent and this
       repo is now firing the exact advisory it describes. Egress is the owner's.
 
 ## Status
 
-- [ ] 01 — sidechain warning (#544)
-- [ ] 02 — named hints (#545)
-- [ ] 03 — load says it landed past the tap (#546)
-- [ ] 04 — chain solo warns (#550)
-- [ ] 05 — epsilon safety pinned (#534 re-scoped)
-- [ ] 06 — bookkeeping and artifacts
+- [x] 01 — sidechain warning (#544)
+- [x] 02 — named hints (#545)
+- [x] 03 — load says it landed past the tap (#546)
+- [x] 04 — chain solo warns (#550)
+- [x] 05 — epsilon safety pinned (#534 re-scoped)
+- [x] 06 — bookkeeping and artifacts
 
 **Critic mode:** cumulative at the end — the diff crosses two risk surfaces
 (engine `sync/`, MCP `handlers/`) and the fingerprint question spans chunks 02-04.

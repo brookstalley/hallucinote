@@ -125,3 +125,118 @@ but say so in the release notes rather than silently.
 Then close items 1-3 of *Not backlog* before the cut: the architecture doc, the
 #291 re-run, and either plans or explicit no-plan dispositions for the five
 bare scopes.
+
+---
+
+# Second pass — after RELFOLD-0910 merged
+
+**Asked again:** *what else should be folded in before the cut?* Pass 1's six
+items shipped (`64ac62d6`), so this pass re-reads the backlog against a tree
+that already has them.
+
+**Method, corrected.** Pass 1's own postmortem said its fix was *one five-minute
+code read per item before recommending it, not after*. Every claim below was
+read in the code first. Two candidates died that way, and they are recorded as
+deaths rather than omitted — that is the point of the correction.
+
+## The numbers
+
+The release window (2026-09-08 →) has now filed **65** items: **41 closed**,
+**24 open**. Backlog total is **88 open**, down from 91. The delta since pass 1
+is five closed (#533, #544, #545, #546, #550) and two filed — **#552** and
+**#553**, both raised by RELFOLD's own Critic rounds. Those two are the only
+genuinely new fold-in decisions. The other 22 open window items were
+dispositioned in pass 1 and nothing has moved under them.
+
+## Fold in
+
+| # | Effort | Why it is coupled | Verified |
+| --- | --- | --- | --- |
+| **#553** | S | One test for a branch **shipping in this release**. `_warn_under_chain_solo`'s envelope has three heads; the `elif certain:` head (some chains soloed, some unreadable) is the one #550 added and the only one untested. The read is correct and the arithmetic is sound — what is unpinned is the wording of an operator-facing sentence that only fires in the mixed case. | `handlers/render.py:359` |
+
+That is the whole fold-in list. One test.
+
+## Verified NOT to fold in — the code disagreed with the case for each
+
+- **#552 (master strip is never walked) — ships as a named limit, on #550's own
+  precedent.** The item is real: `_mixer_state._read()` walks `song.tracks` and
+  `song.return_tracks` and never the master, so a soloed chain in a master rack
+  is invisible and `manifest.mixer_state` has no master row. But it is **not
+  silent**, which is the bar pass 1 set for #550 ("ship the guard with the
+  limitation named, or fix it — shipping it unmentioned is the bad option").
+  The limit is written in three release-visible places: `change-log.md:238-241`,
+  `architecture.md` § *What is deliberately not modeled*, and
+  `boundary-patterns.md:295` — plus `_soloed_chains`' own docstring at
+  `render.py:316-322`. It is also **not the one-line fix it looks like**: Live's
+  master carries no `solo` attribute, so a naive master row reads `solo: None`
+  and `_refuse_under_solo` — which deliberately refuses on an unreadable flag —
+  would refuse **every render**. M-effort, `stage:design`, correctly out.
+
+- **#495 (`PushPlan.warn()` writes the discarded channel) — the trap is latent,
+  and RELFOLD did not fall into it.** This was worth re-asking, because RELFOLD's
+  reflection names "I made the value correct" ≠ "the value arrives" as the
+  failure it committed twice, and #495 is that failure's shape in the push
+  planner. So: did RELFOLD's new sidechain warning go into `notes` (discarded)?
+  **No.** `push/plan.py:820-823` routes it to `notes_sink` — the report's
+  "Warnings (push still OK)" section — with a fallback to the returned list when
+  no sink is given, and a comment reasoning about exactly that choice. The
+  chain-rebuild half (`7215d6bf`) writes **both** `_operator_note` (stderr) and
+  `alerts`. Both new warnings arrive. #495 stays what pass 1 called it: a live
+  trap for the *next* author, not a defect in shipped behaviour.
+
+- **The drop-box report's three unfiled defects — two are not defects, and the
+  third is already caught.** `incoming-bugs/2026-09-10-windowed-render-master-capture-13db-low.md`
+  is still in the drop-box and pass 1 flagged three observed defects in it as
+  never filed. Read against the code:
+  - *`state: done` with 104-byte header-only WAVs* is a **deliberate two-field
+    contract**, not a defect: `render.py:1028-1034` documents `state` as the
+    terminal-completion signal an agent polls and `render_status` as the
+    ok/incomplete verdict, and `skills/render-analyze/SKILL.md:59` relays both.
+    And the empty capture is **not silent downstream** — `measure_capture_span`
+    compares captured duration against the manifest's declared span and
+    `analyze.py:1432` raises `capture_span_mismatch`. A header-only WAV fails
+    that by the whole window.
+  - *`back_to_arranger`* — the report's **own correction** calls it unrelated to
+    the incident and untested either way.
+  - *`compare_to` naming a report whose take retention swept* — real, but a
+    retention/ergonomics gap (the JSON survives; the audio for follow-up
+    measurement does not), not a correctness failure. Ordinary roadmap.
+
+  The report's **three suggested fixes all shipped** — the `sum_reconciliation`
+  gate and the solo refusal as #548/#549, the manifest mixer state as
+  RENDERGUARD. **The report is discharged and should be archived out of the
+  drop-box**, with the `compare_to` retention note filed if it is wanted.
+
+## Still owed before the cut — one new, one fixed, the rest unchanged
+
+1. ~~`architecture.md` does not know about three new packages.~~ **Fixed** in
+   RELFOLD — `assets`, `features` and `spectral` are all named now.
+2. **`planless-scopes-disposition.md` is one row stale.** It answers five
+   planless scopes; `check-releasability` now warns on **six**.
+   **`MYPY-COMPARE-0911`** merged with #555 *after* the disposition was written
+   and has no row. It is a legitimate no-plan (a single mypy error, one type
+   widened — trivial by the size heuristic), so it needs the row, not a plan.
+   An artifact whose only job is to answer that warning is the one place a
+   missing row costs something.
+3. **The operator-verification boxes are unchanged and not startable from here.**
+   The #291 witness is unblocked (both defects fixed) and **never re-run** —
+   nothing has proven chain-rebuild's restore against a real chain — and
+   RENDERGUARD box 7 still has not priced the stem-sum false positive. Both need
+   an attended Live sitting with a single writer.
+4. **The suite is unproven for the cut.** `check-releasability` reports
+   `unproven-suite`: the recorded evidence predates this session. A release
+   publishes unrecallably; the cut needs a run recorded against the tip.
+5. **#489's R5 upstream report is still unsent.** Egress crosses an owner
+   boundary — unchanged, and still not an agent action.
+
+## Recommendation
+
+**Fold in #553** — one test, covering release code, and the cheapest item in the
+window. Nothing else earns its way in.
+
+Ship **#552** as a named limit on #550's precedent (already satisfied — no
+action). Leave **#482**, **#534**, **#526**, **#529** and **#495** exactly where
+pass 1 and RELFOLD put them; all five are dispositioned on the record.
+
+Before the cut: add the `MYPY-COMPARE-0911` row, archive the discharged
+drop-box report, record a suite run, and get the two operator boxes sat.

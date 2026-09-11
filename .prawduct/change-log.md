@@ -32,6 +32,33 @@
      original concern: no version is pre-bumped, and nothing is mislabelled as
      already shipped.) -->
 
+## 2026-09-11 — CI was red on `develop`, and the type it tripped on was the honest answer
+
+<!-- prawduct: type=fix | scope=MYPY-COMPARE-0911 -->
+
+`develop` failed `mypy` on a single error, and had since the RENDERGUARD-0910
+merge: `_master_disqualification` in `audio/compare.py` annotated its `verdict`
+as `tuple[str, float, float] | None` and then built one out of `finding.get(...)`
+reads off a stored report's JSON, which is `Any`.
+
+Found by CI on an unrelated PR, which is the part worth noting — the branch that
+introduced it ran `mypy` on the files it had touched rather than the project
+config, so a whole-project gate caught what a per-file invocation could not.
+
+**The widening is the fix, not a cast, and the reason is behavioural.** The three
+values come from a report written by this same codebase — `analyze.py` builds
+the finding from the identical `master_is_not_stem_sum` tuple — so in practice
+they are always present and correctly typed. But a report that somehow carries
+the finding WITHOUT its numbers is still disqualified: the finding's presence is
+the verdict, not its arithmetic. Coercing with `float(...)` would raise on that
+report, and defaulting to a number would invent evidence. So the missing value
+travels as `None`, the annotation says so, and a test pins it.
+
+That test characterizes behaviour rather than guarding a regression — an
+annotation is erased at runtime, so it passes against the pre-fix module too.
+What it adds is that the case is now exercised at all; nothing reached it before.
+
+
 ## 2026-09-10 — The release audit folds in what the release's own work left open
 
 <!-- prawduct: type=fix | scope=RELFOLD-0910 -->

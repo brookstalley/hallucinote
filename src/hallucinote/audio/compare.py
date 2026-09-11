@@ -241,7 +241,15 @@ def _master_disqualification(
     threshold here would be free to disagree with the report's own findings
     about the same numbers.
     """
-    verdict: tuple[str, float, float] | None = None
+    # The three values are read off a STORED report's JSON, so they are `Any` to
+    # the type checker even though this module's own writer always sets all
+    # three — `analyze.py` builds the finding from the same
+    # `master_is_not_stem_sum` tuple this function's other branch calls. Widened
+    # rather than cast, because the widening is the honest answer: a report that
+    # carries the finding without its numbers is still DISQUALIFIED — the
+    # finding's presence is the verdict, not its arithmetic — so a missing value
+    # travels as None instead of being fabricated or raising on `float(None)`.
+    verdict: tuple[str | None, float | None, float | None] | None = None
     for finding in report.get("findings", []) or []:
         if isinstance(finding, dict) and finding.get("kind") == "master_not_stem_sum":
             verdict = (

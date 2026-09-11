@@ -57,6 +57,30 @@ _PARENT_KINDS = ("track", "return", "master")
 # matches on `parent_idx` still has a stable shape.
 _MASTER_SENTINEL_INDEX = 0
 
+# How `set_sidechain` recognizes a device's sidechain ENABLE and GAIN
+# parameters: lowercase substrings matched against the parameter name. Native
+# Live spells them 'S/C On' / 'S/C Gain'; the rest are naming variants seen on
+# third-party devices.
+#
+# PUBLIC on purpose. `hallucinote.capture.SIDECHAIN_ENABLE_PARAM_HINTS` is a
+# mirror of the enable set — the engine asks the same question ("is this
+# device's sidechain armed?") from the other side of a package boundary whose
+# dependency direction is MCP→engine, so the engine cannot import this and
+# mirrors it instead. Naming the set here is what lets the guard that keeps the
+# mirror honest compare two IMPORTED collections; it used to scrape this
+# function's source text between two literal anchors, which broke on
+# reformatting rather than on divergence.
+#
+# The gain set has no engine-side mirror and therefore no guard — nothing
+# outside this module asks that question.
+SIDECHAIN_ENABLE_PARAM_HINTS: tuple[str, ...] = (
+    "s/c on", "sidechain on", "sidechain active", "side enable",
+    "external sidechain",
+)
+SIDECHAIN_GAIN_PARAM_HINTS: tuple[str, ...] = (
+    "s/c gain", "sidechain gain", "side gain",
+)
+
 
 def _resolve_parent(
     context: LiveContext,
@@ -1863,7 +1887,45 @@ def load_handler(
         result["warning"] = (
             f"{result['warning']} {note}" if "warning" in result else note
         )
+    tap_note = _analyzer_tap_note(chain_after, new_index)
+    if tap_note is not None:
+        result["note"] = tap_note
     return result
+
+
+def _analyzer_tap_note(
+    chain: list[Any], new_index: int,
+) -> str | None:
+    """Say so when a load lands BEHIND the HallucinoteAnalyzer tap.
+
+    A `note`, not a `warning`, because no harm is reachable and the distinction
+    is the whole point: a warning asks the operator to do something, and here
+    there is nothing to do. `render(start)` re-seats the tap to the chain's end
+    before it captures anything, so the state is transient and self-heals. But
+    an operator who reads the chain order after a load sees a mid-chain tap and
+    reasonably concludes the new device is excluded from stem capture — which
+    is what a reader of this state concluded once already. The condition is
+    real and only the source said it was harmless; now the response does.
+    """
+    # Local import: `analyzer.setup` imports THIS module, so naming it at
+    # module scope would close the cycle.
+    from ..analyzer.setup import ANALYZER_DEVICE_NAME
+
+    tap_positions = [
+        i for i, d in enumerate(chain, start=1)
+        if getattr(d, "name", "") == ANALYZER_DEVICE_NAME
+    ]
+    if not tap_positions or new_index <= min(tap_positions):
+        return None
+    return (
+        f"this device sits at position {new_index}, BEHIND the "
+        f"{ANALYZER_DEVICE_NAME} tap at position {min(tap_positions)} — Live "
+        f"appends a browser load to the end of the chain and exposes no "
+        f"reorder API, so a rendered track always loads behind its tap. "
+        f"Nothing is under-measured: ableton_render(action='start') re-seats "
+        f"the tap to the end of the chain before it captures, so the next "
+        f"render already includes this device. No action needed."
+    )
 
 
 def delete_handler(
@@ -2517,18 +2579,12 @@ def set_sidechain_handler(
     gain_param = None
     for p in getattr(dev, "parameters", ()):
         lname = (p.name or "").lower()
-        if enable_param is None and (
-            "s/c on" in lname
-            or "sidechain on" in lname
-            or "sidechain active" in lname
-            or "side enable" in lname
-            or "external sidechain" in lname
+        if enable_param is None and any(
+            hint in lname for hint in SIDECHAIN_ENABLE_PARAM_HINTS
         ):
             enable_param = p
-        if gain_param is None and (
-            "s/c gain" in lname
-            or "sidechain gain" in lname
-            or "side gain" in lname
+        if gain_param is None and any(
+            hint in lname for hint in SIDECHAIN_GAIN_PARAM_HINTS
         ):
             gain_param = p
 

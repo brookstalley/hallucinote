@@ -284,8 +284,74 @@ def _mixer_state(context: Any) -> list[dict[str, Any]]:
                 getattr(context.song, "return_tracks", ()) or (), start=1
             )
         )
+        for row, track in zip(rows, _surfaces(context)):
+            row["soloed_chains"] = _soloed_chains(track)
         return rows
     return context.run_on_main(_read)
+
+
+def _surfaces(context: Any) -> list[Any]:
+    """Tracks then returns, in the order ``_mixer_state`` builds its rows."""
+    return [
+        *context.song.tracks,
+        *(getattr(context.song, "return_tracks", ()) or ()),
+    ]
+
+
+def _soloed_chains(track: Any) -> list[dict[str, Any]]:
+    """Every soloed rack chain on one surface, named by rack and chain.
+
+    Chain solo is its own concept in Live — a rack's chain carries `solo`
+    independently of the track's — and it silences the rack's SIBLING chains,
+    not the song. That is why it warns where a track or return solo refuses:
+    the master bus still carries every track, so the capture is a real mix,
+    just not the one the rack was authored to produce.
+
+    Top-level racks only. A rack nested inside a rack chain can also hold a
+    soloed chain, and walking to arbitrary depth here would pay a full
+    device-tree traversal on every render for a case nobody has hit; the
+    shallow read covers the one an author actually leaves engaged, and the
+    depth limit is stated rather than silently assumed.
+    """
+    found: list[dict[str, Any]] = []
+    for position, device in enumerate(
+        getattr(track, "devices", ()) or (), start=1
+    ):
+        chains = getattr(device, "chains", None)
+        if chains is None:
+            continue
+        for chain_index, chain in enumerate(chains, start=1):
+            if not bool(getattr(chain, "solo", False)):
+                continue
+            found.append({
+                "device_position": position,
+                "device_name": getattr(device, "name", "") or "<unnamed>",
+                "chain_index": chain_index,
+                "chain_name": getattr(chain, "name", "") or "<unnamed>",
+            })
+    return found
+
+
+def _warn_under_chain_solo(mixer_state: list[dict[str, Any]]) -> list[str]:
+    """Name every soloed rack chain; never refuse.
+
+    Owner decision, 2026-09-10. A track or return solo makes the master bus
+    carry a fraction of the song, which is never a mix anyone meant to render,
+    so it refuses. A chain solo silences sibling chains inside ONE rack: the
+    blast radius is a single device, the rest of the song is still there, and
+    rendering while auditioning one layer of a rack is a thing an author
+    legitimately does. Refusing would block work; saying nothing would let a
+    rack render as a fraction of itself with the report calling it a mix
+    change. So it warns, and the manifest records it either way.
+    """
+    return [
+        f"{row['surface_kind']} {row['surface_index']} "
+        f"({row['surface_name']!r}): chain {chain['chain_name']!r} is soloed "
+        f"inside rack {chain['device_name']!r} at position "
+        f"{chain['device_position']}"
+        for row in mixer_state
+        for chain in row.get("soloed_chains") or ()
+    ]
 
 
 def _refuse_under_solo(mixer_state: list[dict[str, Any]]) -> list[str]:
@@ -594,6 +660,7 @@ def render_handler(
     # pays an M4L reload on every surface.
     mixer_state = _mixer_state(context)
     muted_tracks = _refuse_under_solo(mixer_state)
+    soloed_chains = _warn_under_chain_solo(mixer_state)
 
     sidecar = _sidecar if _sidecar is not None else shared_sidecar()
     layout = ensure_analyzers_loaded(context, emit_port=sidecar.port)
@@ -876,10 +943,13 @@ def render_handler(
             # long after Live has moved on, so without this there is no way to
             # establish afterwards whether a surprising master was a real mix
             # change or a mute left engaged. Covers returns as well as
-            # tracks. Solo cannot appear here — a soloed track OR return is
-            # refused before the transport rolls.
+            # tracks. Surface solo cannot appear here — a soloed track OR
+            # return is refused before the transport rolls. CHAIN solo can:
+            # it warns rather than refusing, so a render under one reaches
+            # this file and `soloed_chains` is how a later read finds out.
             "mixer_state": mixer_state,
             "muted_tracks": muted_tracks,
+            "soloed_chains": soloed_chains,
             # The ACTUAL ring-out recorded (record_stop_beat is integer-beat — the
             # analyzer's stop is `/stop_at_beat <int>`), not the requested float.
             # The read side trusts this to span [stop_at_beat, stop+ring_out] onto
@@ -935,12 +1005,28 @@ def render_handler(
                 target_beat, max_wait_s,
             )
 
-        return {
+        result = {
             "captures_dir": str(captures_dir),
             "manifest_path": str(manifest_path),
             "manifest": manifest,
             "status": status,
         }
+        if soloed_chains:
+            # Also at the top level, not only inside the manifest. A render is
+            # async: the refusals raise and are impossible to miss, but a
+            # warning that lives only in `manifest.mixer_state` is three levels
+            # down in the one payload a caller skims. This is the render saying
+            # the rack it captured is not the rack as authored.
+            result["warnings"] = [
+                f"{len(soloed_chains)} soloed rack chain(s) during this "
+                f"render: " + "; ".join(soloed_chains)
+                + ". A soloed chain silences its SIBLING chains inside that "
+                "rack, so that rack captured as a fraction of itself. The "
+                "rest of the mix is unaffected and the render was not "
+                "refused; clear chain solo and re-render if the rack's full "
+                "sound was meant to be in this capture."
+            ]
+        return result
     except Exception as e:  # prawduct:allow prawduct/broad-except -- top-level render supervisor: write status.json=error then re-raise so a poller sees a terminal state for a render that raised (BUG3); the exception is NOT swallowed (re-raised, so the dispatcher still surfaces it)
         # Every catch logs context (project norm) before the terminal heartbeat —
         # the dispatcher surfaces the re-raised exception to the caller, but the

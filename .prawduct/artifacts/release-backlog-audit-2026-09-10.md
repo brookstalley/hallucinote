@@ -164,7 +164,8 @@ That is the whole fold-in list. One test.
   is invisible and `manifest.mixer_state` has no master row. But it is **not
   silent**, which is the bar pass 1 set for #550 ("ship the guard with the
   limitation named, or fix it — shipping it unmentioned is the bad option").
-  The limit is written in three release-visible places: `change-log.md:238-241`,
+  The limit is written in three release-visible places: the RELFOLD-0910
+  entry in `change-log.md` (2026-09-10, *“Two limits the read never had”*),
   `architecture.md` § *What is deliberately not modeled*, and
   `boundary-patterns.md:295` — plus `_soloed_chains`' own docstring at
   `render.py:316-322`. It is also **not the one-line fix it looks like**: Live's

@@ -2,7 +2,7 @@
 artifact: planless-scopes-disposition
 version: 1
 scope: RELFOLD-0910
-last_validated: 2026-09-10
+last_validated: 2026-09-11
 ---
 
 # Release-pending scopes with no build plan — why, per scope
@@ -29,22 +29,23 @@ travels with this sentence to drift away from the rows underneath it.
 | `governance-file-sizes` | Ceilings on governance-file growth. Crossed a policy surface (what the repo enforces about its own artifacts) and set a durable rule, which is medium work by the "state outliving the process" clause. | **No** — should have had a plan. |
 | `advisory-clearing` | Three post-sync advisories cleared in one pass: a merge driver added to `.gitattributes`, a bug report triaged, a norm re-affirmed by owner ruling. The norm re-affirmation is a governance decision, not a chore. | **No** — the ruling deserved a record of its own. |
 | `effort-s-burndown` | A batch of ten-plus `effort:S` backlog items, including a **BREAKING** change to `resolve_db_path` resolution semantics and a retired CLI command (`capture restamp`). Individually small; collectively a release-visible surface change. | **No** — a batch is not trivial because its parts are. |
-| `MYPY-COMPARE-0911` | One annotation widened in one module, one characterization test, no contract surface moved — trivial by the size heuristic, which builds and verifies without a plan. Added 2026-09-11, by the standard this very file sets. | **Yes** — correctly sized. |
+| `MYPY-COMPARE-0911` | CI caught a single `mypy` error on `develop` — `_master_disqualification`'s `verdict` annotation was narrower than the `Any` it built from a stored report's JSON — and one annotation was widened to the shape it actually reads. One file, one type, no contract surface moved. | **Yes** — correctly sized. |
+| `RELAUDIT-0911` | The release audit's second pass: one test (#553), a row in this file, and an audit artifact. Trivial by the size heuristic — nothing durable committed, no contract surface moved, the audit's own findings recorded in the artifact rather than in code. | **Yes** — correctly sized. |
 
 ## The pattern worth naming
 
-Three of the five are the same mistake: **work sized by the size of its
+Every **No** row above is the same mistake: **work sized by the size of its
 individual edits rather than by the size of what it changes.** A ceiling on
 governance files, an owner ruling on a norm, and a breaking change to path
 resolution are each a small diff and a durable commitment. The size heuristic
 in `methodology/building.md` already says this — "state outliving the process"
-is its medium trigger — and it was read as a file count three times.
+is its medium trigger — and it was read as a file count each time.
 
 Nothing is re-plannable now: the work shipped, and a build plan written after
 the fact records a process that did not happen. What the change-log carries for
 each of these is accurate and is the record that survives.
 
-**For the release:** all five ship. The warning is answered, not suppressed —
+**For the release:** every scope above ships. The warning is answered, not suppressed —
 `check-releasability` will keep emitting it, and that is correct, because the
 gate should not learn to stay quiet about planless work. This file is what a
 reader consults when it fires.

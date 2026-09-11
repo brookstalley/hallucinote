@@ -271,6 +271,12 @@ def _mixer_state(context: Any) -> list[dict[str, Any]]:
                 float(volume.value) if volume is not None
                 and getattr(volume, "value", None) is not None else None
             ),
+            # Built HERE, from the track this row already describes, rather
+            # than zipped on from a second walk of tracks-then-returns. Two
+            # enumerations of the same surfaces stay aligned by convention
+            # only, and `zip` drops the tail in silence — in a guard, that is a
+            # surface whose soloed chain nothing reports.
+            "soloed_chains": _soloed_chains(track),
         }
 
     def _read() -> list[dict[str, Any]]:
@@ -284,18 +290,8 @@ def _mixer_state(context: Any) -> list[dict[str, Any]]:
                 getattr(context.song, "return_tracks", ()) or (), start=1
             )
         )
-        for row, track in zip(rows, _surfaces(context)):
-            row["soloed_chains"] = _soloed_chains(track)
         return rows
     return context.run_on_main(_read)
-
-
-def _surfaces(context: Any) -> list[Any]:
-    """Tracks then returns, in the order ``_mixer_state`` builds its rows."""
-    return [
-        *context.song.tracks,
-        *(getattr(context.song, "return_tracks", ()) or ()),
-    ]
 
 
 def _soloed_chains(track: Any) -> list[dict[str, Any]]:

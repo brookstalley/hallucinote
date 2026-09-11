@@ -2060,3 +2060,44 @@ def test_a_parameter_left_at_its_default_is_still_caught(
     msg = str(excinfo.value)
     assert "'1 Frequency A' was 0.42, reads back 0.0" in msg
     assert "The journal is intact." in msg
+
+
+def test_a_failed_routing_read_is_alerted_and_not_called_unreadable(
+    conn, song, session, revoice, live, song_dir, capsys,
+):
+    """A routing READ that failed is not a device with no routing surface, and
+    must not borrow that message.
+
+    The two have the same consequence — no source in the journal — and
+    different causes, so they afford the operator different actions: a Live
+    that timed out can be retried, a Multiband Dynamics cannot. Before this the
+    failed read was silent, which is the worse of the two bugs.
+    """
+    armed = live.chains[("track", 3)][2]
+    armed.params["S/C On"] = _cont(1.0, "On")
+    live.fail[("ableton_device", "get_input_routing")] = "Live timed out"
+
+    result = _rebuild(conn, song, session, live, song_dir)
+
+    assert any("could not read the input routing" in a and "Live timed out" in a
+               for a in result.alerts), result.alerts
+    assert any("SIDECHAIN IS ARMED" in a for a in result.alerts), result.alerts
+    # NOT the no-surface message — that names a Live limitation this is not.
+    assert not any("sidechain source NOT machine-readable" in a
+                   for a in result.alerts), result.alerts
+
+
+def test_a_failed_routing_read_on_an_unarmed_device_still_says_so(
+    conn, song, session, revoice, live, song_dir,
+):
+    """Quieter, but not silent: the read failed, so if the device had a source
+    it is gone too. The alert says that without claiming the sidechain was on."""
+    live.fail[("ableton_device", "get_input_routing")] = "Live timed out"
+
+    result = _rebuild(conn, song, session, live, song_dir)
+
+    routing_alerts = [
+        a for a in result.alerts if "could not read the input routing" in a
+    ]
+    assert routing_alerts, result.alerts
+    assert not any("SIDECHAIN IS ARMED" in a for a in routing_alerts)

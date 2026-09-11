@@ -552,13 +552,35 @@ def capture_chain(
                 f"({p_err or 'no reason given'}) — its dialed "
                 f"state is NOT in the journal and will NOT be restored."
             )
-        r_ok, r_res, _ = _send(
+        r_ok, r_res, r_err = _send(
             send_fn, "ableton_device", "get_input_routing",
             {**flat, "device_index": idx},
         )
-        if r_ok and (r_res or {}).get("has_input_routing") is not False:
+        armed = sidechain_armed_in_probe(entry.get("parameters") or [])
+        if not r_ok:
+            # The READ failed — which is not the same thing as the device
+            # having no routing surface, and must not borrow that message.
+            # Either way the journal holds no source, so an armed device is
+            # about to lose one; the cause decides what the operator can do
+            # about it, so the cause is what gets named.
+            alerts.append(
+                f"chain-rebuild: could not read the input routing of "
+                f"{entry['class']!r} at position {entry['position']} on "
+                f"{parent_kind} #{parent_index} "
+                f"({r_err or 'no reason given'})"
+                + (
+                    " — this device's SIDECHAIN IS ARMED, so its source is "
+                    "not in the journal and the rebuild will destroy it. "
+                    "Re-run once Live answers, or note the source by hand "
+                    "before continuing."
+                    if armed else
+                    " — if it had one, it is not in the journal and will "
+                    "not be restored."
+                )
+            )
+        elif (r_res or {}).get("has_input_routing") is not False:
             entry["input_routing"] = r_res
-        elif sidechain_armed_in_probe(entry.get("parameters") or []):
+        elif armed:
             # The sidechain is ARMED and Live exposes no routing surface, so
             # there is nothing for the journal to hold and nothing for the
             # restore to put back. Every OTHER way this module can lose a

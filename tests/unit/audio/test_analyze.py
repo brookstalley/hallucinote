@@ -23,7 +23,16 @@ from hallucinote.audio import (
     TempoSegment,
     analyze_mix,
 )
-from hallucinote.audio.report import SCHEMA_VERSION
+from hallucinote.audio.analyze import _derive_findings
+from hallucinote.audio.reconcile import (
+    SumReconciliation,
+    master_is_not_stem_sum,
+)
+from hallucinote.audio.report import (
+    SCHEMA_VERSION,
+    LoudnessMetrics,
+    StemMetrics,
+)
 from hallucinote.audio.reverb import REVERB_TOLERANCE_FLOOR_S
 from hallucinote.paths import resolve_portable_path
 
@@ -1908,9 +1917,6 @@ def test_analyze_mix_distinguishes_a_missing_tempo_map_from_a_late_first_point(
     assert "before the song's first tempo point" in _reason(late)
 
 
-from hallucinote.audio.analyze import _derive_findings
-from hallucinote.audio.reconcile import SumReconciliation, master_is_not_stem_sum
-
 # --- the stem-sum residual reaches a finding -----------------------------
 #
 # Regression for the 2026-09-10 `alien` incident: `sum_reconciliation` was
@@ -1919,8 +1925,7 @@ from hallucinote.audio.reconcile import SumReconciliation, master_is_not_stem_su
 # master that was one stem.
 
 
-def _stem_metrics(track_id: str = "master") -> "StemMetrics":
-    from hallucinote.audio.report import LoudnessMetrics, StemMetrics
+def _stem_metrics(track_id: str = "master") -> StemMetrics:
     return StemMetrics(
         track_id=track_id,
         surface_kind="master" if track_id == "master" else "track",

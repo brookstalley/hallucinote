@@ -18,6 +18,7 @@ from __future__ import annotations
 import pytest
 
 from hallucinote.arrangement import Arrangement
+from hallucinote.meter import BarGrid
 from hallucinote.melody import (
     MelodicLine,
     MelodyFinding,
@@ -55,7 +56,8 @@ def _metal_no_time() -> list[dict]:
 
 def _analyze_one(layers, *, progression=None, beats_per_bar=4.0) -> MelodicLine:
     sec = SectionMelody(name="s", length_beats=16.0, layers=layers,
-                        progression=progression, beats_per_bar=beats_per_bar)
+                        progression=progression,
+                        bars=BarGrid.uniform(beats_per_bar, 16.0))
     return analyze_melody([sec], song_slug="t").sections[0].lines[0]
 
 
@@ -200,7 +202,7 @@ def test_arrangement_bridge_feeds_the_lens_end_to_end():
     inputs = arr.section_melody_inputs(melody_layers=["lead"])
     assert [s.name for s in inputs] == ["verse"]
     assert inputs[0].length_beats == 16.0           # 4 bars * 4 beats
-    assert inputs[0].beats_per_bar == 4.0
+    assert inputs[0].bars == BarGrid.uniform(4.0, 16.0)
     assert inputs[0].progression is prog            # melody's pitch reads harmony
 
     rep = analyze_melody(inputs, song_slug="bridge-song")

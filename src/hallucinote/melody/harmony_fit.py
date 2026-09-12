@@ -18,6 +18,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Literal, Sequence
 
+from hallucinote.meter import BarGrid
 from hallucinote.theory.model import Progression
 
 ToneClass = Literal["chord-tone", "scale-tone", "chromatic"]
@@ -79,24 +80,23 @@ def classify_tone(pc: int, chord_pcs: frozenset[int], mode_pcs: frozenset[int]) 
     return "chromatic"
 
 
-def _is_strong_beat(start_beats: float, beats_per_bar: float) -> bool:
-    """A strong metrical position: the downbeat (bar position 0) or the mid-bar
-    point (``beats_per_bar / 2``) — the canonical strong beats of common-time-like
-    meters. Tight tolerance: only genuinely on-beat onsets register."""
-    pos = start_beats % beats_per_bar
-    half = beats_per_bar / 2.0
-    return (
-        pos <= _STRONG_BEAT_TOLERANCE
-        or abs(pos - beats_per_bar) <= _STRONG_BEAT_TOLERANCE
-        or abs(pos - half) <= _STRONG_BEAT_TOLERANCE
-    )
+def _is_strong_beat(start_beats: float, bars: BarGrid) -> bool:
+    """A strong metrical position: the downbeat of the bar the onset falls in, or
+    that bar's own mid-point — the canonical strong beats of common-time-like
+    meters. Tight tolerance: only genuinely on-beat onsets register.
+
+    Read against THAT bar, not the song's first one. A `start % beats_per_bar`
+    read calls beat 4 of a 7/4 bar strong, because 4 divides the song's bar
+    length; in a 7/4 bar it is an off-beat, and the mid-point is 3.5.
+    """
+    return bars.is_strong_beat(start_beats, tolerance=_STRONG_BEAT_TOLERANCE)
 
 
 def analyze_harmony_fit(
     sequence: Sequence[tuple[float, int]],
     prog: Progression,
     *,
-    beats_per_bar: float,
+    bars: BarGrid,
 ) -> HarmonyFit:
     """Read an onset-ordered ``(start_beats, pitch)`` line against ``prog``.
 
@@ -136,7 +136,7 @@ def analyze_harmony_fit(
     # are chord tones (the tonal-metric coupling — §3.A1).
     strong_total = strong_chord = 0
     for (start, _pitch), cls in zip(seq, classes):
-        if _is_strong_beat(start, beats_per_bar):
+        if _is_strong_beat(start, bars):
             strong_total += 1
             if cls == "chord-tone":
                 strong_chord += 1

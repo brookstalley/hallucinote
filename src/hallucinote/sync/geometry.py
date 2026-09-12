@@ -3,13 +3,22 @@
 This is the leaf module both `sync.push` and `sync.pull` import from — it has
 NO imports from either package. It exists so:
 
-  - the bar/beat conversion math (forward bar→beats and inverse beats→bar) has
-    one home instead of being split awkwardly across the two package cores, and
+  - the bar/beat conversions the sync layer needs are adapted from ONE ruler in
+    one place — `hallucinote.meter`, which owns the arithmetic and is shared
+    with the authoring side — instead of being split across the two package
+    cores, and
   - the pull (inbound) path no longer depends on the push (outbound) path for
     envelope placement geometry (`_resolve_envelope_session_clip`,
     `_envelope_beat_range`, `_CoveringPlacement`). Those covering-placement
     helpers are direction-neutral: push uses them to write, pull uses them to
     read, and neither owns them.
+
+The bar/beat functions below are thin adapters: they take `time_signature_map`
+rows, hand them to `MeterMap`, and keep the row-shaped signatures their callers
+already use. The rule that bars before the first map point take that point's
+meter lives in `MeterMap` now, which is what makes the forward and inverse
+conversions true inverses on a map with no bar-1 row (they were not, before:
+the forward walk used the first point's meter and the inverse assumed 4/4).
 
 Keep this module free of imports from `push` / `pull` / their submodules so the
 sync package's import graph stays acyclic with geometry as the leaf.
@@ -21,17 +30,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from hallucinote.db import queries as Q
-
-# Live's default meter when a song has no `time_signature_map` rows.
-_DEFAULT_NUMERATOR = 4
-_DEFAULT_DENOMINATOR = 4
-
-
-def _beats_per_bar(numerator: int, denominator: int) -> float:
-    """Live counts a beat as a quarter note regardless of meter, so the beat
-    count per bar is `numerator * (4 / denominator)` (e.g., 6/8 -> 3 beats,
-    7/4 -> 7 beats, 4/4 -> 4 beats)."""
-    return numerator * (4.0 / denominator)
+from hallucinote.meter import MeterMap
 
 
 def _meter_at_bar(
@@ -43,15 +42,16 @@ def _meter_at_bar(
     Empty ts_points fall back to 4/4. Bars before the first map point use the
     first point's meter — matches Live's behavior for unmarked regions.
     """
-    if not ts_points:
-        return (_DEFAULT_NUMERATOR, _DEFAULT_DENOMINATOR)
-    chosen = ts_points[0]
-    for p in ts_points:
-        if p["start_bar"] <= bar:
-            chosen = p
-        else:
-            break
-    return (chosen["numerator"], chosen["denominator"])
+    return MeterMap.from_rows(ts_points).meter_at(bar)
+
+
+def _beats_per_bar_at(
+    bar: float,
+    ts_points: list[sqlite3.Row],
+) -> float:
+    """Beats in the bar at a 1-based bar position — the meter there, counted in
+    quarter notes."""
+    return MeterMap.from_rows(ts_points).beats_per_bar_at(bar)
 
 
 def _split_bar(
@@ -63,14 +63,7 @@ def _split_bar(
     Matches the `(bar: int 1-based, beat: float 0-based-within-bar)` shape that
     Live's MCP tools use throughout. `bar_pos=4.5` in 4/4 -> (4, 2.0).
     """
-    if bar_pos < 1.0:
-        raise ValueError(
-            f"bar_pos must be >= 1.0 per 1-based bar convention (got {bar_pos!r})"
-        )
-    bar_int = int(bar_pos)
-    frac = bar_pos - bar_int
-    num, den = _meter_at_bar(bar_pos, ts_points)
-    return bar_int, frac * _beats_per_bar(num, den)
+    return MeterMap.from_rows(ts_points).split_bar(bar_pos)
 
 
 def _position_bar_to_beats(
@@ -94,36 +87,7 @@ def _position_bar_to_beats(
       - ``bar_pos=17.0`` -> 64.0    (16 bars × 4 beats)
       - ``bar_pos=17.5`` -> 66.0    (16 bars × 4 + half-bar = 2 beats)
     """
-    if bar_pos < 1.0:
-        raise ValueError(
-            f"bar_pos must be >= 1.0 per 1-based bar convention (got {bar_pos!r})"
-        )
-    if not ts_points:
-        return (bar_pos - 1.0) * _beats_per_bar(
-            _DEFAULT_NUMERATOR, _DEFAULT_DENOMINATOR,
-        )
-
-    beats = 0.0
-    current_bar = 1.0
-    current_bpb = _beats_per_bar(
-        ts_points[0]["numerator"], ts_points[0]["denominator"],
-    )
-
-    for p in ts_points:
-        change_at = float(p["start_bar"])
-        if change_at <= current_bar:
-            # Already at or past this point's bar (the canonical case for
-            # ts_points[0] when its start_bar == 1.0). Adopt this point's
-            # meter; nothing to accumulate.
-            current_bpb = _beats_per_bar(p["numerator"], p["denominator"])
-            continue
-        if bar_pos < change_at:
-            return beats + (bar_pos - current_bar) * current_bpb
-        beats += (change_at - current_bar) * current_bpb
-        current_bar = change_at
-        current_bpb = _beats_per_bar(p["numerator"], p["denominator"])
-
-    return beats + (bar_pos - current_bar) * current_bpb
+    return MeterMap.from_rows(ts_points).beats_at(bar_pos)
 
 
 def uniform_bar_math_divergences(
@@ -132,30 +96,30 @@ def uniform_bar_math_divergences(
 ) -> list[tuple[float, float, float]]:
     """Which bar positions land somewhere else than uniform-meter math expects.
 
-    Two bar rulers exist in this codebase. Push converts an authored bar
-    position through the meter map (:func:`_position_bar_to_beats`), while
-    ``hallucinote.arrangement`` accumulates whole bars against ONE uniform
-    ``beats_per_bar`` and never reads the map. They agree everywhere until a
-    meter change, and only for positions AFTER that change do they part —
-    so the mere existence of a non-bar-1 row says nothing, and a detector
-    that fires on it cannot tell a correct odd-meter song from a broken one.
+    A HISTORICAL detector. `hallucinote.arrangement` no longer accumulates bars
+    against one `beats_per_bar` — it walks the same meter map push does — so no
+    writer produces a diverging position any more. What remains is rows written
+    BEFORE that: `bar_ruler='uniform'` rows, and rows predating the column
+    entirely, whose positions may encode the old arithmetic. This tells a
+    correct odd-meter song from one of those.
 
-    The uniform baseline here is the bar-1 meter, which is what a
-    ``beats_per_bar``-style author would have used for the whole song.
+    The uniform baseline is the bar-1 meter, which is what a `beats_per_bar`-style
+    author would have used for the whole song. Positions agree everywhere until a
+    meter change, and only for positions AFTER one do they part — so the mere
+    existence of a non-bar-1 row says nothing.
 
     Returns ``(bar_position, meter_map_beats, uniform_beats)`` for each
-    diverging position, in the order given. Empty means the two rulers agree
-    on every position passed — including the common case of a single-meter
-    song, and of a meter change that no placement sits after.
+    diverging position, in the order given. Empty means the two agree on every
+    position passed — including the common case of a single-meter song, and of a
+    meter change that no placement sits after.
     """
     if not ts_points:
         return []
-    uniform_bpb = _beats_per_bar(
-        ts_points[0]["numerator"], ts_points[0]["denominator"],
-    )
+    meter_map = MeterMap.from_rows(ts_points)
+    uniform_bpb = meter_map.points[0].beats_per_bar
     out: list[tuple[float, float, float]] = []
     for bar_pos in bar_positions:
-        mapped = _position_bar_to_beats(bar_pos, ts_points)
+        mapped = meter_map.beats_at(bar_pos)
         uniform = (bar_pos - 1.0) * uniform_bpb
         if abs(mapped - uniform) > 1e-9:
             out.append((bar_pos, mapped, uniform))
@@ -170,66 +134,20 @@ def _join_bar_beat(
     """Inverse of :func:`_split_bar`: combine a 1-based bar int + 0-based beat
     float into a fractional `position_bar` using the song's time-signature
     map. Empty `ts_points` defaults to 4/4."""
-    num, den = (4, 4)
-    if ts_points:
-        # Use the latest signature at-or-before this bar.
-        chosen = ts_points[0]
-        for p in ts_points:
-            if p["start_bar"] <= bar:
-                chosen = p
-            else:
-                break
-        num, den = (chosen["numerator"], chosen["denominator"])
-    return float(bar) + (float(beat) / _beats_per_bar(num, den))
+    return MeterMap.from_rows(ts_points).join_bar_beat(bar, beat)
 
 
 def _beats_to_position_bar(
     beats: float, ts_points: list[sqlite3.Row]
 ) -> float:
-    """Walk the time-signature map to convert a beats-from-song-start
-    position into a fractional bar position.
+    """Convert a beats-from-song-start position into a fractional bar position.
 
-    Wave M-5: the wire format for cue positions is now `position_beats`
-    (meter-agnostic, per principle 2). The DB stores `position_bar`. This
-    helper bridges. For songs with no ts_points the assumption is 4/4
-    throughout — same convention as the rest of the planner's bar math.
+    The wire format for cue positions is `position_beats` (meter-agnostic); the
+    DB stores `position_bar`. This bridges. True inverse of
+    :func:`_position_bar_to_beats`, including on a map whose earliest point is
+    not at bar 1 — both take that point's meter for the bars before it.
     """
-    if not ts_points:
-        # 4/4 fallback: 4 beats per bar, 1-based.
-        return 1.0 + (float(beats) / 4.0)
-    # Sort ts points by start_bar to walk forward.
-    points = sorted(ts_points, key=lambda r: float(r["start_bar"]))
-    # The first ts point should be at bar 1; if not, prepend a synthetic 4/4 at bar 1.
-    if float(points[0]["start_bar"]) > 1.0 + 1e-9:
-        first_bpb = 4.0  # 4/4 default for bars before the first explicit ts
-    else:
-        first_bpb = _beats_per_bar(
-            int(points[0]["numerator"]), int(points[0]["denominator"])
-        )
-
-    cumulative_beats = 0.0
-    current_bar = 1.0
-    current_bpb = first_bpb
-
-    for i, point in enumerate(points):
-        point_bar = float(point["start_bar"])
-        # Beats consumed up to this ts boundary (in the *previous* meter)
-        bars_in_section = point_bar - current_bar
-        beats_in_section = bars_in_section * current_bpb
-        if cumulative_beats + beats_in_section > float(beats) - 1e-9:
-            # Target beat is in this section.
-            remaining = float(beats) - cumulative_beats
-            return current_bar + (remaining / current_bpb)
-        # Cross into the next section.
-        cumulative_beats += beats_in_section
-        current_bar = point_bar
-        current_bpb = _beats_per_bar(
-            int(point["numerator"]), int(point["denominator"])
-        )
-
-    # Beyond the last ts point — extrapolate in the current meter.
-    remaining = float(beats) - cumulative_beats
-    return current_bar + (remaining / current_bpb)
+    return MeterMap.from_rows(ts_points).bar_at_beats(beats)
 
 
 @dataclass

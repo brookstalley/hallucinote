@@ -2712,3 +2712,39 @@ on every render.
 rack's chain, a rack's return chains, chain mute and chain volume, and the
 master strip — that last one tracked at **#552**, which explains why the master
 needs its own case rather than another row.
+
+
+## METER-0912 — a hand-added meter change relabels Live's ruler without moving content (2026-09-12) — PENDING
+
+Issue **#566**, its "design note — the assumption to confirm first". The engine now
+places every position through the song's meter map into absolute beats, and Live
+anchors arrangement content in beats, so a within-song meter change Live cannot be
+told about is a RULER loss and not a playback one. That is the whole argument for
+R1 — *the song plays correctly whether or not the user has added the meter change in
+Live by hand* — and it has never been asserted deliberately. `alien`'s evidence is
+consistent with it (a hand-placed 7/4 bar coexists with 58 placements
+`verify-arrangement` reads as faithful), which is not the same as having checked.
+
+**No fingerprint flip.** Nothing in `_FINGERPRINT_PATHS` changed; no re-vendor.
+
+**Why it does not block the branch.** Every position the engine authors is correct in
+absolute beats either way — that is what R2 delivered, and it does not rest on this.
+What rests on it is the advice in `plan_push_time_signature_map`'s alert, which tells
+the operator the hand-add is optional and changes nothing the engine writes. If this
+check fails, that sentence is what changes, not the placement code.
+
+**Two minutes, on a set already in the state that answers it** — `alien`'s, which
+carries the hand-placed 7/4 at bar 86.
+
+- [ ] **Read a downstream clip's absolute position before.** Pick any arrangement clip
+  after bar 86 and record its `position_beats` (not its bar number — the bar number is
+  the thing under test). `ableton_arrangement(action='list', ...)` reports it.
+- [ ] **Remove the 7/4 marker, then re-add it.** Delete the meter change at bar 86 in
+  Live's transport bar, note the same clip's `position_beats`, then add 7/4 at bar 86
+  and 4/4 at bar 87 back by hand and read it a third time. Pass = all three readings
+  are the same number, and only the BAR label moved. Fail = the clip's
+  `position_beats` changed, which would mean a meter change re-times content and the
+  hand-add is not safe to recommend.
+- [ ] **The bar label lands where the score says.** With the markers back, the clip
+  that the DB places at bar 89 reads as bar 89 in Live, not 89.75. This is the visible
+  half of what #566 bought and the one an operator will actually notice.

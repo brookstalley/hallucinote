@@ -51,21 +51,37 @@ three kinds, and knowing which kind a candidate is tells you how to model it:
 
 1. **Authored structure intents** — the song's *bones*: deliberate, largely-
    orthogonal decisions the composer authors. Today: **form/sections**, **energy**
-   (the intensity intent), **harmony** (key/mode/progression). Candidate:
-   **meter-feel**, which on inspection (ARR-4M3T, 2026-06-02) is **two
+   (the intensity intent), **harmony** (key/mode/progression), and
+   **literal meter** (the song's time-signature map). The last of those is one
+   half of **meter-feel**, which on inspection (ARR-4M3T, 2026-06-02) is **two
    sub-dimensions**: (i) **felt pulse level** — half/double-time, compound, clave,
    hemiola; the felt subdivision, *distinct from* time-signature and tempo (the
    half→double-time gear-shift is already a first-class *discontinuity* — see the
    derivative section); and (ii) **literal meter / time-signature** — the metric
    grid's shape per section/bar (5/4, 7/8, a borrowed 3/4 bar that shortens the
-   song). Both stay **candidates** (not built): promote (ii) to a built structure
-   intent — carried on the arrangement beside energy/harmony, with `plan()` placing
-   non-4/4 sections beat-accurately and the read-side lenses becoming meter-aware —
-   when a **second** odd-meter song forces it, OR when the user accepts the literal
-   steal's blast radius (every absolute-beat consumer) over the shipped
-   length-preserving **early-slam** interim (recorded in the ARR-4M3T backlog entry,
-   the source of truth for its shipped status). swing stays ∈ performance; the
-   metric grid ∈ meter-feel(ii). Each is a ruler + (ideally) a read-side lens.
+   song).
+
+   **(ii) is BUILT** (#566, 2026-09-12). The trigger this entry named — a
+   **second** odd-meter song — was `alien`, whose one 7/4 bar at 86 put an
+   instrument in the wrong place: the arrangement accumulated bars against one
+   `beats_per_bar` while push resolved them through the meter map, and the two
+   disagreed at every position after the change. The song was rescued by
+   spelling its downstream sections as `bar N + 0.75` against a 4/4 map — a
+   workaround that proved the divergence was real and could not be authored
+   away. So the deliverable was never "build a meter system": the DB has
+   accepted an arbitrary map since #221 and push has always read it. It was
+   **retiring the second ruler**. `hallucinote.arrangement` now declares the
+   song's meter (`Arrangement(meter=…)`, `meter_change(at_bar=…)`, or
+   `section(..., meter=…)`), places every section by walking it, writes it into
+   `time_signature_map`, and refuses to materialize onto a song whose map says
+   something else. `bar_ruler="uniform"` survives only as provenance on rows
+   written before this. Both sides landed together per the BOTH-SIDES rule
+   below: the read-side strong-beat grade is per-bar, so a 13/16 bar in a 3/4
+   song is graded as 13/16.
+
+   (i) **felt pulse level** stays a **candidate**. swing stays ∈ performance;
+   the metric grid ∈ meter-feel(ii). Each is a ruler + (ideally) a read-side
+   lens.
 2. **Realization layers** — *how the bones are rendered*. **Derived from** the
    structure intents (+ a genre profile + deliberate overrides), NOT authored as
    competing dials. **Performance** (microtiming, dynamics, articulation) is the
@@ -180,8 +196,8 @@ they are played). The decision:
   friction-driven follow-ons, tracked (ARR-8P5K (b)–(d)).
 - **swing vs meter (the boundary):** swing is a *performance* microtiming parameter
   (it deviates *from* the grid); the metric grid it deviates from is *meter-feel(ii)*,
-  the literal-meter sub-dimension (a candidate structure intent — see the two-sub-dim
-  split in the taxonomy above). Clean split.
+  the literal-meter sub-dimension (a built structure intent since #566 — see the
+  two-sub-dim split in the taxonomy above). Clean split.
 
 ### SCOPE BOUNDARY — performance is METERED-only (a documented limitation, not a flaw)
 

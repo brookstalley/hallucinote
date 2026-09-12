@@ -76,6 +76,7 @@ from hallucinote.melody.intervals import (
 )
 from hallucinote.melody.profile import Appetite, MelodicProfile
 from hallucinote.melody.segmentation import per_phrase_contours as _per_phrase_contours
+from hallucinote.meter import BarGrid
 from hallucinote.theory.model import Progression
 
 NoteDict = dict[str, Any]
@@ -322,7 +323,9 @@ class SectionMelody:
     analyze — drums and chordal pads are NOT melodic lines; ``None`` analyzes every
     layer. ``progression=None`` means no declared harmony — the harmony-fit read is
     skipped (``harmony`` reports ``None``), a graceful degradation to the contour /
-    interval substrate. ``beats_per_bar`` feeds the strong-beat read.
+    interval substrate. ``bars`` is the section's bar grid and feeds the
+    strong-beat read; it defaults to 4/4 across the section's length, which is
+    what the single ``beats_per_bar`` it replaced could say.
 
     ``profiles`` (phase 2b) maps a layer NAME to its declared ``MelodicProfile`` —
     the authoring side the lens grades each line AGAINST (design §4, Decision-Record
@@ -336,8 +339,15 @@ class SectionMelody:
     layers: Mapping[str, Sequence[NoteDict]]
     progression: Progression | None = None
     melody_layers: tuple[str, ...] | None = None
-    beats_per_bar: float = _DEFAULT_BEATS_PER_BAR
+    bars: BarGrid | None = None
     profiles: Mapping[str, MelodicProfile] | None = None
+
+    @property
+    def bar_grid(self) -> BarGrid:
+        """The declared grid, or the 4/4 one a section that declared none means."""
+        if self.bars is not None:
+            return self.bars
+        return BarGrid.uniform(_DEFAULT_BEATS_PER_BAR, self.length_beats)
 
 
 def _extract_melodic_line(notes: Sequence[NoteDict]) -> list[NoteDict]:
@@ -530,7 +540,7 @@ def _line(
     harmony = None
     if sec.progression is not None and seq:
         harmony = analyze_harmony_fit(
-            seq, sec.progression, beats_per_bar=sec.beats_per_bar
+            seq, sec.progression, bars=sec.bar_grid
         )
 
     shape = contour_shape(pitches)
@@ -912,7 +922,7 @@ def _with_profiles(
         layers=sec.layers,
         progression=sec.progression,
         melody_layers=sec.melody_layers,
-        beats_per_bar=sec.beats_per_bar,
+        bars=sec.bars,
         profiles=profiles,
     )
 

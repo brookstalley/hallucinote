@@ -116,9 +116,33 @@ def plan_push_time_signature_map(
             f"ableton_automation has no 'song_signature' target_kind "
             f"(see hallucinote_mcp/.../guides/gaps.md); "
             f"{len(non_bar_1)} non-bar-1 time_signature_map rows skipped. "
-            f"The DB still holds the song's true meter — this is a "
-            f"projection loss, not a lost decision. Live's ruler will read "
-            f"{meter_1} for the whole song, so the felt meter has to live in "
-            f"note placement and accent."
+            f"WHAT IS PUSHED IS UNAFFECTED: every position this engine "
+            f"authors is resolved through the meter map into absolute beats, "
+            f"which is the unit Live anchors arrangement content in, so the "
+            f"score's placements do not depend on Live's ruler. What is lost "
+            f"IS that ruler — Live will number bars as {meter_1} throughout, "
+            f"and its metronome will follow that. You can add these by hand in "
+            f"Live to make the ruler match: {_hand_add_list(non_bar_1)}. "
+            f"UNVERIFIED, so do it on a copy first: whether inserting a meter "
+            f"change leaves content already placed in the set where it is has "
+            f"not been checked against a real set. Check it in two seconds — "
+            f"note a downstream clip's position_beats, add the change, read it "
+            f"again; the number must not move."
         )
     return plan
+
+
+def _hand_add_list(rows: list[sqlite3.Row]) -> str:
+    """The non-bar-1 meter points as an operator's to-do list, in bar order.
+
+    Capped: a song with a meter change every few bars would otherwise turn one
+    alert into a wall, and the count is already stated in the clause above.
+    """
+    points = sorted(
+        (float(r["start_bar"]), int(r["numerator"]), int(r["denominator"]))
+        for r in rows
+    )
+    shown = [f"bar {bar:g} -> {num}/{den}" for bar, num, den in points[:8]]
+    if len(points) <= 8:
+        return ", ".join(shown)
+    return ", ".join(shown) + f", and {len(points) - 8} more"

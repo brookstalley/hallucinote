@@ -223,10 +223,13 @@ below was lifted by TMP-7B3X: `add_time_signature_point` /
 Live" statement moved to `plan_push_time_signature_map`, which pushes the bar-1
 row and raises a push-report alert about the rest. The `/song-new` exit criterion is satisfiable for a
 song with a within-song meter change, and the meter row resolves DECIDED rather
-than UNDECIDED-owned-by-the-engine. What remains open is the projection half
-(TMP-4J6Q — how a declared map materializes in Live) and the authoring half
-(ARR-4M3T — meter-aware `Arrangement.plan()` and lenses). The rest of this
-section is preserved as the reasoning that produced the ruling.
+than UNDECIDED-owned-by-the-engine. **The authoring half closed too** (#566,
+2026-09-12): `hallucinote.arrangement` declares the song's meter and places every
+section by walking it, and the read-side lenses grade each bar against its own
+meter, so nothing downstream of the answer still assumes one `beats_per_bar`.
+What remains open is the projection half alone (TMP-4J6Q / #321 — how a declared
+map materializes in Live), which is platform-capped. The rest of this section is
+preserved as the reasoning that produced the ruling.
 
 **At the time of writing, the model could not record the answer.**
 `M.add_time_signature_point` raised for any `start_bar > 1.0`:

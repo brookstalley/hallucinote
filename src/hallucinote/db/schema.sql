@@ -178,17 +178,19 @@ CREATE TABLE IF NOT EXISTS arrangement_clips (
     clip_id                     TEXT NOT NULL REFERENCES clips(id) ON DELETE CASCADE,
     start_bar                   REAL NOT NULL CHECK (start_bar >= 1.0),
     end_bar                     REAL NOT NULL,
-    -- Which BAR RULER this row's position was authored against (#496). Two
-    -- rulers exist: `uniform` — bars accumulated against ONE beats_per_bar by
-    -- `hallucinote.arrangement`, which never reads `time_signature_map`; and
-    -- `map` — a position authored directly against the meter map, which is how
-    -- push resolves every bar position. They agree until a meter change. NULL
-    -- means the provenance was never recorded (a row written before this
-    -- column); the push planner reports that as unrecorded rather than
-    -- guessing. `map` is the mutator default, so a writer that knows nothing
-    -- about this column is correct by construction; only `Arrangement.materialize`
-    -- opts into `uniform`. Keep this CHECK byte-identical to connection.py's
-    -- _ADDED_COLUMNS entry — the schema canary compares column presence only.
+    -- Which BAR RULER this row's position was authored against (#496). `map` —
+    -- resolved through `time_signature_map`, which is how push resolves every
+    -- bar position and, since #566, how `hallucinote.arrangement` places every
+    -- section too. It is the mutator default, so every writer in the tree is
+    -- correct by construction. `uniform` — bars accumulated against ONE
+    -- beats_per_bar, never reading the map; the two agree until a meter change.
+    -- Nothing authors `uniform` any more: it is PROVENANCE on rows written
+    -- before #566, and the push planner uses it to tell a correct odd-meter
+    -- song from one those rows misplaced. NULL means the provenance was never
+    -- recorded (a row written before this column); the planner reports that as
+    -- unrecorded rather than guessing. Keep this CHECK byte-identical to
+    -- connection.py's _ADDED_COLUMNS entry — the schema canary compares column
+    -- presence only.
     bar_ruler                   TEXT CHECK (bar_ruler IS NULL OR bar_ruler IN ('uniform','map')),
     CHECK (end_bar > start_bar)
 );

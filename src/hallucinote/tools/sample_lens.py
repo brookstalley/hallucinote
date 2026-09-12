@@ -72,8 +72,8 @@ from hallucinote.features.segments import (
 from hallucinote.features.types import FeatureEvent, FeatureStream, Segment
 from hallucinote.paths import resolve_audio_path, same_file_path
 from hallucinote.sync.geometry import (
+    _beats_per_bar_at,
     _beats_to_position_bar,
-    _meter_at_bar,
     _position_bar_to_beats,
     _split_bar,
 )
@@ -410,11 +410,6 @@ def bar_beat_label(beats: float, meter_rows: Sequence[sqlite3.Row]) -> str:
     return f"bar {bar} beat {1.0 + within:.2f}"
 
 
-def _beats_per_bar_at(bar: float, meter_rows: Sequence[sqlite3.Row]) -> float:
-    num, den = _meter_at_bar(bar, list(meter_rows))
-    return num * (4.0 / den)
-
-
 def bar_strip(
     placement: Placement,
     phrases: Sequence[tuple[float, float]],
@@ -432,7 +427,7 @@ def bar_strip(
     rows: list[str] = []
     for bar in range(first_bar, last_bar + 1):
         bar_start = _position_bar_to_beats(float(bar), list(meter_rows))
-        bpb = _beats_per_bar_at(float(bar), meter_rows)
+        bpb = _beats_per_bar_at(float(bar), list(meter_rows))
         cells: list[str] = []
         n_beats = int(round(bpb))
         for beat_i in range(n_beats):

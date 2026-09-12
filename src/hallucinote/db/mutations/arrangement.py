@@ -18,18 +18,19 @@ from ._core import (
 
 # Which bar ruler a position was authored against (#496).
 #
+# `map` — the position was resolved through the song's `time_signature_map`,
+# which is how push resolves every bar position and, since #566, how
+# `hallucinote.arrangement` places every section. It is the DEFAULT, and every
+# writer in the tree now takes it, so a writer that has never heard of this
+# column is correct by construction.
+#
 # `uniform` — the position came from accumulating whole bars against ONE
-# `beats_per_bar`, which is what `hallucinote.arrangement` does; it never reads
-# the song's `time_signature_map`. `map` — the position was authored directly
-# against the map, which is how push resolves every bar position.
-#
-# The two agree on every bar before the first meter change and part after it.
-# Recording which one wrote a row is the whole point: without it, a deliberate
-# 7/4 song and a `build.py` that did uniform bar math past a meter change are
-# indistinguishable at push time, so the divergence alert had to fire on both.
-#
-# `map` is the DEFAULT so a writer that has never heard of this column is
-# correct by construction; the one component doing uniform math opts out.
+# `beats_per_bar`, never reading the map. **Nothing authors this any more.** It
+# is PROVENANCE on rows written before #566, and it is why the column still
+# earns its keep: the two rulers agree on every bar before the first meter
+# change and part after it, so without the stamp a deliberate 7/4 song and an
+# old row that did uniform bar math past a meter change are indistinguishable
+# at push time, and the divergence alert would have to fire on both.
 BAR_RULERS: frozenset[str] = frozenset({"uniform", "map"})
 DEFAULT_BAR_RULER = "map"
 
@@ -43,9 +44,10 @@ def _validate_bar_ruler(bar_ruler: str) -> str:
     if bar_ruler not in BAR_RULERS:
         raise ValueError(
             f"bar_ruler must be one of {sorted(BAR_RULERS)}, got {bar_ruler!r}. "
-            "'uniform' means the position was accumulated against a single "
-            "beats_per_bar; 'map' means it was authored against the song's "
-            "time_signature_map."
+            "'map' means the position was resolved through the song's "
+            "time_signature_map, which is what every writer now does; "
+            "'uniform' means it was accumulated against a single beats_per_bar, "
+            "which only rows written before #566 carry."
         )
     return bar_ruler
 

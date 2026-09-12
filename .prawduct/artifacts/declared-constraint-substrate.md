@@ -107,7 +107,7 @@ class ConstraintCtx:
     section: str
     start_bar: float
     end_bar: float
-    beats_per_bar: float
+    bars: "BarGrid"          # NOT a scalar: a 7/4 bar's length is per-bar (#566)
     key_pc: int
     mode: str
     progression: "Progression | None"
@@ -282,7 +282,9 @@ since you still want two *differing* uses before freezing the interface.
 ## Open questions / risks
 
 - **`ConstraintCtx` surface.** What exactly must a predicate see? First draft: section
-  name + bar span + `beats_per_bar` + `key_pc`/`mode`/`progression` + `bar_of()`. Cross-
+  name + bar span + a `BarGrid` (#566 retired the `beats_per_bar` scalar: a scalar cannot
+  say whether 3 beats is 3/4 or 6/8, and a predicate reading bars must ask the grid which
+  bar a note is in) + `key_pc`/`mode`/`progression` + `bar_of()`. Cross-
   section predicates (e.g. "this motif's pitch set must differ from the last chorus's")
   may need a song-level variant, `analyze_constraints` over the whole arrangement rather
   than per-section. Decide from a second, *deliberately relational* constraint (see the

@@ -353,14 +353,17 @@ the meter genuinely **is** (*"full 7-rhythm, or 4-then-3?"* is a real musical
 question) and never offer "we'll represent it as a global 1/4" as a creative
 option.
 
-The DB records that meter, within-song changes included — one
-`M.add_time_signature_point` row per change. **What is still open** is the
-projection: only the bar-1 row reaches Live (Live 12.4's MCP has no
-`song_signature` automation target), so Live's ruler shows one meter for the
-whole song and push alerts on the rest. The meter has to be *felt* — bar-scaled
-generators, within-bar accent groupings — not read off the grid. Tracked as
-**TMP-4J6Q** (how a declared meter map materializes in Live) and **ARR-4M3T** (a
-meter-aware `Arrangement.plan()` and lenses).
+The model records that meter, within-song changes included, and **places
+against it**: declare it on the arrangement (`Arrangement(meter=…)`,
+`meter_change(at_bar=…)`, or `section(..., meter=…)`) and every section, clip,
+cue and lens read resolves through the song's meter map — the same walk push
+uses. **What is still open** is only the projection: Live 12.4's MCP has no
+`song_signature` automation target, so only the bar-1 row reaches Live and its
+ruler numbers the whole song in one meter. That costs bar numbering and the
+metronome, not playback — positions are authored in absolute beats, which is
+what Live anchors content in — and the push alert names each change so the
+operator can add it by hand if they want the ruler to match. Tracked as
+**TMP-4J6Q** / **#321**.
 
 → Full design, including the worked examples and what is deliberately not built:
 [elicitation-and-stage-exit-criteria.md](../.prawduct/artifacts/elicitation-and-stage-exit-criteria.md)

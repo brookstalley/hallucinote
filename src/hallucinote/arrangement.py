@@ -1,9 +1,14 @@
 """hallucinote.arrangement — the song-structure layer (rulers, not stamps).
 
 Carries arrangement BOOKKEEPING — section identity, ordering, sequential
-bar-range assignment, layer presence, and clip / placement / section / cue
-emission — so the composer spends attention on the music, not the plumbing.
-See `.prawduct/artifacts/arrangement-model.md` for the design foundation.
+bar-range assignment, the song's METER, layer presence, and clip / placement /
+section / cue emission — so the composer spends attention on the music, not the
+plumbing. See `.prawduct/artifacts/arrangement-model.md` for the design
+foundation.
+
+Bar positions resolve through `hallucinote.meter` — the same ruler
+`sync.geometry` resolves push's positions through. There is exactly one bar
+ruler in this tree, and this module declares the map it reads.
 
 Primitives:
 
@@ -32,9 +37,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Sequence
 
-from hallucinote.db import mutations as M
+from hallucinote.db import mutations as M, queries as Q
 from hallucinote.melody.lens import SectionMelody
 from hallucinote.melody.profile import MelodicProfile
+from hallucinote.meter import MeterMap, MeterPoint, parse_meter
 from hallucinote.performance.lens import SectionPerf
 from hallucinote.recurrence.lens import SectionRecurrenceInput
 from hallucinote.theory.lint import SectionLint
@@ -81,6 +87,18 @@ class PlacedSection:
     for a section that declared no harmony). ``key_pc``/``mode`` are carried
     INDEPENDENTLY of ``progression`` so a modal/static section with no chord
     changes can still declare (and be linted against) a mode.
+
+    ``start_beat`` and ``length_beats`` are the section's position and span in
+    absolute beats, resolved through the song's meter map — ``start_beat``
+    measured from the arrangement's own first bar (``plan(start_bar=…)``). They
+    are carried rather than recomputed because bar arithmetic against a single
+    ``beats_per_bar`` is exactly what #566 retired: a consumer that multiplies
+    bars by a scalar is wrong for every bar after a meter change.
+
+    Both are **required**, deliberately. They are derived facts that must agree
+    with ``start_bar``/``end_bar``, so there is no neutral default — a zero
+    agrees with no bar range at all, and the lens bridges read them rather than
+    recompute, so a section constructed with one would grade silently wrong.
     """
 
     name: str
@@ -90,6 +108,8 @@ class PlacedSection:
     energy: float
     genre: str | None
     layers: Layers
+    start_beat: float
+    length_beats: float
     key_pc: int | None = None
     mode: Mode | None = None
     progression: Progression | None = None
@@ -106,6 +126,7 @@ class _SectionSpec:
     key: str | None = None
     mode: str | None = None
     progression: Progression | str | None = None  # a Progression, "inherit", or None
+    meter: str | None = None  # sugar for a meter point at this section's start bar
 
 
 class Arrangement:
@@ -116,28 +137,106 @@ class Arrangement:
     (0-based within the section); a track absent from the map simply doesn't
     play that section (e.g. organ tacet in the metal sections).
 
-    **Single meter only.** Bar arithmetic here multiplies by ONE
-    ``beats_per_bar`` for the whole arrangement. The DB, meanwhile, records a
-    song's real ``time_signature_map`` and push converts bar positions through
-    it, so for a song with a within-song meter change the two disagree at every
-    position after the change: push's number gains the extra beats that every bar
-    after the change adds. In a 4/4 song that turns 7/4 at bar 9, this class puts
-    bar 13 at beat 48 and push puts it at 60. Push detects and reports the
-    divergence when it materializes the arrangement, but cannot repair it.
+    **The arrangement is where a song declares its meter.** Every position this
+    class computes is resolved through a :class:`~hallucinote.meter.MeterMap` —
+    the same ruler push resolves bar positions through — so a section boundary
+    after a meter change lands on the beat push will put it on. There is no
+    second ruler and no ``beats_per_bar`` accumulation.
 
-    So: for a multi-meter song, do not rely on this class's bar accumulation
-    past the first meter change. Author those placements directly (the
-    ``add_arrangement_clip`` / ``create_section`` mutators take float bars and
-    push resolves them through the map), or keep the song single-meter and
-    carry the odd groupings as accent instead. Making this class meter-aware
-    is tracked as ARR-4M3T.
+    Meter is declared in one of three ways, which differ in **which bar they
+    name**:
+
+    - ``Arrangement(meter="7/4")`` — the meter from bar 1 (``beats_per_bar=7.0``
+      is the scalar spelling of the same thing, kept for songs that use it; a
+      scalar cannot tell 6/8 from 3/4, so declare ``"6/8"`` when you mean it).
+    - ``meter_change(at_bar=86, meter="7/4")`` — a point at an **absolute song
+      bar**, wherever the layout starts.
+    - ``section(..., meter="7/4")`` — sugar for a point at **that section's own
+      start bar**, and nothing more. Under ``plan(start_bar=17)`` the section
+      moves and its meter point moves with it; an ``at_bar=`` point does not.
+
+    Those two coordinate systems agree whenever the layout starts at bar 1,
+    which is every song in the tree. Mixing them under a non-1 ``start_bar`` is
+    the case to be careful with: ``meter_map`` prints the bar-1 layout, so read
+    ``meter_map_at(start_bar)`` — what ``plan()`` and ``materialize()`` actually
+    use — when the layout starts anywhere else.
+
+    **A meter persists until the next point.** That is what a map means, and a
+    section does not own a meter or restore the previous one when it ends. So a
+    single borrowed bar is two points, not one::
+
+        arr.meter_change(at_bar=86, meter="7/4")   # the bar that breathes
+        arr.meter_change(at_bar=87, meter="4/4")   # and back
+
+    ``arr.meter_map.describe()`` prints what you actually declared.
     """
 
-    def __init__(self, *, beats_per_bar: float = 4.0) -> None:
+    def __init__(
+        self,
+        *,
+        beats_per_bar: float | None = None,
+        meter: str | None = None,
+    ) -> None:
+        if beats_per_bar is not None and meter is not None:
+            raise ValueError(
+                "declare the bar-1 meter once: pass meter='7/4' or "
+                "beats_per_bar=7.0, not both"
+            )
         self._specs: list[_SectionSpec] = []
         self.motifs: dict[str, Motif] = {}
-        self.beats_per_bar = beats_per_bar
+        if meter is not None:
+            self._meter_map = MeterMap.parse(meter)
+        elif beats_per_bar is not None:
+            self._meter_map = MeterMap.uniform(beats_per_bar)
+        else:
+            self._meter_map = MeterMap.parse("4/4")
         self._harmonic_plan: Progression | None = None
+
+    # -- meter (the song's one ruler) --------------------------------------
+
+    def meter_map_at(self, start_bar: int = 1) -> MeterMap:
+        """The declared meter for a plan laid out from ``start_bar``.
+
+        Section bar NUMBERS never depended on meter — they accumulate whole
+        bars — so the per-section ``meter=`` sugar resolves to a point at the
+        section's start bar without needing the map it contributes to.
+        """
+        resolved = self._meter_map
+        bar = start_bar
+        for spec in self._specs:
+            if spec.meter is not None:
+                numerator, denominator = parse_meter(spec.meter)
+                resolved = resolved.with_point(
+                    MeterPoint(float(bar), numerator, denominator)
+                )
+            bar += spec.bars
+        return resolved
+
+    @property
+    def meter_map(self) -> MeterMap:
+        """The declared meter of the canonical layout (from bar 1), per-section
+        sugar included. Sugar that is not inspectable is how a second ruler
+        hides, so this is a property and not a private field."""
+        return self.meter_map_at()
+
+    @property
+    def beats_per_bar(self) -> float:
+        """Beats in bar 1. The song's meter is :attr:`meter_map`; this is the
+        bar-1 reading of it, and it is wrong for any bar after a meter change —
+        never place against it."""
+        return self._meter_map.beats_per_bar_at(1.0)
+
+    def meter_change(self, *, at_bar: float, meter: str) -> "Arrangement":
+        """Declare a meter point: from ``at_bar`` on, the song is in ``meter``.
+
+        Returns self for chaining. Declaring one bar twice with different
+        meters raises — the composer has said two things about one bar.
+        """
+        numerator, denominator = parse_meter(meter)
+        self._meter_map = self._meter_map.with_point(
+            MeterPoint(float(at_bar), numerator, denominator)
+        )
+        return self
 
     # -- motifs (referenceable atoms) --------------------------------------
 
@@ -170,6 +269,7 @@ class Arrangement:
         key: str | None = None,
         mode: str | None = None,
         progression: Progression | str | None = None,
+        meter: str | None = None,
     ) -> "Arrangement":
         """Append a section. Returns self for chaining.
 
@@ -187,6 +287,12 @@ class Arrangement:
         :meth:`harmonic_plan`. ``key``/``mode`` default from the progression when
         present, and can be set independently for a modal section with no chord
         changes. The composer authors the harmony; the model only carries it.
+
+        ``meter`` (e.g. ``"7/4"``) is sugar for :meth:`meter_change` at this
+        section's start bar — and nothing more. It does NOT revert at the
+        section's end: a meter persists until the next point, because that is
+        what the song's meter map means. A section that follows an odd one and
+        should be in 4/4 says so.
         """
         if bars <= 0:
             raise ValueError(f"section {name!r}: bars must be > 0, got {bars}")
@@ -195,6 +301,8 @@ class Arrangement:
                 f"section {name!r}: progression string must be 'inherit', got "
                 f"{progression!r}"
             )
+        if meter is not None:
+            parse_meter(meter)  # fail at the call site, not at plan time
         self._specs.append(
             _SectionSpec(
                 name=name,
@@ -205,6 +313,7 @@ class Arrangement:
                 key=key,
                 mode=mode,
                 progression=progression,
+                meter=meter,
                 layers={t: _copy_notes(ns) for t, ns in layers.items()},
             )
         )
@@ -222,13 +331,23 @@ class Arrangement:
     # -- planning (pure) ---------------------------------------------------
 
     def plan(self, *, start_bar: int = 1) -> list[PlacedSection]:
-        """Assign each section its bar range sequentially and resolve its
-        harmony. Pure — no DB."""
+        """Assign each section its bar range and resolve its harmony and its
+        position in absolute beats. Pure — no DB.
+
+        Bar numbers accumulate (a 16-bar section starting at bar 13 ends at 29
+        whatever the meter); BEATS are resolved through the song's meter map, so
+        a boundary after a meter change lands where push puts it rather than
+        where uniform bar math would.
+        """
+        meter_map = self.meter_map_at(start_bar)
+        origin_beats = meter_map.beats_at(float(start_bar))
         placed: list[PlacedSection] = []
         bar = start_bar
         for s in self._specs:
-            section_len_beats = s.bars * self.beats_per_bar
-            offset_beats = (bar - start_bar) * self.beats_per_bar
+            end_bar = bar + s.bars
+            start_beats = meter_map.beats_at(float(bar))
+            section_len_beats = meter_map.beats_at(float(end_bar)) - start_beats
+            offset_beats = start_beats - origin_beats
             prog = self._resolve_progression(s, offset_beats, section_len_beats)
             key_pc, mode_obj = self._resolve_key_mode(s, prog)
             placed.append(
@@ -236,16 +355,18 @@ class Arrangement:
                     name=s.name,
                     function=s.function,
                     start_bar=bar,
-                    end_bar=bar + s.bars,
+                    end_bar=end_bar,
                     energy=s.energy,
                     genre=s.genre,
                     layers=s.layers,
+                    start_beat=offset_beats,
+                    length_beats=section_len_beats,
                     key_pc=key_pc,
                     mode=mode_obj,
                     progression=prog,
                 )
             )
-            bar += s.bars
+            bar = end_bar
         return placed
 
     def _resolve_progression(
@@ -316,7 +437,7 @@ class Arrangement:
         return [
             SectionLint(
                 name=p.name,
-                length_beats=(p.end_bar - p.start_bar) * self.beats_per_bar,
+                length_beats=p.length_beats,
                 progression=p.progression,
                 layers=p.layers,
                 harmony_layers=layers_tuple,
@@ -333,7 +454,7 @@ class Arrangement:
         return [
             SectionPerf(
                 name=p.name,
-                length_beats=(p.end_bar - p.start_bar) * self.beats_per_bar,
+                length_beats=p.length_beats,
                 layers=p.layers,
             )
             for p in self.plan(start_bar=start_bar)
@@ -351,7 +472,9 @@ class Arrangement:
         ``section_perf_inputs``). ``melody_layers`` names the monophonic melodic
         lines (lead / vocal / riff) to analyze — exclude drums and chordal pads;
         ``None`` analyzes every layer. Carries the section's ``progression``
-        (melody's pitch reads harmony) + ``beats_per_bar`` (the strong-beat read).
+        (melody's pitch reads harmony) + its ``bars`` grid — the strong-beat
+        read, per bar, so a section spanning a meter change grades each bar
+        against its own meter rather than the song's opening one.
 
         ``profiles`` (phase 2b) is the song's declared ``{layer_name:
         MelodicProfile}`` map, carried onto every section so the lens grades each
@@ -360,14 +483,15 @@ class Arrangement:
         it rides through here as a passthrough, not a stored field. Feed the result
         to ``melody.lens.analyze_melody``."""
         layers_tuple = tuple(melody_layers) if melody_layers is not None else None
+        meter_map = self.meter_map_at(start_bar)
         return [
             SectionMelody(
                 name=p.name,
-                length_beats=(p.end_bar - p.start_bar) * self.beats_per_bar,
+                length_beats=p.length_beats,
                 layers=p.layers,
                 progression=p.progression,
                 melody_layers=layers_tuple,
-                beats_per_bar=self.beats_per_bar,
+                bars=meter_map.grid_for(p.start_bar, p.end_bar),
                 profiles=profiles,
             )
             for p in self.plan(start_bar=start_bar)
@@ -391,9 +515,9 @@ class Arrangement:
         return [
             SectionRecurrenceInput(
                 name=p.name,
-                length_beats=(p.end_bar - p.start_bar) * self.beats_per_bar,
+                length_beats=p.length_beats,
                 layers=p.layers,
-                start_beat=(p.start_bar - start_bar) * self.beats_per_bar,
+                start_beat=p.start_beat,
             )
             for p in self.plan(start_bar=start_bar)
         ]
@@ -421,34 +545,38 @@ class Arrangement:
         A layer naming a track absent from ``tracks`` raises ``KeyError`` — fail
         loud rather than silently drop a part.
 
-        Every row this writes is stamped ``bar_ruler="uniform"`` (#496). This
-        class accumulates whole bars against ONE ``beats_per_bar`` and never
-        reads the song's ``time_signature_map``, so its positions ARE uniform
-        bar math — and it is the only component in the tree that says so. Every
-        other writer takes the mutator's ``map`` default, which is what makes a
-        writer that has never heard of the column correct by construction. The
-        push planner reads the stamp to tell a deliberate multi-meter song
-        (positions authored against the map, no alert) from a ``build.py`` that
-        did uniform bar math past a meter change (alert, with the bars named).
+        **The declared meter is written first**, as ``time_signature_map``
+        points, and then read back: if the song's map is not the map this
+        arrangement declares, nothing further is written and the disagreement
+        raises. Two places declaring one song's meter is how the two bar rulers
+        happened; a build that would create a second one fails where the second
+        one was introduced rather than at push time, where it can be reported
+        and not repaired.
+
+        Rows take the mutator's ``bar_ruler="map"`` default like every other
+        writer — the positions above ARE map-resolved. ``uniform`` survives only
+        as provenance on rows written before that was true.
         """
         placed = self.plan(start_bar=start_bar)
+        self._author_meter_map(conn, song_id=song_id, start_bar=start_bar,
+                               actor=actor)
         created = {"clips": 0, "notes": 0, "placements": 0, "sections": 0, "cues": 0}
         for idx, sec in enumerate(placed):
             slot = idx + 1
-            length_beats = (sec.end_bar - sec.start_bar) * self.beats_per_bar
+            length_beats = sec.length_beats
 
             if author_sections:
                 M.create_section(
                     conn, song_id=song_id, name=sec.name,
                     start_bar=float(sec.start_bar), end_bar=float(sec.end_bar),
-                    energy=sec.energy, bar_ruler="uniform",
+                    energy=sec.energy,
                     actor=actor, reason=f"{sec.name} section",
                 )
                 created["sections"] += 1
             if author_cues:
                 M.add_cue_point(
                     conn, song_id=song_id, position_bar=float(sec.start_bar),
-                    name=sec.name, bar_ruler="uniform",
+                    name=sec.name,
                     actor=actor, reason=f"{sec.name} cue",
                 )
                 created["cues"] += 1
@@ -472,13 +600,57 @@ class Arrangement:
                 M.add_arrangement_clip(
                     conn, song_id=song_id, track_id=tracks[track_name],
                     clip_id=clip_id, start_bar=float(sec.start_bar),
-                    end_bar=float(sec.end_bar), bar_ruler="uniform",
+                    end_bar=float(sec.end_bar),
                     actor=actor, reason=f"{sec.name} {track_name} placement",
                 )
                 created["clips"] += 1
                 created["notes"] += len(notes)
                 created["placements"] += 1
         return created
+
+    def _author_meter_map(
+        self, conn, *, song_id: str, start_bar: int, actor: str,
+    ) -> None:
+        """Write the declared meter into ``time_signature_map`` — but only once
+        the song's existing map is known to say nothing different.
+
+        **The check comes before the write**, because the write would otherwise
+        hide what it is checking for: ``add_time_signature_point`` UPDATES the
+        row at a bar it already holds, so an arrangement declaring 4/4 at bar 1
+        would silently overwrite a song declaring 3/4 there and then read back
+        perfect agreement. Every point the song already holds must be a point
+        this arrangement declares, identically.
+
+        Points the arrangement re-declares identically — every song's build.py
+        authors its own bar-1 row — pass through as the no-ops they are.
+        """
+        declared = self.meter_map_at(start_bar)
+        stored = MeterMap.from_rows(Q.get_time_signature_map(conn, song_id))
+        declared_at = {p.start_bar: p for p in declared.points}
+        for point in stored.points:
+            mine = declared_at.get(point.start_bar)
+            if mine is None or (mine.numerator, mine.denominator) != (
+                point.numerator, point.denominator
+            ):
+                raise ValueError(
+                    f"song {song_id!r} declares a meter this arrangement does "
+                    f"not: stored [{stored.describe()}] vs arrangement "
+                    f"[{declared.describe()}] — they first differ at bar "
+                    f"{point.start_bar:g}. A song's meter is its map, declared "
+                    f"once; reconcile them before materializing."
+                )
+        for point in declared.points:
+            M.add_time_signature_point(
+                conn, song_id=song_id, start_bar=point.start_bar,
+                numerator=point.numerator, denominator=point.denominator,
+                actor=actor, reason=f"meter {point.meter} from bar {point.start_bar:g}",
+            )
+        written = MeterMap.from_rows(Q.get_time_signature_map(conn, song_id))
+        if written != declared:
+            raise ValueError(
+                f"song {song_id!r} meter map did not take: wrote "
+                f"[{declared.describe()}], read back [{written.describe()}]"
+            )
 
 
 # --------------------------------------------------------------------------

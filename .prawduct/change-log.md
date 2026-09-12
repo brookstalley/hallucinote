@@ -32,6 +32,136 @@
      original concern: no version is pre-bumped, and nothing is mislabelled as
      already shipped.) -->
 
+## 2026-09-12 — One bar ruler: the arrangement places against the meter map
+
+<!-- prawduct: type=feature | scope=meter-map-ruler -->
+
+#566, and #567 with it. Hallucinote carried **two bar rulers**, and the schema
+said so outright: `map` — a position resolved through `time_signature_map`,
+which is how push resolves every bar position — and `uniform` — bars
+accumulated against ONE `beats_per_bar` by `hallucinote.arrangement`, which
+never read the map. They agree until a meter change, and `Arrangement`'s own
+docstring predicted the failure it could not fix: in a 4/4 song turning 7/4 at
+bar 9, the authoring class put bar 13 at beat 48 and push put it at 60.
+
+On `alien` that was not hypothetical. One hand-placed 7/4 bar at 86 put an
+instrument in the wrong place, and the song was rescued by spelling every
+downstream section as `bar N + 0.75` against a 4/4 map — 89.75 and 113.75 for
+chorus3 and the outro, which resolve to the right absolute beats and to the
+wrong bar numbers forever.
+
+**The deliverable was never a meter system.** The DB has accepted an arbitrary
+map since #221 and push has always walked it. It was retiring the second ruler.
+
+**`hallucinote.meter` is the one ruler**, a leaf module importing nothing else
+in the package — which is what lets the authoring side and the sync side share
+it without either depending on the other. `MeterMap` owns every bar↔beat
+conversion; `sync.geometry` keeps its row-shaped signatures and delegates the
+arithmetic. Extracting it fixed a latent inconsistency the two sides had between
+them: the forward walk took the first map point's meter for the bars before it
+while the inverse assumed 4/4, so on a map with no bar-1 row the pair were not
+inverses. They are now, and a test says so in both directions.
+
+**The arrangement declares the song's meter** — `Arrangement(meter="7/4")`,
+`meter_change(at_bar=86, meter="7/4")`, or `section(..., meter="7/4")` as sugar
+for a point at that section's start bar. A meter persists until the next point,
+because that is what a map means; a borrowed bar is two points, not one, and the
+docstring says so with that example. `plan()` walks the map, `PlacedSection`
+carries `start_beat` and `length_beats` resolved through it, and
+`beats_per_bar=` survives as the scalar spelling of the bar-1 default because a
+song passes it.
+
+**`materialize()` writes the declared map and then refuses to disagree with the
+song.** The check runs BEFORE the write, and the reason is the bug the test
+caught: `add_time_signature_point` UPDATES the row at a bar it already holds, so
+an arrangement declaring 4/4 at bar 1 would have silently overwritten a song
+declaring 3/4 there and read back perfect agreement. Every point the song
+already holds must be one this arrangement declares, identically. Nothing in the
+tree writes `bar_ruler="uniform"` any more — a test greps for a writer and
+expects none — and the push planner's detector keeps it as provenance on rows
+written before this.
+
+**The read side landed with it**, per the BOTH-SIDES rule. The cost was far
+below the 138 `beats_per_bar` call sites #566 sized it at, and the reason is
+worth recording: most of those are not the song's ruler. The 74 in `generators/`
+are a *pattern's* bar length — a per-call parameter a 7/4 bar should be able to
+set freely. What genuinely mis-graded an odd bar was the four arrangement
+bridges (three of which became correct for free once `PlacedSection` carried
+beats) and one strong-beat predicate, which now reads the bar the note is in:
+a 7/4 bar's strong beats are its 1 and its 4.5, where `start % beats_per_bar`
+called its beat 4 strong because 4 divides the *song's* bar length.
+
+**MIGRATION — `hallucinote.melody` breaks, deliberately and without a shim.**
+`SectionMelody.beats_per_bar` (a float) becomes `bars` (a `BarGrid`), and
+`analyze_harmony_fit(..., beats_per_bar=)` becomes `bars=`. Four songs in the
+separate `hallucinote-songs` repo construct `SectionMelody(...)` directly and
+none passes either keyword — every one relies on the 4/4 default, which
+`bars=None` reproduces exactly — so nothing needs migrating today. A song that
+does pass one changes:
+
+    SectionMelody(..., beats_per_bar=n)
+    ->  SectionMelody(..., bars=MeterMap.uniform(n).grid_for(start_bar, end_bar))
+
+No compatibility shim: a scalar cannot say whether 3 beats is 3/4 or 6/8, and
+accepting one back would re-admit the ambiguity the grid exists to remove.
+
+One behaviour the grid had to be taught: `start % beats_per_bar` extrapolated
+past the end of a section forever, and a grid that stopped at its last bar line
+would silently re-grade any note overhanging the section's declared length —
+which nothing filters, so overhanging notes are ordinary. The grid continues
+the last bar's own meter instead.
+
+**#567 — the alert stopped advising despair.** `plan_push_time_signature_map`
+is the one place Live's meter reach limit is stated, and its advice — "the felt
+meter has to live in note placement and accent" — predates #221 and was the
+opposite of what the owner actually did for `alien`. It now says playback is
+unaffected (every position is authored in absolute beats, which is the unit Live
+anchors content in), names what is actually lost (Live's ruler and metronome),
+and lists each non-bar-1 point as `bar N -> num/den` in bar order as an offered
+hand-add. The reach limit itself is still stated, on the same channel — and so
+is the open question: the alert says in as many words that whether inserting a
+meter change leaves already-placed content where it is has not been checked
+against a real set, and names the two-second check. It is the one place this
+reaches a human, so it may say what is known and not what is assumed.
+
+**One assumption is unsettled and is enqueued, not waived.** R1 rests on Live
+anchoring arrangement content in beats, so that adding a meter change relabels
+the ruler without moving what is placed. It gates the *advice*, not the
+placement — the engine is correct in absolute beats either way — and
+`operator-verification.md` METER-0912 is the two-minute check against `alien`'s
+own set.
+
+**Not in this branch, deliberately:** re-authoring `alien` on the map. It is
+#566's last acceptance criterion, it lives in the separate `hallucinote-songs`
+repo, and the owner declined it here.
+
+**What the cumulative review changed, beyond paperwork.** Two findings were
+worth the round. The first: the bundle moved the ruler in `src/` and amended the
+design artifacts, and left every document that *instructs* the composing agent
+still describing the two-ruler world — `docs/song-authoring-conventions.md`
+(cited by seven skills) told an author "there is no setting that makes them
+agree", and `skills/song-new` told it to carry the meter as felt groove. A
+composing agent reads those, not the code. Swept.
+
+The second: the R4 guard was point-in-time. `materialize()` checks map agreement
+when it runs, so meter written AFTER positions exist was unguarded — and worse
+than before this change, because those rows now carry `map` and push's
+divergence detector drops `map` rows by design, where the same song's rows used
+to say `uniform` and raise. Closed where the map changes rather than where the
+positions are written: all three `time_signature_map` mutators — add, update and
+remove — warn when a meter write actually moves an existing position's resolved
+beat. The guard asks whether beats MOVE, not whether the map was touched; the
+first cut asked the cheaper question and fired on four existing tests, which is
+what a warning every build prints looks like before you catch it.
+
+It covers all three because the finding was a CLASS and the first fix covered
+one member — which the verify pass said out loud rather than passing.
+`update_time_signature_point` has a live caller in `sync.pull.mix`, so an
+`/ableton-pull` that changed a song's bar-1 meter would have re-timed an already
+authored arrangement down the path nothing watched. That is why the guard takes
+the RESULTING map rather than a point: a removal and a numerator edit are
+ordinary members of it, not special cases.
+
 ## 2026-09-11 — The release audit's second pass: one test folded in, two candidates read out
 
 <!-- prawduct: type=chore | scope=RELAUDIT-0911 | release=v1.9.0 -->

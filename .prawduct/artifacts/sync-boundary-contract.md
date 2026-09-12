@@ -216,9 +216,9 @@ Live; every phase additionally assumes the §Gates ran (links truthful).
 - **This phase is where the meter reach limit is enforced, and nowhere else.**
   The DB records the song's true meter map (within-song changes included); this
   planner pushes the bar-1 row, skips the rest, and alerts that Live's ruler will
-  show the bar-1 meter for the whole song. The two-bar-ruler divergence is NOT
-  reported here — it is reported where bar positions actually become beats, in
-  §13 and §14.
+  show the bar-1 meter for the whole song. A `uniform`-ruler row is NOT reported
+  here — it is reported where bar positions actually become beats, in §13 and
+  §14.
 
 ### 3. `tracks` (`push/tracks.py`)
 - **Assumes:** link rows are truthful (gate-validated) — emits `create` only for
@@ -408,13 +408,16 @@ Live; every phase additionally assumes the §Gates ran (links truthful).
   dead worker = **PSH-3H8M**, not this contract.
 
 ### 13. `arrangement` (`push/arrangement.py`)
-- **This phase and §14 are where the two-bar-ruler divergence is reported**, not
-  the meter phase: this is where an authored bar position actually becomes a Live
-  beat. The alert names how many placements sit after a meter change, because
-  push resolves them through the `time_signature_map` while
-  `hallucinote.arrangement` accumulates whole bars against one uniform
-  `beats_per_bar`. A song whose every placement precedes the first change
-  diverges nowhere and is not alerted.
+- **This phase and §14 are where a `uniform`-ruler row is reported**, not the
+  meter phase: this is where an authored bar position actually becomes a Live
+  beat. The second ruler is retired — `hallucinote.arrangement` resolves its
+  positions through the `time_signature_map` like push does, so nothing authors
+  a `uniform` row any more. What the alert reports is therefore **historical
+  provenance**, not a live divergence: a row still carrying `uniform` was
+  written while the arrangement accumulated whole bars against one
+  `beats_per_bar`, and this detector is what tells a correct odd-meter song from
+  one those rows misplaced. A `NULL` ruler predates the column and is the one
+  case the planner genuinely cannot grade.
 - **Assumes:** tracks linked (alert + skip whole track otherwise); envelope-bearing
   placements' source clips linked (duplicate route); the DB is the ONLY author of
   the timeline (projection: clear then rebuild, ARR-PROJ).

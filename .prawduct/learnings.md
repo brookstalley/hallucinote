@@ -48,6 +48,10 @@ put any narrative there.
 
 **When changing a convention (a kind, name, or shape used across many surfaces), audit every reference with a tree-wide grep before declaring the sweep done. Partial sweeps create self-contradicting docs that ship.**
 
+## A finding that says CLASS is telling you it is a sweep — derive the members from its reason, not from the files it names
+
+**When a Critic finding declares `Scope: class`, its file list is examples, not the membership. Re-run the finding's own reason as a search and fix what that returns; a fix confined to the named sites reads as done and leaves the silent path open. Sibling of *Pattern sweeps are tree-wide* — that one is about changing a convention, this one about reading a review.**
+
 ## Inverting a black-box formatter: validate a monotonic proxy, don't enumerate formats
 
 **When you must invert an opaque value→string formatter that has no string→value API, don't special-case each output format. Parse a numeric proxy, VALIDATE it's monotonic over the domain by sampling, then bisect — and refuse when it isn't. One monotonicity check subsumes every "weird format" guard and auto-handles formats you haven't seen.**

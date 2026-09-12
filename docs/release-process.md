@@ -88,25 +88,19 @@ one scope are one line to the gate.
 `prawduct-hook stamp-merged` is likewise **deprecated and inert** — it warns and does
 nothing. Do not call it.
 
-#### Roll the log
+#### Do NOT roll the log here
 
-`.prawduct/change-log.md` is append-only and grows without bound; past ~55 KB
-(`oversized_file_threshold_kb` in `project-state.yaml`) every session that reads it pays
-for the whole history. After stamping `release=vNEW` above, move the oldest entries into
-[`.prawduct/change-log-archive.md`](../.prawduct/change-log-archive.md) — verbatim,
-newest-first, under the existing header — until the live log is comfortably under the
-ceiling, keeping the last few releases for context.
+Stamping `release=vNEW` is all step 1 does to the log. **The entries you just stamped
+have to stay in `.prawduct/change-log.md` until step 3 has run**, because
+`plan-backfill` reads their `scope=`/`release=` tags out of that file to decide which
+build plans retire — fold them out now and the plan sweep sees nothing to archive.
 
-**Move only entries that already carry a `release=` key.** Archiving a release-pending
-entry drops its scope out of the release gate silently, which is the one failure this
-step can cause. Assert it before you write:
-
-```sh
-grep '^<!-- prawduct: ' .prawduct/change-log-archive.md | grep -v 'release=' && echo "STOP: pending entry archived"
-```
-
-Nothing reads the archive — `lib/change_log.py` names `.prawduct/change-log.md`
-specifically — so it is history for humans, and git carries it either way.
+Rolling the log is therefore the *last* act of step 3, not an act of step 1. This
+subsection exists because the fold used to live here, which is unsatisfiable: it asked
+for the live log "comfortably under the ceiling" while also "keeping the last few
+releases for context", and one release of entries is larger than the whole ceiling —
+so the step could be followed exactly and still leave the log 2.5× over (142 KB at
+v1.9.0). See step 3, *Roll the log*.
 
 ### 2. Bump the product version (all four surfaces, in lockstep)
 
@@ -150,6 +144,43 @@ classification` table that dispositions every release-pending scope (use the
 previous release's as the template). Then verify with `prawduct-hook
 check-releasability --release vNEW` — it should report `releasable` with no
 pending scopes.
+
+#### Roll the log — LAST, and only now
+
+`plan-backfill` and `check-releasability` have both read the log by this point, so the
+shipped entries have no reader left. Fold **every entry carrying a `release=` key** out
+of [`.prawduct/change-log.md`](../.prawduct/change-log.md) and into
+[`.prawduct/change-log-archive.md`](../.prawduct/change-log-archive.md) — verbatim,
+newest-first, under the existing header.
+
+**The rule is "every tagged entry", not "enough to get under the ceiling".** What
+should remain in the live log when you are done is the header and nothing else: a
+release publishes its entries and resets the file. That makes the file's size mean
+something — it measures *unreleased* work, so the ~55 KB nudge
+(`oversized_file_threshold_kb`) becomes a real signal that a lot is unshipped, instead
+of firing after every release on entries that are already out the door.
+
+**Move only entries that already carry a `release=` key.** Archiving a release-pending
+entry drops its scope out of the release gate silently, which is the one failure this
+step can cause. Assert it after you write:
+
+```sh
+grep '^<!-- prawduct: ' .prawduct/change-log-archive.md | grep -v 'release=' && echo "STOP: pending entry archived"
+grep -c '^<!-- prawduct: ' .prawduct/change-log.md   # 0, or only entries that landed mid-release
+```
+
+The fold is a file edit, so it rides step 7's `chore(release): vNEW` commit like every
+other change here — it is not a separate commit.
+
+**Known gap — the archive is invisible to `plan-backfill`.** It reads
+`.prawduct/change-log.md` only (`lib/plan_backfill.py` → `shipped_scopes`), so once an
+entry is folded out, that scope can no longer retire a plan. Within one release that is
+fine — the sweep runs before the fold, which is the whole reason for this ordering — but
+a plan **missed** at its own release cannot be caught up automatically later: its tag is
+in the archive where the sweep cannot see it. If `plan-backfill` comes up empty on a plan
+you know shipped, grep the archive for its scope and archive it by hand
+(`prawduct-hook archive-plan <path> --state completed --release vX.Y.Z`). Filed upstream
+against prawduct.
 
 ### 4. Update the engine-pin row
 
@@ -478,10 +509,12 @@ env, one source. See [`docs/engine-pin.md`](engine-pin.md).
 ## Release checklist
 
 - [ ] `origin/main..develop` scope reviewed; every cluster has a change-log entry
-- [ ] change-log entries flipped to `status=shipped | release=vNEW`
+- [ ] change-log entries stamped `release=vNEW` (`status=` is RETIRED — do not write it)
 - [ ] all four product-version surfaces bumped to `vNEW` (`test_version_parity.py` green)
 - [ ] `plan-backfill --apply` run and its named plans checked against their own `## Status`
 - [ ] `release-plan-vNEW.md` written; `check-releasability --release vNEW` reports `releasable`
+- [ ] **log rolled LAST** (after the two hooks above): every `release=`-tagged entry folded
+      into `change-log-archive.md`, live log back to just its header
 - [ ] `engine-pin.md` Engine + Plugin rows bumped
 - [ ] **Re-vendor verdict computed (step 5) and recorded in the release commit + notes**
 - [ ] `CHANGELOG.md` `## [vNEW]` entry distilled (step 6), upgrade note if re-vendor required

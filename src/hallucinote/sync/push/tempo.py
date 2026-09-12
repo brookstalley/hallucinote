@@ -116,9 +116,28 @@ def plan_push_time_signature_map(
             f"ableton_automation has no 'song_signature' target_kind "
             f"(see hallucinote_mcp/.../guides/gaps.md); "
             f"{len(non_bar_1)} non-bar-1 time_signature_map rows skipped. "
-            f"The DB still holds the song's true meter — this is a "
-            f"projection loss, not a lost decision. Live's ruler will read "
-            f"{meter_1} for the whole song, so the felt meter has to live in "
-            f"note placement and accent."
+            f"PLAYBACK IS UNAFFECTED: every position this engine authors is "
+            f"resolved through the meter map into absolute beats, which is the "
+            f"unit Live anchors arrangement content in. What is lost is Live's "
+            f"RULER — it will number bars as {meter_1} throughout, and its "
+            f"metronome will follow that. To make the ruler match the score, "
+            f"add these by hand in Live (optional, and it changes nothing the "
+            f"engine writes): {_hand_add_list(non_bar_1)}."
         )
     return plan
+
+
+def _hand_add_list(rows: list[sqlite3.Row]) -> str:
+    """The non-bar-1 meter points as an operator's to-do list, in bar order.
+
+    Capped: a song with a meter change every few bars would otherwise turn one
+    alert into a wall, and the count is already stated in the clause above.
+    """
+    points = sorted(
+        (float(r["start_bar"]), int(r["numerator"]), int(r["denominator"]))
+        for r in rows
+    )
+    shown = [f"bar {bar:g} -> {num}/{den}" for bar, num, den in points[:8]]
+    if len(points) <= 8:
+        return ", ".join(shown)
+    return ", ".join(shown) + f", and {len(points) - 8} more"

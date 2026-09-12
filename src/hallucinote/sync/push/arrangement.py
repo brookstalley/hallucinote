@@ -331,10 +331,13 @@ def _divergence_bars(diverging: list[tuple[float, float, float]]) -> str:
     return ", ".join(shown) + f", and {len(bars) - 8} more"
 
 
-# The value `hallucinote.arrangement`'s `materialize` stamps on every row it
-# writes; the mutators default every other writer to `"map"`. A NULL is a row
-# written before the column existed — a third state, and load-bearing: it is
-# the one case where this planner genuinely does not know.
+# The value on rows written while `hallucinote.arrangement` still accumulated
+# bars against one `beats_per_bar`. Nothing authors it now — the mutators
+# default every writer to `"map"` and the arrangement resolves its positions
+# through the meter map — so a row carrying it is HISTORICAL, and this detector
+# is what tells a correct odd-meter song from one those rows misplaced. A NULL
+# is older still (written before the column existed) — a third state, and
+# load-bearing: it is the one case where this planner genuinely does not know.
 _UNIFORM_RULER = "uniform"
 
 

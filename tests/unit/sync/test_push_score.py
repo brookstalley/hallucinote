@@ -208,8 +208,9 @@ def test_plan_push_time_signature_map_multi_point_emits_bar1_and_gap_warn(
 
 def test_plan_push_time_signature_map_alert_names_the_projection(conn, song):
     """The planner is the ONE place the Live reach limit is stated, so it has
-    to say what is lost and what is not: Live shows the bar-1 meter for the
-    whole song, and the DB still holds the authored map.
+    to say what is lost and what is not: Live's RULER shows the bar-1 meter for
+    the whole song, while playback is unaffected because every position is
+    authored in absolute beats.
 
     On `alerts`, not `notes` — the executor drains alerts into the push
     report and discards notes as diagnostic noise, so a statement the operator
@@ -221,8 +222,43 @@ def test_plan_push_time_signature_map_alert_names_the_projection(conn, song):
     _ts_point(conn, song, 9.0, 7, 4)
     plan = push.plan_push_time_signature_map(conn, song_id=song)
     gap = next(n for n in plan.alerts if "song_signature" in n)
-    assert "true meter" in gap
-    assert "4/4 for the whole song" in gap
+    assert "PLAYBACK IS UNAFFECTED" in gap
+    assert "number bars as 4/4 throughout" in gap
+
+
+def test_the_alert_tells_the_operator_which_changes_to_add_by_hand(conn, song):
+    """The reach limit's advice used to be "carry the felt meter in note
+    placement and accent" — written when the DB refused to record a within-song
+    map at all. The DB has held the song's true meter since #221 and the engine
+    places against it since #566, so the operator's actual move is the hand-add,
+    and nothing told them what to add or where."""
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
+    )
+    _ts_point(conn, song, 87.0, 4, 4)
+    _ts_point(conn, song, 86.0, 7, 4)
+    plan = push.plan_push_time_signature_map(conn, song_id=song)
+    gap = next(n for n in plan.alerts if "song_signature" in n)
+
+    assert "bar 86 -> 7/4, bar 87 -> 4/4" in gap, "named, in bar order"
+    assert "optional" in gap
+    assert "accent" not in gap, "the advice to abandon the literal meter is gone"
+
+
+def test_the_hand_add_list_is_capped(conn, song):
+    """A song changing meter every other bar must not turn one alert into a
+    wall; the count is stated in the clause above the list."""
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
+    )
+    for bar in range(2, 15):
+        _ts_point(conn, song, float(bar), 7 if bar % 2 else 4, 4)
+    gap = next(
+        n for n in push.plan_push_time_signature_map(conn, song_id=song).alerts
+        if "song_signature" in n
+    )
+    assert "13 non-bar-1" in gap
+    assert "and 5 more" in gap
 
 
 def test_plan_push_time_signature_map_no_bar1_row_warns_no_calls(conn, song):

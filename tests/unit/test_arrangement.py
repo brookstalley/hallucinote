@@ -814,3 +814,59 @@ def test_the_warning_names_the_bars_that_moved(db_conn, song_and_tracks):
     message = str(caught[0].message)
     assert "7/4 written at bar 2" in message
     assert "bars " in message
+
+
+def test_updating_a_meter_point_warns_the_same_way(db_conn, song_and_tracks):
+    """`update_time_signature_point` has a live caller in `sync.pull.mix`, so an
+    /ableton-pull that changes the bar-1 meter on a song whose arrangement is
+    already authored re-times every downstream position. Guarding only the ADD
+    path would have left this as the silent one."""
+    song_id, tracks = song_and_tracks
+    pid = M.add_time_signature_point(
+        db_conn, song_id=song_id, start_bar=1.0, numerator=4, denominator=4,
+    )
+    _two_section_arrangement().materialize(db_conn, song_id=song_id, tracks=tracks)
+    with pytest.warns(UserWarning, match="AFTER positions exist"):
+        M.update_time_signature_point(db_conn, point_id=pid, numerator=7)
+
+
+def test_removing_a_meter_point_warns_the_same_way(db_conn, song_and_tracks):
+    """Dropping a point re-times everything after it just as adding one does."""
+    song_id, tracks = song_and_tracks
+    arr = Arrangement()
+    arr.meter_change(at_bar=5, meter="7/4")
+    arr.section("a", function="verse", bars=4, layers={"Drums": KICK})
+    arr.section("b", function="chorus", bars=4, layers={"Drums": KICK})
+    arr.materialize(db_conn, song_id=song_id, tracks=tracks)
+    pid = next(
+        r["id"] for r in Q.get_time_signature_map(db_conn, song_id)
+        if float(r["start_bar"]) == 5.0
+    )
+    with pytest.warns(UserWarning, match="AFTER positions exist"):
+        M.remove_time_signature_point(db_conn, point_id=pid)
+
+
+def test_an_update_that_moves_nothing_is_silent(db_conn, song_and_tracks):
+    """Same precision as the add path: re-declaring the meter a point already
+    holds changes no beat, so it must not warn."""
+    song_id, tracks = song_and_tracks
+    pid = M.add_time_signature_point(
+        db_conn, song_id=song_id, start_bar=1.0, numerator=4, denominator=4,
+    )
+    _two_section_arrangement().materialize(db_conn, song_id=song_id, tracks=tracks)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        M.update_time_signature_point(db_conn, point_id=pid, numerator=4)
+
+
+def test_removing_a_point_nothing_sits_after_is_silent(db_conn, song_and_tracks):
+    song_id, tracks = song_and_tracks
+    arr = Arrangement()
+    arr.section("a", function="verse", bars=4, layers={"Drums": KICK})
+    arr.materialize(db_conn, song_id=song_id, tracks=tracks)
+    pid = M.add_time_signature_point(
+        db_conn, song_id=song_id, start_bar=40.0, numerator=7, denominator=4,
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        M.remove_time_signature_point(db_conn, point_id=pid)

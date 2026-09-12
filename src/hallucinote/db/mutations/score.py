@@ -359,12 +359,39 @@ def remove_tempo_point(
 # ---------------------------------------------------------------------------
 
 
+def _map_with(
+    current: MeterMap, start_bar: float, numerator: int, denominator: int,
+) -> MeterMap:
+    """``current`` with the point at ``start_bar`` set to num/den (added or
+    replaced) — the map that would be in force after the write."""
+    return MeterMap(
+        [p for p in current.points if abs(p.start_bar - start_bar) >= 1e-9]
+        + [MeterPoint(start_bar, numerator, denominator)]
+    )
+
+
+def _map_without(current: MeterMap, start_bar: float) -> MeterMap:
+    """``current`` with the point at ``start_bar`` dropped."""
+    return MeterMap(
+        [p for p in current.points if abs(p.start_bar - start_bar) >= 1e-9]
+    )
+
+
+def _current_meter_map(conn: sqlite3.Connection, song_id: str) -> MeterMap:
+    return MeterMap.from_rows(
+        conn.execute(
+            """SELECT start_bar, numerator, denominator FROM time_signature_map
+               WHERE song_id = ?""",
+            (song_id,),
+        ).fetchall()
+    )
+
+
 def _warn_if_positions_would_be_retimed(
     conn: sqlite3.Connection,
     song_id: str,
-    start_bar: float,
-    numerator: int,
-    denominator: int,
+    after: MeterMap,
+    what: str,
 ) -> None:
     """Warn when a meter write moves positions the song already holds.
 
@@ -378,7 +405,14 @@ def _warn_if_positions_would_be_retimed(
     checks at the moment it runs, so a later write is invisible to it; and the
     rows it wrote carry `bar_ruler="map"`, which tells the push planner they
     were resolved through the map and stops its divergence detector reading
-    them. This is the only place that ordering is visible.
+    them. So the stamp outlives the check, and this is what covers the gap.
+
+    **Every mutator that can change the map calls this** — add, update and
+    remove alike. A guard on one of them would leave the others as the silent
+    path, and `sync.pull.mix` reaches `update_time_signature_point` on a real
+    `/ableton-pull`, against songs whose arrangements are already authored.
+    That is why the parameter is the RESULTING map rather than one point: a
+    removal and a numerator edit are ordinary members here, not special cases.
 
     **It asks whether beats actually move, not whether the map was touched.**
     A bar-1 row written after a placement is ordinary — several songs' builds
@@ -386,21 +420,13 @@ def _warn_if_positions_would_be_retimed(
     warning that fired on those would fire on almost every build, and a warning
     every build prints is one nobody reads.
     """
-    rows = conn.execute(
-        """SELECT start_bar, numerator, denominator FROM time_signature_map
-           WHERE song_id = ?""",
-        (song_id,),
-    ).fetchall()
-    before = MeterMap.from_rows(rows)
-    after = MeterMap(
-        [p for p in before.points if abs(p.start_bar - start_bar) >= 1e-9]
-        + [MeterPoint(start_bar, numerator, denominator)]
-    )
-
+    before = _current_meter_map(conn, song_id)
+    if before == after:
+        return
     positions = conn.execute(
-        """SELECT end_bar AS bar FROM sections         WHERE song_id = ?
-           UNION SELECT position_bar          FROM cue_points       WHERE song_id = ?
-           UNION SELECT end_bar               FROM arrangement_clips WHERE song_id = ?""",
+        """SELECT end_bar AS bar FROM sections          WHERE song_id = ?
+           UNION SELECT position_bar           FROM cue_points        WHERE song_id = ?
+           UNION SELECT end_bar                FROM arrangement_clips WHERE song_id = ?""",
         (song_id, song_id, song_id),
     ).fetchall()
     moved = [
@@ -415,13 +441,13 @@ def _warn_if_positions_would_be_retimed(
     if len(moved) > 8:
         shown += f", and {len(moved) - 8} more"
     warnings.warn(
-        f"meter {numerator}/{denominator} written at bar {start_bar:g} AFTER "
-        f"positions exist past it: {len(moved)} authored bar position(s) now "
-        f"resolve to different beats than the map they were authored against "
-        f"gave them (bars {shown}). Their bar numbers are unchanged, so nothing "
-        f"looks wrong, and the push planner reads them as map-resolved. Author "
-        f"the song's meter BEFORE materializing its arrangement — re-running "
-        f"the song's build.py does exactly that and settles it.",
+        f"{what} AFTER positions exist past it: {len(moved)} authored bar "
+        f"position(s) now resolve to different beats than the map they were "
+        f"authored against gave them (bars {shown}). Their bar numbers are "
+        f"unchanged, so nothing looks wrong, and the push planner reads them as "
+        f"map-resolved. Author the song's meter BEFORE materializing its "
+        f"arrangement — re-running the song's build.py does exactly that and "
+        f"settles it.",
         stacklevel=3,
     )
 
@@ -465,7 +491,10 @@ def add_time_signature_point(
             _record_touch_if_session("time_signature_point", pid)
             return MutatorResult(pid, "unchanged")
         _warn_if_positions_would_be_retimed(
-            conn, song_id, start_bar, numerator, denominator,
+            conn, song_id,
+            _map_with(_current_meter_map(conn, song_id), start_bar, numerator,
+                      denominator),
+            f"meter {numerator}/{denominator} written at bar {start_bar:g}",
         )
         conn.execute(
             "UPDATE time_signature_map SET numerator = ?, denominator = ? WHERE id = ?",
@@ -481,7 +510,10 @@ def add_time_signature_point(
         _record_touch_if_session("time_signature_point", pid)
         return MutatorResult(pid, "updated")
     _warn_if_positions_would_be_retimed(
-        conn, song_id, start_bar, numerator, denominator,
+        conn, song_id,
+        _map_with(_current_meter_map(conn, song_id), start_bar, numerator,
+                  denominator),
+        f"meter {numerator}/{denominator} written at bar {start_bar:g}",
     )
     pid = _uuid()
     conn.execute(
@@ -538,11 +570,22 @@ def update_time_signature_point(
             f"denominator must be positive, got {changes['denominator']}"
         )
     row = conn.execute(
-        """SELECT song_id FROM time_signature_map WHERE id = ?""",
+        """SELECT song_id, start_bar, numerator, denominator
+             FROM time_signature_map WHERE id = ?""",
         (point_id,),
     ).fetchone()
     if row is None:
         return
+    _warn_if_positions_would_be_retimed(
+        conn, row["song_id"],
+        _map_with(
+            _current_meter_map(conn, row["song_id"]),
+            float(row["start_bar"]),
+            int(changes.get("numerator", row["numerator"])),
+            int(changes.get("denominator", row["denominator"])),
+        ),
+        f"meter at bar {float(row['start_bar']):g} changed",
+    )
     sets = [f"{k} = ?" for k in changes]
     vals = list(changes.values()) + [point_id]
     conn.execute(
@@ -570,10 +613,18 @@ def remove_time_signature_point(
     reason: str | None = None,
 ) -> None:
     row = conn.execute(
-        "SELECT song_id FROM time_signature_map WHERE id = ?", (point_id,)
+        "SELECT song_id, start_bar FROM time_signature_map WHERE id = ?",
+        (point_id,),
     ).fetchone()
     if row is None:
         return
+    _warn_if_positions_would_be_retimed(
+        conn, row["song_id"],
+        _map_without(
+            _current_meter_map(conn, row["song_id"]), float(row["start_bar"]),
+        ),
+        f"meter point at bar {float(row['start_bar']):g} removed",
+    )
     conn.execute("DELETE FROM time_signature_map WHERE id = ?", (point_id,))
     _emit(
         conn,

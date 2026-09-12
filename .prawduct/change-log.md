@@ -148,11 +148,19 @@ when it runs, so meter written AFTER positions exist was unguarded — and worse
 than before this change, because those rows now carry `map` and push's
 divergence detector drops `map` rows by design, where the same song's rows used
 to say `uniform` and raise. Closed where the map changes rather than where the
-positions are written: `add_time_signature_point` warns when a meter write
-actually moves an existing position's resolved beat. It asks whether beats MOVE,
-not whether the map was touched — the first cut asked the cheaper question and
-fired on four existing tests, which is what a warning every build prints looks
-like before you catch it.
+positions are written: all three `time_signature_map` mutators — add, update and
+remove — warn when a meter write actually moves an existing position's resolved
+beat. The guard asks whether beats MOVE, not whether the map was touched; the
+first cut asked the cheaper question and fired on four existing tests, which is
+what a warning every build prints looks like before you catch it.
+
+It covers all three because the finding was a CLASS and the first fix covered
+one member — which the verify pass said out loud rather than passing.
+`update_time_signature_point` has a live caller in `sync.pull.mix`, so an
+`/ableton-pull` that changed a song's bar-1 meter would have re-timed an already
+authored arrangement down the path nothing watched. That is why the guard takes
+the RESULTING map rather than a point: a removal and a numerator edit are
+ordinary members of it, not special cases.
 
 ## 2026-09-11 — The release audit's second pass: one test folded in, two candidates read out
 

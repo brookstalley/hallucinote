@@ -15,7 +15,7 @@ governed_by:
     dispositions:
       - "the SQLite DB is materialized state, never the source of truth → conforms: the song's meter is declared in build.py on the Arrangement and materialized into time_signature_map, not edited in the DB"
       - "all writes go through mutators; no write SQL in callers → conforms: materialize authors meter via M.add_time_signature_point, and the retiming check reads through conn.execute SELECTs only"
-      - "every mutator emits exactly one event, in the same transaction as its state change → conforms: no mutator is added or changed; add_time_signature_point's existing emit is untouched"
+      - "every mutator emits exactly one event, in the same transaction as its state change → conforms: the three time_signature_map mutators gain a read-only retiming check before their write; no emit is added, removed or moved, and each still emits exactly the one it always did"
       - "identity is a Python-generated UUID from the mutators, never a database rowid → inapplicable because this plan adds no table, no row identity and no id-bearing column"
       - "Live's own identifiers are never used as identity → inapplicable because nothing here reads or stores a Live id"
       - "an existing song DB is opened through init_db, never a bare connect → conforms: no new open path; schema.sql's change is comment-only, so no _ADDED_COLUMNS migration is owed"

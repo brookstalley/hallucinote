@@ -10,6 +10,117 @@ the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.9.0] — 2026-09-11
+
+The sampling release. A sample is now song material and something the music can
+be derived from: audio clips place, conform and round-trip through Live, a
+sampler gets its sample, and the spectral and feature layers let a recording
+drive the score — carved and vocoded against the music, or followed as a pitch
+contour that becomes notes and bends.
+
+**Upgrade note — re-vendor REQUIRED.** This release changes the handshake
+fingerprint (19 files under `wire.py`, `dispatcher.py`, `actions/`, `handlers/`
+and `remote_script/`). Your plugin updates itself from `main`, so after it does,
+the server and the Remote Script sitting in your Live User Library disagree and
+**every bridge call fails with a version mismatch** until you repair it:
+
+1. run `/ableton-mcp-install`,
+2. **fully quit and reopen Ableton Live** — `/mcp` alone is not enough, because
+   Live caches Control Surface modules at launch.
+
+To preview the state before restarting, run `python -m hallucinote_mcp.cli
+preflight` and look at `remote_script.candidates[*].matches_mcp_server`.
+
+**Second upgrade note — a journal from a crash before this version needs one
+manual step.** The chain-rebuild journal format moves from version 1 to 2,
+because a v1 entry carries no per-device database position. If an interrupted
+run left a v1 journal behind, `push execute` points you at `--resume auto` and
+`--resume` then refuses it by version. Both refusals name the file and neither
+destroys anything. The way out: read the journal, rebuild the chain from the
+database (`chain-rebuild` with no `--resume`), then delete the journal. Rollback
+behaves the same way and has the same exit.
+
+### Added
+
+- **Samples as song material.** Audio clips place, conform to the song's tempo
+  and round-trip through Live; push acts on the probe's verdicts, so a
+  re-pointed sample is recreated with its ride and an audio placement that hosts
+  an envelope duplicates rather than being rebuilt. `reverse=1` materializes
+  through a content-addressed derived cache.
+- **A sampler gets its sample** — `assign_sample`, with push and capture support.
+- **Deriving music from a recording.** An asset store that ingests, normalizes
+  and manifests a song's sources; feature streams for F0, formants, energy,
+  spectral descriptors, segments and a placed beat map; a pitch follower that
+  turns an F0 contour into tagged notes with per-note bends; and feature events
+  with musical gates — scale-tone crossings, energy and onset detectors, beats.
+- **Spectral carving and vocoding.** Spectral fields built symbolically from the
+  score or measured from a capture set, then one field, one mask and a polarity
+  carve or vocode a sample against the music, with an honest statement of the
+  bass resolution the method can reach. Available as recipe steps.
+- **Speech intelligibility over the bed,** measured per spoken turn in the speech
+  band.
+- **A sample lens** that reads a line against bars, with a skill that runs it.
+- **Two read-side lenses:** psychoacoustic sharpness, and drum-hit transient
+  shape.
+- **Render integrity in the report** — the analysis now asks whether the captured
+  audio is damaged, and a capture that does not span what it declares says so
+  instead of being measured as though it did.
+- **Per-surface mixer state in the render manifest** — solo, mute and volume for
+  every track and return, each row carrying a `track_id` that joins to
+  `tracks[]`. This is what makes an old report auditable after the Live session
+  has moved on.
+- **A stretch/pitch A/B harness** for listening to formant-handling choices.
+- `hallucinote.kits` — a new public module holding `load_kit(conn, device_id)`,
+  the database-backed way to build a `Kit`. It exists so that importing a
+  generator pulls in no database code; see the Deprecated note below for the
+  `Kit.from_device` it replaces.
+- `Kit.from_rows(rows, *, name, device_id)` — build a `Kit` from
+  `drum_pad_mappings`-shaped rows with no database connection, for songs that
+  measure a kit by hand or construct one in a test.
+
+### Changed
+
+- **A render under a soloed track or return is refused.** Soloing leaves the
+  capture a confident measurement of a mix you are not making, so the render
+  stops and names the track. A *muted* track is a plausible authoring choice: the
+  render proceeds and the manifest records the mute. The refusal arrives through
+  `action='status'`, since the guard runs at the top of the detached worker.
+- **Elicitation is a conversation.** Song work reads what kind of turn you just
+  took, builds to the smallest thing you can actually hear, offers you that
+  hearing, and records who owns each still-open question.
+- **Meter is recorded as the song's own.** The database holds the true meter map,
+  including a within-song change; the limit on what Ableton Live can be made to
+  show moves to the push layer, where the projection to Live happens.
+- **Doc deep-links are checked across every file,** so a link that points at a
+  heading which has moved is caught.
+
+### Fixed
+
+- **Live plays from the position it was told to.** The silent perform had its
+  root cause in a start position that `current_song_time` never moved.
+- **A chain rebuild carries every parameter, onto the right device.** A single
+  string-valued parameter was dropped while the test fake reported success; a
+  restore could land on a neighbouring device; and a shortfall could exit 0.
+- **A partial recall counts as a recall** in the recurrence lens, and a capture
+  reads the beat it means to read.
+- **An unreadable sidechain source warns** rather than vanishing, including on
+  the destructive chain-rebuild path.
+- **A wrong-kind replace refuses before it deletes the clip,** rather than
+  after.
+- **Capture leaves Live's untouched default scaffold tracks and default returns
+  out** of the song, and replay stops mistaking a track's position for its
+  identity.
+- **The compatibility check answers for the content a song actually plays,**
+  including its samples, instead of reporting that nothing needs installing for
+  content Live does not ship.
+- **Vendored-content drift is reported** even where the handshake cannot see it,
+  and a version pin recovers to content rather than to a commit.
+- **`note_expression` is refused with the truth** instead of an `AttributeError`,
+  and a timeout is now a fenced, observable operation rather than the caller
+  looking away.
+- **Swapping an instrument keeps the mix work below it.**
+- **The playable region reaches the arrangement copy.**
+
 ### Deprecated
 
 - `Kit.from_device(conn, device_id)` — use `hallucinote.kits.load_kit(conn,
@@ -18,15 +129,19 @@ the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   database code. `Kit.from_device` keeps working for one major version and will
   be removed in 2.0 — existing `build.py` files need no change now.
 
-### Added
+### Known limits in this release
 
-- `hallucinote.kits` — a new public module holding `load_kit(conn, device_id)`,
-  the database-backed way to build a `Kit`. It exists so that importing a
-  generator pulls in no database code; see the Deprecated note below for the
-  `Kit.from_device` it replaces.
-- `Kit.from_rows(rows, *, name, device_id)` — build a `Kit` from
-  `drum_pad_mappings`-shaped rows with no database connection, for songs that
-  measure a kit by hand or construct one in a test.
+- **A soloed chain inside a master rack is invisible** to the solo refusal, and
+  the manifest has no master row (#552). Live's master carries no `solo`
+  attribute, and the guard deliberately refuses on an unreadable flag, so a naive
+  master row would refuse every render; the fix needs design.
+- **The stem-sum reconciliation check now blocks, and it can read high for a
+  benign reason** (#482): a return with a non-unity fader is summed at full
+  pre-fader level, which inflates the residual. The two changes are kept apart so
+  each proves the other.
+- **The Live-side behaviour in this release rests on two attended sittings.** The
+  chain-rebuild restore has not been re-run against a real chain since its two
+  defects were fixed, and the stem-sum false positive above is unpriced.
 
 ## [1.8.6] — 2026-08-12
 

@@ -15,7 +15,13 @@ governed_by:
 partition: serial — Chunk 02 consumes the API Chunk 01 defines
 last_validated: 2026-09-09
 critic_mode: cumulative-final
+lifecycle: completed
+archived: 2026-09-11
+released_in: v1.9.0
+maintained: false
 ---
+
+> **Archived — no longer maintained.** This plan records what was built, not what will be. Do not edit it to reflect later changes; write those where they are true.
 
 # Build plan — CAPSPAN-491: a capture that does not span what it declares must say so
 

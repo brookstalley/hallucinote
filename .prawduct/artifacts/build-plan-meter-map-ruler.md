@@ -60,7 +60,7 @@ sugar**, and the read side ships **with** the authoring fix (#247's BOTH-SIDES r
 - [x] Chunk 02: `Arrangement` declares meter; `plan()` walks the map (R2, R6)
 - [x] Chunk 03: `materialize()` authors the map, stamps `map`, refuses divergence (R3, R4)
 - [x] Chunk 04: the read side reads the map (R5)
-- [ ] Chunk 05: the push alert tells the operator the truth (#567) + artifact amendment
+- [x] Chunk 05: the push alert tells the operator the truth (#567) + artifact amendment
 
 Context: All five chunks are built on `feat/566-meter-map`, and the `cumulative`
 Critic review (`rev-20260912T143558Z-dfbc97bb`) has run — 5 blocking, 13 warning,
@@ -88,8 +88,22 @@ single commit. What that review moved, beyond paperwork:
   `start % beats_per_bar` extrapolated forever, so a note overhanging a section's
   declared length re-graded. It extrapolates now, continuing the last bar's own meter.
 
-Chunk 05's box stays unticked until `verify-resolutions` clears — ticking the last box
-is what disarms the Stop gates.
+**Closed 2026-09-12.** Two `verify-resolutions` passes cleared it. The first
+recorded 21 resolutions with 0 blocking and one observation worth more than its
+severity: R-5 had declared CLASS scope and the fix had covered one member of
+three. `update_time_signature_point` has a live caller in `sync.pull.mix`, so an
+`/ableton-pull` changing a song's bar-1 meter would have re-timed an authored
+arrangement down the one unguarded path — so the guard was extended to all three
+map mutators and re-verified clean. That round was taken deliberately: the
+observation gated nothing, and shipping a known silent-corruption path on a live
+command to bank a clean pass is the wrong trade.
+
+`check-cumulative-critic` is satisfied at HEAD. Three observations were left
+unactioned by agreement with the reviewer, all cosmetic: the warning's
+`stacklevel` attributes to a different frame on the `update` path (which carries
+an extra decorator), `_current_meter_map` runs one extra small SELECT per guarded
+add, and the two add callsites repeat one expression. Worth hoisting only if a
+third add branch ever appears.
 
 **Two deviations from this plan as written, both deliberate:**
 

@@ -7,6 +7,7 @@ integration test proving the module emits correct DB rows through the mutators
 from __future__ import annotations
 
 import sqlite3
+import warnings
 from pathlib import Path
 
 import pytest
@@ -710,3 +711,106 @@ def test_a_single_meter_song_reads_exactly_as_it_did():
     melody = arr.section_melody_inputs()
     assert melody[0].bars == BarGrid.uniform(4.0, 32.0)
     assert melody[1].bars == BarGrid.uniform(4.0, 64.0)
+
+
+# ==========================================================================
+# Meter written after positions exist — the order `materialize`'s guard
+# cannot see, because its check has already run (#566 R4's blind side)
+# ==========================================================================
+
+
+def test_meter_written_after_placements_warns_that_they_are_retimed(
+    db_conn, song_and_tracks,
+):
+    song_id, tracks = song_and_tracks
+    _two_section_arrangement().materialize(db_conn, song_id=song_id, tracks=tracks)
+    with pytest.warns(UserWarning, match="AFTER positions exist"):
+        M.add_time_signature_point(
+            db_conn, song_id=song_id, start_bar=2.0, numerator=7, denominator=4,
+        )
+
+
+def test_changing_an_existing_meter_point_warns_the_same_way(db_conn, song_and_tracks):
+    song_id, tracks = song_and_tracks
+    M.add_time_signature_point(
+        db_conn, song_id=song_id, start_bar=2.0, numerator=7, denominator=4,
+    )
+    arr = Arrangement()
+    arr.meter_change(at_bar=2, meter="7/4")
+    arr.section("a", function="verse", bars=4, layers={"Drums": KICK})
+    arr.materialize(db_conn, song_id=song_id, tracks=tracks)
+    with pytest.warns(UserWarning, match="AFTER positions exist"):
+        M.add_time_signature_point(
+            db_conn, song_id=song_id, start_bar=2.0, numerator=5, denominator=4,
+        )
+
+
+def test_the_ordinary_order_is_silent(db_conn, song_and_tracks, recwarn):
+    """A build.py authors its meter before it materializes anything, and a
+    re-run re-authors identical points. Neither may warn, or the warning is one
+    every build prints and nobody reads."""
+    song_id, tracks = song_and_tracks
+    M.add_time_signature_point(
+        db_conn, song_id=song_id, start_bar=1.0, numerator=4, denominator=4,
+    )
+    M.add_time_signature_point(
+        db_conn, song_id=song_id, start_bar=5.0, numerator=7, denominator=4,
+    )
+    arr = Arrangement()
+    arr.meter_change(at_bar=5, meter="7/4")
+    arr.section("a", function="verse", bars=4, layers={"Drums": KICK})
+    arr.section("b", function="chorus", bars=4, layers={"Drums": KICK})
+    arr.materialize(db_conn, song_id=song_id, tracks=tracks)
+    # ...and the state-converger re-run, which re-authors the same points.
+    arr.materialize(db_conn, song_id=song_id, tracks=tracks)
+    assert [w for w in recwarn if "AFTER positions exist" in str(w.message)] == []
+
+
+def test_a_point_before_every_position_does_not_warn(db_conn, song_and_tracks):
+    """Changing the map at a bar nothing sits after re-times nothing."""
+    song_id, tracks = song_and_tracks
+    arr = Arrangement()
+    arr.section("a", function="verse", bars=4, layers={"Drums": KICK})
+    arr.materialize(db_conn, song_id=song_id, tracks=tracks, start_bar=9)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        M.add_time_signature_point(
+            db_conn, song_id=song_id, start_bar=20.0, numerator=7, denominator=4,
+        )
+
+
+def test_a_meter_that_moves_nothing_is_silent(db_conn, song_and_tracks):
+    """Several songs' builds author the bar-1 row after creating content, and
+    declaring 4/4 where 4/4 was already in force moves no position. A warning
+    that fired on those would fire on almost every build, and a warning every
+    build prints is one nobody reads."""
+    song_id, tracks = song_and_tracks
+    _two_section_arrangement().materialize(db_conn, song_id=song_id, tracks=tracks)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        M.add_time_signature_point(
+            db_conn, song_id=song_id, start_bar=1.0, numerator=4, denominator=4,
+        )
+
+
+def test_a_bar_one_meter_that_does_move_things_still_warns(db_conn, song_and_tracks):
+    """The precision cuts one way only: 4/4 -> 7/4 at bar 1 re-times every
+    position in the song, and that must still be said."""
+    song_id, tracks = song_and_tracks
+    _two_section_arrangement().materialize(db_conn, song_id=song_id, tracks=tracks)
+    with pytest.warns(UserWarning, match="AFTER positions exist"):
+        M.add_time_signature_point(
+            db_conn, song_id=song_id, start_bar=1.0, numerator=7, denominator=4,
+        )
+
+
+def test_the_warning_names_the_bars_that_moved(db_conn, song_and_tracks):
+    song_id, tracks = song_and_tracks
+    _two_section_arrangement().materialize(db_conn, song_id=song_id, tracks=tracks)
+    with pytest.warns(UserWarning) as caught:
+        M.add_time_signature_point(
+            db_conn, song_id=song_id, start_bar=2.0, numerator=7, denominator=4,
+        )
+    message = str(caught[0].message)
+    assert "7/4 written at bar 2" in message
+    assert "bars " in message

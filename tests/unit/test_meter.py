@@ -7,9 +7,15 @@ two-ruler bug (#566) coming back.
 """
 from __future__ import annotations
 
+import ast
+import pathlib
+
 import pytest
 
+from hallucinote import meter as meter_module
+from hallucinote.melody import harmony_fit as harmony_fit_module
 from hallucinote.meter import (
+    STRONG_BEAT_TOLERANCE,
     BarGrid,
     MeterMap,
     MeterPoint,
@@ -70,10 +76,26 @@ def test_uniform_is_the_bridge_from_the_beats_per_bar_scalar():
     assert MeterMap.uniform(7.0) == MeterMap.parse("7/4")
 
 
-def test_a_scalar_that_is_not_a_whole_number_of_beats_must_say_its_meter():
-    """3.5 beats is 7/8, but the scalar cannot say so — and 3.0 is 3/4 or 6/8."""
+def test_a_scalar_resolves_to_the_finest_denominator_that_makes_it_whole():
+    """3.5 beats IS 7/8; 3.25 is 13/16. The scalar cannot distinguish 6/8 from
+    3/4 (both are 3 beats), so it takes the simplest reading and a song that
+    means 6/8 declares it."""
+    assert MeterMap.uniform(3.5) == MeterMap.parse("7/8")
+    assert MeterMap.uniform(3.25) == MeterMap.parse("13/16")
+    assert MeterMap.uniform(3.0) == MeterMap.parse("3/4")
+
+
+def test_a_scalar_finer_than_a_thirty_second_must_say_its_meter():
     with pytest.raises(ValueError, match="declare the meter"):
-        MeterMap.uniform(3.5)
+        MeterMap.uniform(4.0 / 3.0)
+
+
+@pytest.mark.parametrize("per_bar", [0.0, -4.0])
+def test_a_bar_must_have_beats_in_it(per_bar):
+    with pytest.raises(ValueError, match="must be > 0"):
+        MeterMap.uniform(per_bar)
+    with pytest.raises(ValueError, match="must be > 0"):
+        BarGrid.uniform(per_bar, 16.0)
 
 
 def test_with_point_is_idempotent_on_an_identical_redeclaration():
@@ -251,3 +273,62 @@ def test_describe_says_what_was_declared():
     m = MeterMap([MeterPoint(1.0, 4, 4), MeterPoint(86.0, 7, 4)])
     assert m.describe() == "bar 1 -> 4/4 · bar 86 -> 7/4"
     assert MeterMap(()).describe().startswith("4/4 throughout")
+
+
+# ---------------------------------------------------------------------------
+# The leaf invariant — load-bearing, so asserted rather than assumed
+# ---------------------------------------------------------------------------
+
+
+def test_meter_imports_nothing_else_from_the_package():
+    """`hallucinote.meter` is what the authoring side and the sync side share.
+    The moment it imports either of them the dependency runs the wrong way and
+    the second ruler has somewhere to grow back — so this is asserted, not left
+    to review. (Same idiom as `tests/unit/tuning/test_isolation.py`.)"""
+    source = pathlib.Path(meter_module.__file__).read_text()
+    tree = ast.parse(source)
+    imported: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported += [a.name for a in node.names]
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            imported.append(node.module)
+    leaked = sorted(n for n in imported if n.split(".")[0] == "hallucinote")
+    assert leaked == [], leaked
+
+
+def test_the_strong_beat_tolerance_has_one_home():
+    """The ruler owns the concept and the constant; the melody lens reads it
+    rather than keeping a second copy, so widening the window is one edit."""
+    assert harmony_fit_module.STRONG_BEAT_TOLERANCE is STRONG_BEAT_TOLERANCE
+    grid = BarGrid.uniform(4.0, 16.0)
+    assert grid.is_strong_beat(0.0) is True      # the default is the shared one
+    assert grid.is_strong_beat(1.0) is False
+
+
+# ---------------------------------------------------------------------------
+# Past the end of the grid
+# ---------------------------------------------------------------------------
+
+
+def test_a_note_past_the_span_keeps_the_last_bar_s_pattern():
+    """A section's notes are not filtered against its declared length, so an
+    overhanging note is ordinary. `start % beats_per_bar` extrapolated forever;
+    a grid that stopped at its last bar line would silently re-grade those
+    notes, which on a grading surface is worse than a loud break."""
+    grid = BarGrid.uniform(4.0, 16.0)              # bars at 0, 4, 8, 12
+    assert grid.is_strong_beat(16.0) is True       # one bar past the end
+    assert grid.is_strong_beat(18.0) is True       # ...and its midpoint
+    assert grid.is_strong_beat(17.0) is False
+    assert grid.is_strong_beat(20.0) is True       # two bars past
+
+
+def test_extrapolation_continues_the_last_bar_s_own_meter():
+    """Past a grid that ENDS in 7/4, the continuing bar is 7/4 — not the
+    song's opening meter and not the grid's first bar."""
+    m = MeterMap([MeterPoint(1.0, 4, 4), MeterPoint(2.0, 7, 4)])
+    grid = m.grid_for(1.0, 3.0)                    # 4/4 then 7/4: 0-4, 4-11
+    assert grid.is_strong_beat(11.0) is True       # the next bar's downbeat
+    assert grid.is_strong_beat(14.5) is True       # that bar's midpoint (11+3.5)
+    assert grid.is_strong_beat(15.0) is False
+    assert grid.offset_in_bar(12.0) == pytest.approx(1.0)

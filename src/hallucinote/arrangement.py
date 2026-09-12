@@ -94,6 +94,11 @@ class PlacedSection:
     are carried rather than recomputed because bar arithmetic against a single
     ``beats_per_bar`` is exactly what #566 retired: a consumer that multiplies
     bars by a scalar is wrong for every bar after a meter change.
+
+    Both are **required**, deliberately. They are derived facts that must agree
+    with ``start_bar``/``end_bar``, so there is no neutral default — a zero
+    agrees with no bar range at all, and the lens bridges read them rather than
+    recompute, so a section constructed with one would grade silently wrong.
     """
 
     name: str
@@ -103,8 +108,8 @@ class PlacedSection:
     energy: float
     genre: str | None
     layers: Layers
-    start_beat: float = 0.0
-    length_beats: float = 0.0
+    start_beat: float
+    length_beats: float
     key_pc: int | None = None
     mode: Mode | None = None
     progression: Progression | None = None
@@ -138,14 +143,23 @@ class Arrangement:
     after a meter change lands on the beat push will put it on. There is no
     second ruler and no ``beats_per_bar`` accumulation.
 
-    Meter is declared in one of three ways, all of which mean the same thing:
+    Meter is declared in one of three ways, which differ in **which bar they
+    name**:
 
     - ``Arrangement(meter="7/4")`` — the meter from bar 1 (``beats_per_bar=7.0``
       is the scalar spelling of the same thing, kept for songs that use it; a
       scalar cannot tell 6/8 from 3/4, so declare ``"6/8"`` when you mean it).
-    - ``meter_change(at_bar=86, meter="7/4")`` — a map point.
-    - ``section(..., meter="7/4")`` — sugar for a map point at that section's
-      start bar, and nothing more.
+    - ``meter_change(at_bar=86, meter="7/4")`` — a point at an **absolute song
+      bar**, wherever the layout starts.
+    - ``section(..., meter="7/4")`` — sugar for a point at **that section's own
+      start bar**, and nothing more. Under ``plan(start_bar=17)`` the section
+      moves and its meter point moves with it; an ``at_bar=`` point does not.
+
+    Those two coordinate systems agree whenever the layout starts at bar 1,
+    which is every song in the tree. Mixing them under a non-1 ``start_bar`` is
+    the case to be careful with: ``meter_map`` prints the bar-1 layout, so read
+    ``meter_map_at(start_bar)`` — what ``plan()`` and ``materialize()`` actually
+    use — when the layout starts anywhere else.
 
     **A meter persists until the next point.** That is what a map means, and a
     section does not own a meter or restore the previous one when it ends. So a

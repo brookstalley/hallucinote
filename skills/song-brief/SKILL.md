@@ -448,15 +448,19 @@ it is a **projection** concern and is not the user's problem.
   offer *"we'll represent it as a global 1/4"* as though it were a creative
   option. It isn't; it's a rendering detail.
 
-**Record the true meter map.** `M.add_time_signature_point` takes one row per
-meter change, at the bar it starts on — a within-song change is ordinary authored
-state, so the meter row in the brief resolves DECIDED like any other.
+**Record the true meter map.** Declare it on the arrangement
+(`Arrangement(meter=…)`, `meter_change(at_bar=…)`, `section(..., meter=…)`),
+which places every section through it and writes it to the song — a within-song
+change is ordinary authored state, so the meter row in the brief resolves
+DECIDED like any other.
 
 **What is still open, and is yours to know rather than the user's to weigh:**
 only the bar-1 row reaches Live (Live 12.4's MCP has no `song_signature`
 automation target), so Live's ruler reads one meter for the whole song and push
-alerts about the rest. The meter therefore has to be *felt* — bar-scaled
-generators and within-bar accent groupings — not read off the grid.
+alerts about the rest. That costs Live's bar NUMBERING and its metronome, not
+playback — every position is authored in absolute beats, which is what Live
+anchors content in — so the meter does not have to be carried as accent to be
+heard correctly.
 
 Second, a multi-meter song costs more to author than a single-meter one, which
 is worth knowing before you encourage one — but that cost is build-time

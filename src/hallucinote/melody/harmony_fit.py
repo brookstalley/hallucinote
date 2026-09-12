@@ -18,7 +18,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Literal, Sequence
 
-from hallucinote.meter import BarGrid
+from hallucinote.meter import STRONG_BEAT_TOLERANCE, BarGrid
 from hallucinote.theory.model import Progression
 
 ToneClass = Literal["chord-tone", "scale-tone", "chromatic"]
@@ -27,10 +27,6 @@ ToneClass = Literal["chord-tone", "scale-tone", "chromatic"]
 # 2nd or smaller. (Kept as a local literal so this module needs no cross-import.)
 _STEP_MAX_SEMITONES = 2
 
-# An onset within this many beats of a strong metrical position counts as "on" it —
-# tight, so only genuinely on-beat notes register (authored micro-timing is the
-# performance layer's concern, not the melody lens's).
-_STRONG_BEAT_TOLERANCE = 1e-6
 
 
 @dataclass(frozen=True)
@@ -89,7 +85,7 @@ def _is_strong_beat(start_beats: float, bars: BarGrid) -> bool:
     read calls beat 4 of a 7/4 bar strong, because 4 divides the song's bar
     length; in a 7/4 bar it is an off-beat, and the mid-point is 3.5.
     """
-    return bars.is_strong_beat(start_beats, tolerance=_STRONG_BEAT_TOLERANCE)
+    return bars.is_strong_beat(start_beats, tolerance=STRONG_BEAT_TOLERANCE)
 
 
 def analyze_harmony_fit(

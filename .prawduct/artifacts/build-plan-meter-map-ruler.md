@@ -13,7 +13,12 @@ governed_by:
       - "a dimension is a ruler + (ideally) a read-side lens (BOTH SIDES) → conforms: Chunks 02-03 are the ruler, Chunk 04 the reads"
   - artifact: data-model
     dispositions:
-      - "meter as a projection concern — the DB records what the song IS (#497) → conforms: this plan extends the same principle one layer up, to the authoring side"
+      - "the SQLite DB is materialized state, never the source of truth → conforms: the song's meter is declared in build.py on the Arrangement and materialized into time_signature_map, not edited in the DB"
+      - "all writes go through mutators; no write SQL in callers → conforms: materialize authors meter via M.add_time_signature_point, and the retiming check reads through conn.execute SELECTs only"
+      - "every mutator emits exactly one event, in the same transaction as its state change → conforms: no mutator is added or changed; add_time_signature_point's existing emit is untouched"
+      - "identity is a Python-generated UUID from the mutators, never a database rowid → inapplicable because this plan adds no table, no row identity and no id-bearing column"
+      - "Live's own identifiers are never used as identity → inapplicable because nothing here reads or stores a Live id"
+      - "an existing song DB is opened through init_db, never a bare connect → conforms: no new open path; schema.sql's change is comment-only, so no _ADDED_COLUMNS migration is owed"
 partition: serial — 02 needs 01's value type, 03 needs 02's plan output, 04 needs 03's PlacedSection fields
 last_validated: 2026-09-12
 ---
@@ -57,13 +62,34 @@ sugar**, and the read side ships **with** the authoring fix (#247's BOTH-SIDES r
 - [x] Chunk 04: the read side reads the map (R5)
 - [ ] Chunk 05: the push alert tells the operator the truth (#567) + artifact amendment
 
-Context: All code written and the full suite is green on `feat/566-meter-map` (6605
-passed / 2 skipped at the 01-03 boundary, against a 6508/2 baseline). Chunk 05's
-deliverables are all landed — the alert, `arrangement-model.md`'s promotion of
-meter-feel(ii), the `bar_ruler` prose in `schema.sql` + `push/arrangement.py`, the
-`operator-verification.md` METER-0912 entry, and the change-log entry — and its box
-stays unticked until its `cumulative` Critic review has run and its findings are
-dispositioned, because ticking the last box is what disarms the Stop gates.
+Context: All five chunks are built on `feat/566-meter-map`, and the `cumulative`
+Critic review (`rev-20260912T143558Z-dfbc97bb`) has run — 5 blocking, 13 warning,
+7 note — with every finding dispositioned in one pass and the fixes folded into a
+single commit. What that review moved, beyond paperwork:
+
+- **The author-facing docs were the real gap** (R-10, blocking). The bundle moved the
+  ruler in `src/` and amended the `.prawduct/` artifacts, and left every document that
+  *instructs the composing agent* still describing the two-ruler world — including the
+  file seven skills cite. Chunk 05's Deliverables now name that sweep, because it was
+  a deliverable all along and the plan had not said so.
+- **The R4 guard was point-in-time** (R-5 / R-19). `materialize()` checks map agreement
+  when it runs, so meter written AFTER positions exist was unguarded — and worse than
+  before, because those rows now carry `map` and the push detector drops `map` rows by
+  design. Closed where the map changes rather than where positions are written:
+  `add_time_signature_point` warns when the write actually moves an existing position's
+  resolved beat. It asks whether beats MOVE, not whether the map was touched, so the
+  ordinary order (meter first, then materialize, then a state-converger re-run) is
+  silent — the first cut of it fired on four existing tests, which is what a warning
+  every build prints looks like before you catch it.
+- **The alert was hedged** (R-7 / R-20). It told the operator the hand-add "changes
+  nothing" while METER-0912 — this branch's own probe of exactly that — is PENDING, and
+  this plan's own Requirements Confidence forbids claiming safe until it clears.
+- **A grading surface shifted silently** (R-9). `BarGrid` clamped at its last bar where
+  `start % beats_per_bar` extrapolated forever, so a note overhanging a section's
+  declared length re-graded. It extrapolates now, continuing the last bar's own meter.
+
+Chunk 05's box stays unticked until `verify-resolutions` clears — ticking the last box
+is what disarms the Stop gates.
 
 **Two deviations from this plan as written, both deliberate:**
 
@@ -295,6 +321,17 @@ after this plan.
   than a loud break).
 - **Acceptance criteria:** #566 acceptance 4 — a lens reading strong beats across a
   13/16 bar in a 3/4 song reads that bar's meter, not the song's.
+- **Exposed API:** `hallucinote.melody` — and unlike Chunk 02's, this one is
+  **breaking, not additive**. `SectionMelody.beats_per_bar` (a float) becomes
+  `bars` (a `BarGrid`), and `analyze_harmony_fit(..., beats_per_bar=)` becomes
+  `bars=`. Four songs in the separate `hallucinote-songs` repo construct
+  `SectionMelody(...)` directly (punk-fate, swell, the-argument, audio-hearing).
+  **Versioning call: break it, with no shim.** The check was run across all 12
+  songs and none passes either keyword — every one relies on the 4/4 default,
+  which `bars=None` reproduces exactly — so a compatibility shim would carry a
+  scalar nobody passes and re-admit the ambiguity (3 beats is 3/4 or 6/8) the
+  grid exists to remove. The change-log carries the migration line for a song
+  that does pass it later: `beats_per_bar=n` → `bars=MeterMap.uniform(n).grid_for(start_bar, end_bar)`.
 - **Done when:**
   1. Acceptance criteria met and tests pass
   2. `/prawduct:critic` run and blocking findings resolved
@@ -308,17 +345,29 @@ after this plan.
   placement and accent" — predates #221 and is *actively wrong* after Chunk 02: the
   song's literal meter now lives in the map and every position resolves through it.
 - **Depends on:** Chunk 04
-- **Artifacts consumed:** #567; `sync/push/tempo.py:101-120`; `arrangement-model.md` §1
+- **Artifacts consumed:** #567; `src/hallucinote/sync/push/tempo.py`;
+  `.prawduct/artifacts/arrangement-model.md` §1
 - **Deliverables:**
-  - `plan_push_time_signature_map`'s alert names each non-bar-1 point as
+  - `src/hallucinote/sync/push/tempo.py` — `plan_push_time_signature_map`'s alert names each non-bar-1 point as
     `bar N -> num/den`, in bar order, as an **optional** hand-add for Live's ruler, and
     drops the accent advice. The reach limit itself stays stated on the same channel —
     it is still true and this is still its one home.
-  - `arrangement-model.md` §1: meter-feel(ii) is promoted from **candidate** to a built
-    structure intent, with the rationale (`alien` is the second odd-meter song the
-    entry named as the trigger) and what it cost. The candidate-vs-built sentence is
-    amended, not appended to.
-  - `arrangement.py` module docstring, `data-model.md` and `db/schema.sql:181-190`:
+  - `.prawduct/artifacts/arrangement-model.md` §1: meter-feel(ii) is promoted from
+    **candidate** to a built structure intent, with the rationale (`alien` is the
+    second odd-meter song the entry named as the trigger) and what it cost. The
+    candidate-vs-built sentence is amended, not appended to.
+  - **Every author-facing description of the retired ruler**, which is where the
+    composing agent actually reads: `docs/song-authoring-conventions.md` (the Meter
+    section — cited by seven skills), `docs/known-issues.md`, `docs/song-workflow.md`,
+    `docs/song-new-checklist.md`, `skills/song-new/SKILL.md`,
+    `skills/song-brief/SKILL.md` and
+    `.prawduct/artifacts/elicitation-and-stage-exit-criteria.md`. Moving the ruler in
+    `src/` and amending only the `.prawduct/` artifacts leaves the instructions that
+    produce next session's song saying the opposite of the code.
+  - The three DB carriers that still assert the retired rule in the present tense:
+    `src/hallucinote/db/mutations/arrangement.py`, `src/hallucinote/db/mutations/score.py`
+    and `src/hallucinote/db/connection.py`.
+  - `src/hallucinote/arrangement.py` module docstring, `.prawduct/artifacts/data-model.md` and `src/hallucinote/db/schema.sql`:
     `uniform` is described as provenance on historical rows, not as a live ruler.
   - `.prawduct/operator-verification.md`: the Live-anchors-in-beats probe, written as
     the two-minute check it is — open `alien`'s set, note a downstream clip's

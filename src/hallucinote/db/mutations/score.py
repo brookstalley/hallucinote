@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 import sqlite3
+import warnings
 from typing import Any
+
+from hallucinote.meter import MeterMap, MeterPoint
 
 from ._core import (
     E,
@@ -48,13 +51,14 @@ def create_section(
     correlation when NULL, never coerced to a value.
 
     ``bar_ruler`` records which ruler produced ``start_bar`` / ``end_bar``:
+    ``'map'`` when they were resolved through the song's ``time_signature_map``
+    — which every writer in the tree does since #566, and which is the default,
+    so a new writer is correct without knowing the rule exists — and
     ``'uniform'`` when they were accumulated against a single ``beats_per_bar``,
-    ``'map'`` when they were authored against the song's ``time_signature_map``.
-    The default is ``'map'`` so a new writer is correct without knowing the rule
-    exists — only uniform accumulation needs to declare itself, and only one
-    module in the tree does it. Re-stamped on the update branch too, so
-    rewriting a ``build.py`` corrects a stale ``'uniform'`` rather than leaving
-    the row asserting a ruler it no longer used.
+    which nothing authors any more and only rows written before #566 carry.
+    Re-stamped on the update branch too, so re-running a ``build.py`` corrects a
+    stale ``'uniform'`` rather than leaving the row asserting a ruler it no
+    longer used.
     """
     _require_bar_floor("start_bar", start_bar)
     if end_bar <= start_bar:
@@ -355,6 +359,73 @@ def remove_tempo_point(
 # ---------------------------------------------------------------------------
 
 
+def _warn_if_positions_would_be_retimed(
+    conn: sqlite3.Connection,
+    song_id: str,
+    start_bar: float,
+    numerator: int,
+    denominator: int,
+) -> None:
+    """Warn when a meter write moves positions the song already holds.
+
+    Every bar position in this song resolves to beats through the meter map, so
+    changing the map moves the positions after the change — sections, cue points
+    and arrangement placements alike — while the rows themselves keep the bar
+    numbers they were written with. Nothing looks wrong afterwards.
+
+    What fires is the order that silently corrupts: meter written AFTER
+    positions exist. `Arrangement.materialize` checks map agreement, but it
+    checks at the moment it runs, so a later write is invisible to it; and the
+    rows it wrote carry `bar_ruler="map"`, which tells the push planner they
+    were resolved through the map and stops its divergence detector reading
+    them. This is the only place that ordering is visible.
+
+    **It asks whether beats actually move, not whether the map was touched.**
+    A bar-1 row written after a placement is ordinary — several songs' builds
+    do it — and declaring 4/4 where 4/4 was already in force moves nothing. A
+    warning that fired on those would fire on almost every build, and a warning
+    every build prints is one nobody reads.
+    """
+    rows = conn.execute(
+        """SELECT start_bar, numerator, denominator FROM time_signature_map
+           WHERE song_id = ?""",
+        (song_id,),
+    ).fetchall()
+    before = MeterMap.from_rows(rows)
+    after = MeterMap(
+        [p for p in before.points if abs(p.start_bar - start_bar) >= 1e-9]
+        + [MeterPoint(start_bar, numerator, denominator)]
+    )
+
+    positions = conn.execute(
+        """SELECT end_bar AS bar FROM sections         WHERE song_id = ?
+           UNION SELECT position_bar          FROM cue_points       WHERE song_id = ?
+           UNION SELECT end_bar               FROM arrangement_clips WHERE song_id = ?""",
+        (song_id, song_id, song_id),
+    ).fetchall()
+    moved = [
+        float(row["bar"])
+        for row in positions
+        if abs(after.beats_at(float(row["bar"])) - before.beats_at(float(row["bar"])))
+        > 1e-9
+    ]
+    if not moved:
+        return
+    shown = ", ".join(f"{b:g}" for b in sorted(moved)[:8])
+    if len(moved) > 8:
+        shown += f", and {len(moved) - 8} more"
+    warnings.warn(
+        f"meter {numerator}/{denominator} written at bar {start_bar:g} AFTER "
+        f"positions exist past it: {len(moved)} authored bar position(s) now "
+        f"resolve to different beats than the map they were authored against "
+        f"gave them (bars {shown}). Their bar numbers are unchanged, so nothing "
+        f"looks wrong, and the push planner reads them as map-resolved. Author "
+        f"the song's meter BEFORE materializing its arrangement — re-running "
+        f"the song's build.py does exactly that and settles it.",
+        stacklevel=3,
+    )
+
+
 @_atomic
 def add_time_signature_point(
     conn: sqlite3.Connection,
@@ -393,6 +464,9 @@ def add_time_signature_point(
         if (existing["numerator"], existing["denominator"]) == (numerator, denominator):
             _record_touch_if_session("time_signature_point", pid)
             return MutatorResult(pid, "unchanged")
+        _warn_if_positions_would_be_retimed(
+            conn, song_id, start_bar, numerator, denominator,
+        )
         conn.execute(
             "UPDATE time_signature_map SET numerator = ?, denominator = ? WHERE id = ?",
             (numerator, denominator, pid),
@@ -406,6 +480,9 @@ def add_time_signature_point(
         _touch_song(conn, song_id)
         _record_touch_if_session("time_signature_point", pid)
         return MutatorResult(pid, "updated")
+    _warn_if_positions_would_be_retimed(
+        conn, song_id, start_bar, numerator, denominator,
+    )
     pid = _uuid()
     conn.execute(
         """INSERT INTO time_signature_map

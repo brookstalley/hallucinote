@@ -14,9 +14,6 @@ from typing import Any
 # push.py, and the package __init__ + domain submodules still import them from
 # here — part of the preserved public surface of the push.py split.
 from ..geometry import (
-    _DEFAULT_NUMERATOR as _DEFAULT_NUMERATOR,
-    _DEFAULT_DENOMINATOR as _DEFAULT_DENOMINATOR,
-    _beats_per_bar as _beats_per_bar,
     _meter_at_bar as _meter_at_bar,
     _split_bar as _split_bar,
     _position_bar_to_beats as _position_bar_to_beats,

@@ -222,7 +222,7 @@ def test_plan_push_time_signature_map_alert_names_the_projection(conn, song):
     _ts_point(conn, song, 9.0, 7, 4)
     plan = push.plan_push_time_signature_map(conn, song_id=song)
     gap = next(n for n in plan.alerts if "song_signature" in n)
-    assert "PLAYBACK IS UNAFFECTED" in gap
+    assert "WHAT IS PUSHED IS UNAFFECTED" in gap
     assert "number bars as 4/4 throughout" in gap
 
 
@@ -241,8 +241,27 @@ def test_the_alert_tells_the_operator_which_changes_to_add_by_hand(conn, song):
     gap = next(n for n in plan.alerts if "song_signature" in n)
 
     assert "bar 86 -> 7/4, bar 87 -> 4/4" in gap, "named, in bar order"
-    assert "optional" in gap
+    assert "You can add these by hand" in gap, "offered, not prescribed"
     assert "accent" not in gap, "the advice to abandon the literal meter is gone"
+
+
+def test_the_alert_does_not_claim_the_hand_add_is_safe(conn, song):
+    """METER-0912 — whether inserting a meter change re-times content already
+    in the set — is PENDING, and this alert is the one place the question
+    reaches a human. It may say what is known (the engine's positions are
+    absolute beats) and must not say what is assumed. Delete this test when the
+    probe clears and the hedge comes out, not before."""
+    M.add_time_signature_point(
+        conn, song_id=song, start_bar=1.0, numerator=4, denominator=4
+    )
+    _ts_point(conn, song, 86.0, 7, 4)
+    gap = next(
+        n for n in push.plan_push_time_signature_map(conn, song_id=song).alerts
+        if "song_signature" in n
+    )
+    assert "UNVERIFIED" in gap
+    assert "on a copy first" in gap
+    assert "position_beats" in gap, "the check itself, not just the caveat"
 
 
 def test_the_hand_add_list_is_capped(conn, song):

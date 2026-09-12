@@ -378,11 +378,12 @@ _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     # set_song_tuning; the core path reads neither. See hallucinote.tuning.
     ("songs", "tuning_ref", "TEXT"),
     ("songs", "tuning_data", "TEXT"),
-    # #496: bar-ruler provenance on the three bar-position tables. `uniform` =
-    # bars accumulated against one beats_per_bar (what `Arrangement.materialize`
-    # does, and the only thing that can diverge from the meter map); `map` = a
-    # position authored directly against `time_signature_map`, which is the
-    # mutator default. NULL = written before this column, which the push
+    # #496: bar-ruler provenance on the three bar-position tables. `map` = a
+    # position resolved through `time_signature_map`, which is the mutator
+    # default and what every writer in the tree now produces; `uniform` = bars
+    # accumulated against one beats_per_bar, the only thing that can diverge
+    # from the meter map, which nothing authors since #566 and only rows written
+    # before it carry. NULL = written before this column, which the push
     # planner reports as unrecorded rather than guessing at. The CHECK text
     # below must stay BYTE-IDENTICAL to schema.sql's CREATE TABLE declarations:
     # the canary compares column presence only and cannot see a drifted CHECK.

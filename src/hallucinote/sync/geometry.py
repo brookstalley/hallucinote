@@ -31,14 +31,6 @@ from typing import Any
 
 from hallucinote.db import queries as Q
 from hallucinote.meter import MeterMap
-from hallucinote import meter as _meter
-
-# The sync layer's spellings of the shared ruler's names. `sync.push` re-exports
-# all three as part of its own surface, so they are named here rather than
-# imported at each use site.
-_DEFAULT_NUMERATOR = _meter.DEFAULT_NUMERATOR
-_DEFAULT_DENOMINATOR = _meter.DEFAULT_DENOMINATOR
-_beats_per_bar = _meter.beats_per_bar
 
 
 def _meter_at_bar(
@@ -51,6 +43,15 @@ def _meter_at_bar(
     first point's meter — matches Live's behavior for unmarked regions.
     """
     return MeterMap.from_rows(ts_points).meter_at(bar)
+
+
+def _beats_per_bar_at(
+    bar: float,
+    ts_points: list[sqlite3.Row],
+) -> float:
+    """Beats in the bar at a 1-based bar position — the meter there, counted in
+    quarter notes."""
+    return MeterMap.from_rows(ts_points).beats_per_bar_at(bar)
 
 
 def _split_bar(

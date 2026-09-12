@@ -91,14 +91,38 @@ beats) and one strong-beat predicate, which now reads the bar the note is in:
 a 7/4 bar's strong beats are its 1 and its 4.5, where `start % beats_per_bar`
 called its beat 4 strong because 4 divides the *song's* bar length.
 
+**MIGRATION — `hallucinote.melody` breaks, deliberately and without a shim.**
+`SectionMelody.beats_per_bar` (a float) becomes `bars` (a `BarGrid`), and
+`analyze_harmony_fit(..., beats_per_bar=)` becomes `bars=`. Four songs in the
+separate `hallucinote-songs` repo construct `SectionMelody(...)` directly and
+none passes either keyword — every one relies on the 4/4 default, which
+`bars=None` reproduces exactly — so nothing needs migrating today. A song that
+does pass one changes:
+
+    SectionMelody(..., beats_per_bar=n)
+    ->  SectionMelody(..., bars=MeterMap.uniform(n).grid_for(start_bar, end_bar))
+
+No compatibility shim: a scalar cannot say whether 3 beats is 3/4 or 6/8, and
+accepting one back would re-admit the ambiguity the grid exists to remove.
+
+One behaviour the grid had to be taught: `start % beats_per_bar` extrapolated
+past the end of a section forever, and a grid that stopped at its last bar line
+would silently re-grade any note overhanging the section's declared length —
+which nothing filters, so overhanging notes are ordinary. The grid continues
+the last bar's own meter instead.
+
 **#567 — the alert stopped advising despair.** `plan_push_time_signature_map`
 is the one place Live's meter reach limit is stated, and its advice — "the felt
 meter has to live in note placement and accent" — predates #221 and was the
 opposite of what the owner actually did for `alien`. It now says playback is
 unaffected (every position is authored in absolute beats, which is the unit Live
 anchors content in), names what is actually lost (Live's ruler and metronome),
-and lists each non-bar-1 point as `bar N -> num/den` in bar order as an optional
-hand-add. The reach limit itself is still stated, on the same channel.
+and lists each non-bar-1 point as `bar N -> num/den` in bar order as an offered
+hand-add. The reach limit itself is still stated, on the same channel — and so
+is the open question: the alert says in as many words that whether inserting a
+meter change leaves already-placed content where it is has not been checked
+against a real set, and names the two-second check. It is the one place this
+reaches a human, so it may say what is known and not what is assumed.
 
 **One assumption is unsettled and is enqueued, not waived.** R1 rests on Live
 anchoring arrangement content in beats, so that adding a meter change relabels
@@ -110,6 +134,25 @@ own set.
 **Not in this branch, deliberately:** re-authoring `alien` on the map. It is
 #566's last acceptance criterion, it lives in the separate `hallucinote-songs`
 repo, and the owner declined it here.
+
+**What the cumulative review changed, beyond paperwork.** Two findings were
+worth the round. The first: the bundle moved the ruler in `src/` and amended the
+design artifacts, and left every document that *instructs* the composing agent
+still describing the two-ruler world — `docs/song-authoring-conventions.md`
+(cited by seven skills) told an author "there is no setting that makes them
+agree", and `skills/song-new` told it to carry the meter as felt groove. A
+composing agent reads those, not the code. Swept.
+
+The second: the R4 guard was point-in-time. `materialize()` checks map agreement
+when it runs, so meter written AFTER positions exist was unguarded — and worse
+than before this change, because those rows now carry `map` and push's
+divergence detector drops `map` rows by design, where the same song's rows used
+to say `uniform` and raise. Closed where the map changes rather than where the
+positions are written: `add_time_signature_point` warns when a meter write
+actually moves an existing position's resolved beat. It asks whether beats MOVE,
+not whether the map was touched — the first cut asked the cheaper question and
+fired on four existing tests, which is what a warning every build prints looks
+like before you catch it.
 
 ## 2026-09-11 — The release audit's second pass: one test folded in, two candidates read out
 

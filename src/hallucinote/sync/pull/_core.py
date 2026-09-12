@@ -10,7 +10,6 @@ from dataclasses import dataclass, field, asdict
 from typing import Any
 
 from ..geometry import (
-    _beats_per_bar,
     _beats_to_position_bar,
     _join_bar_beat,
 )
@@ -215,7 +214,6 @@ __all__ = [
     "_bool_db",
     "_ints_differ",
     "_parse_signature",
-    "_beats_per_bar",
     "_join_bar_beat",
     "_is_numeric_id_name",
     "_beats_to_position_bar",

@@ -33,10 +33,21 @@ from typing import Any, Iterable, Sequence
 DEFAULT_NUMERATOR = 4
 DEFAULT_DENOMINATOR = 4
 
-# How far off a bar line or a bar's midpoint a note may sit and still read as
-# landing on it. A sixty-fourth at 120bpm is ~0.06 beats, so this admits
-# notation-grade rounding without admitting a deliberate off-beat placement.
+# How far off a bar line or a bar's midpoint an onset may sit and still read as
+# landing on it. Deliberately float-noise wide and not a musical window: an
+# authored strong-beat onset IS the bar line, so this admits accumulated
+# floating-point error and nothing else. Widening it to a musical value (a
+# sixty-fourth at 120bpm is ~0.06 beats) would change what the melody lens
+# grades as strong — a decision to take deliberately, not a constant to nudge.
+# It is the default of `BarGrid.is_strong_beat`, which is the only reader.
 STRONG_BEAT_TOLERANCE = 1e-6
+
+# Float slack when deciding which bar a beat falls in. A beat sitting exactly on
+# a bar line belongs to the bar it opens, not the one it closes, and binary
+# floats do not land exactly on an accumulated sum. Distinct from the tolerance
+# above: this one rounds a POSITION to a bar, that one grades an onset against
+# the bar it is already in.
+_BAR_EPS = 1e-9
 
 
 def beats_per_bar(numerator: int, denominator: int) -> float:
@@ -133,40 +144,62 @@ class BarGrid:
             )
 
     @classmethod
-    def uniform(cls, beats_per_bar_: float, length_beats: float) -> "BarGrid":
+    def uniform(cls, per_bar: float, length_beats: float) -> "BarGrid":
         """The single-meter grid — what a ``beats_per_bar`` scalar meant."""
-        if beats_per_bar_ <= 0:
-            raise ValueError(f"beats_per_bar must be > 0, got {beats_per_bar_}")
-        count = max(1, int(round(length_beats / beats_per_bar_)))
+        if per_bar <= 0:
+            raise ValueError(f"beats per bar must be > 0, got {per_bar}")
+        count = max(1, int(round(length_beats / per_bar)))
         return cls(
-            bar_starts=tuple(i * beats_per_bar_ for i in range(count)),
-            bar_lengths=tuple(beats_per_bar_ for _ in range(count)),
+            bar_starts=tuple(i * per_bar for i in range(count)),
+            bar_lengths=tuple(per_bar for _ in range(count)),
         )
 
     def bar_index_at(self, beat: float) -> int:
-        """Which bar of the span ``beat`` falls in (clamped to the span)."""
+        """Which bar of the span ``beat`` falls in (clamped to the last bar).
+
+        A beat past the grid's end reports the last bar; :meth:`offset_in_bar`
+        is what continues the pattern beyond it.
+        """
         index = 0
         for i, start in enumerate(self.bar_starts):
-            if start <= beat + STRONG_BEAT_TOLERANCE:
+            if start <= beat + _BAR_EPS:
                 index = i
             else:
                 break
         return index
 
+    def offset_in_bar(self, beat: float) -> float:
+        """How far into its bar ``beat`` sits.
+
+        **Past the grid's end the last bar's length keeps repeating**, which is
+        what the ``beat % beats_per_bar`` read this replaced did for every beat.
+        A section's notes are not filtered against its declared length, so a
+        layer carrying a note that overhangs the section end is ordinary — and
+        that note should grade against a continuing bar line, not against
+        whatever offset the final bar happens to give it.
+        """
+        index = self.bar_index_at(beat)
+        offset = beat - self.bar_starts[index]
+        length = self.bar_lengths[index]
+        if index == len(self.bar_starts) - 1 and offset >= length:
+            offset = offset % length
+        return offset
+
     def beats_per_bar_at(self, beat: float) -> float:
         """The length of the bar ``beat`` falls in."""
         return self.bar_lengths[self.bar_index_at(beat)]
 
-    def is_strong_beat(self, beat: float, *, tolerance: float) -> bool:
+    def is_strong_beat(
+        self, beat: float, *, tolerance: float = STRONG_BEAT_TOLERANCE
+    ) -> bool:
         """Does ``beat`` land on its own bar's downbeat or midpoint?
 
         The canonical strong beats of a common-time-like bar are 1 and the
         halfway point — read against the bar the note is actually in, so a 7/4
         bar's midpoint is beat 3.5 of that bar and not the song's beat 2.
         """
-        index = self.bar_index_at(beat)
-        offset = beat - self.bar_starts[index]
-        length = self.bar_lengths[index]
+        length = self.beats_per_bar_at(beat)
+        offset = self.offset_in_bar(beat)
         return (
             abs(offset) <= tolerance
             or abs(offset - length / 2.0) <= tolerance
@@ -197,28 +230,28 @@ class MeterMap:
     # -- construction ------------------------------------------------------
 
     @classmethod
-    def uniform(
-        cls,
-        beats_per_bar_: float = 4.0,
-        *,
-        denominator: int = DEFAULT_DENOMINATOR,
-    ) -> "MeterMap":
+    def uniform(cls, per_bar: float = 4.0) -> "MeterMap":
         """A single-meter song expressed as a one-point map.
 
         This is the bridge from the ``beats_per_bar`` scalar: 4.0 -> 4/4,
-        3.0 -> 3/4, 7.0 -> 7/4. A scalar cannot distinguish 6/8 from 3/4 (both
-        are 3 beats) — that is one of the reasons it is not the ruler — so a
-        song that means 6/8 declares ``"6/8"`` rather than passing 3.0.
+        3.0 -> 3/4, 7.0 -> 7/4, and (through the finest denominator that makes
+        the count whole) 3.5 -> 7/8, 3.25 -> 13/16.
+
+        A scalar cannot distinguish 6/8 from 3/4 — both are 3 beats — so it
+        resolves to the simplest reading, 3/4, and a song that means 6/8
+        declares ``"6/8"``. That ambiguity is one of the reasons the scalar is
+        not the ruler.
         """
-        if beats_per_bar_ <= 0:
-            raise ValueError(f"beats_per_bar must be > 0, got {beats_per_bar_}")
-        numerator = beats_per_bar_ * denominator / 4.0
-        if abs(numerator - round(numerator)) > 1e-9:
-            raise ValueError(
-                f"beats_per_bar={beats_per_bar_} is not a whole number of "
-                f"1/{denominator} notes; declare the meter as 'num/den' instead"
-            )
-        return cls((MeterPoint(1.0, int(round(numerator)), denominator),))
+        if per_bar <= 0:
+            raise ValueError(f"beats per bar must be > 0, got {per_bar}")
+        for denominator in (4, 8, 16, 32):
+            numerator = per_bar * denominator / 4.0
+            if abs(numerator - round(numerator)) <= 1e-9:
+                return cls((MeterPoint(1.0, int(round(numerator)), denominator),))
+        raise ValueError(
+            f"{per_bar} beats per bar is not a whole number of notes down to a "
+            f"1/32; declare the meter as 'num/den' instead"
+        )
 
     @classmethod
     def from_rows(cls, rows: Sequence[Any] | None) -> "MeterMap":
@@ -265,11 +298,6 @@ class MeterMap:
     @property
     def points(self) -> tuple[MeterPoint, ...]:
         return self._points
-
-    @property
-    def is_uniform(self) -> bool:
-        """True when the whole song is one meter (zero or one point)."""
-        return len(self._points) <= 1
 
     def as_rows(self) -> list[dict[str, Any]]:
         """The map as ``time_signature_map``-shaped dicts, in bar order."""

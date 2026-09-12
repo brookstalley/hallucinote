@@ -596,22 +596,34 @@ Planner-side auto-disambiguation is filed as a backlog item.
 
 **Generators take a `beats_per_bar` kwarg (default 4.0).** Bar iteration scales correctly through non-4/4 sections — `kick_stumble(bars=4, beats_per_bar=3.5)` lands bar 2 at beat 3.5, not 4.0. The within-bar layout is still 4/4-shaped (kick on beat 1, snare on beats 2 + 4, tresillo hits at fixed positions). Patterns may overflow short bars or under-fill long ones; the docstrings call this out per generator.
 
+**Declare the song's meter on the arrangement.** It is the authoring surface, and it writes the `time_signature_map` for you:
+
+```python
+arr = Arrangement(meter="7/8")            # the bar-1 meter
+arr.meter_change(at_bar=86, meter="7/4")  # a map point
+arr.meter_change(at_bar=87, meter="4/4")  # ...and back
+arr.section("hang", function="break", bars=1, layers=…, meter="7/4")  # sugar for a
+                                          # point at that section's start bar
+print(arr.meter_map.describe())           # bar 1 -> 4/4 · bar 86 -> 7/4 · bar 87 -> 4/4
+```
+
+**A meter persists until the next point** — that is what a map means. A section does not own a meter and does not restore the previous one at its end, so **a single borrowed bar is two points**, as above. `beats_per_bar=3.5` still works as the scalar spelling of the bar-1 meter (it resolves to 7/8), but a scalar cannot tell 6/8 from 3/4, so declare `"6/8"` when you mean it.
+
+`plan()` walks that map, so a section boundary after a meter change lands on the same absolute beat push computes for it, and `materialize()` writes the map and then **refuses to materialize onto a song whose `time_signature_map` says something else** — one song, one declaration.
+
 For non-4/4 sections:
 
-- Use the library generators with `beats_per_bar=N` if the within-bar 4/4 shape is musically acceptable for the section (e.g. 6/4 — a longer bar with the same downbeat-snare-snare frame).
+- Use the library generators with `beats_per_bar=N` if the within-bar 4/4 shape is musically acceptable for the section (e.g. 6/4 — a longer bar with the same downbeat-snare-snare frame). **A generator's `beats_per_bar` is that PATTERN's bar length, not the song's ruler** — it is a per-call parameter and setting it freely is correct.
 - Hand-author or compose a meter-specific primitive when the within-bar shape matters (e.g. 7/8 with grouping 2+2+3). The `odd-meter-experimental/build.py` example is a worked example for 7/8 + polyrhythm authoring.
-- Name `BEATS_PER_BAR_7_8 = 3.5` (etc.) as a constant in `build.py` and pass it through.
-- Use the time-signature map (`M.add_time_signature_point`) to record **the song's true meter**, including within-song changes: one row per meter change, at the bar it starts on. `start_bar` is a float and rows below 1.0 are refused (bars are 1-based), but there is no ceiling and no one-row limit.
+- `M.add_time_signature_point` remains available for a song that authors its map directly rather than through an `Arrangement`. `start_bar` is a float and rows below 1.0 are refused (bars are 1-based), but there is no ceiling and no one-row limit.
 
-> **The DB records the meter; Live shows a flat ruler.** Live 12.4's MCP has no `song_signature` automation target, so only the bar-1 row reaches Live — `plan_push_time_signature_map` pushes it and raises a push-report *alert* (not a diagnostic note) saying the rest were skipped. That alert is the one place the limit is stated: the song's meter is a property of the authored work, Live's ability to render it is a materialization detail, and the projection is where a projection loss belongs. Author the true meter map regardless.
+> **The DB records the meter; Live shows a flat ruler.** Live 12.4's MCP has no `song_signature` automation target, so only the bar-1 row reaches Live — `plan_push_time_signature_map` pushes it and raises a push-report *alert* (not a diagnostic note) saying the rest were skipped. That alert is the one place the limit is stated: the song's meter is a property of the authored work, Live's ability to render it is a materialization detail, and the projection is where a projection loss belongs.
 >
-> **Realize the meter as felt groove, because the ruler won't carry it.** Bar-scaled generators via `beats_per_bar`, plus hand-authored within-bar accent groupings. Never present that to the user as a creative option — it isn't one; it's what the renderer forces.
+> **The loss is the RULER, not the playback.** Every position the engine authors resolves through the meter map into absolute beats, which is the unit Live anchors arrangement content in — so the song plays correctly whether or not anyone tells Live about the change. What Live gets wrong is bar *numbering* and the metronome. The alert names each non-bar-1 point as `bar N -> num/den` so the operator can add them by hand if they want the ruler to match the score; that is optional and changes nothing the engine writes. (Whether a hand-added change re-times placed content has not been checked against a live set — `operator-verification.md` METER-0912.)
 >
-> **Two bar rulers, and they diverge after the first meter change.** Push translates bar positions through the meter map (`_split_bar` / `_position_bar_to_beats`), while `hallucinote.arrangement` accumulates whole bars against one uniform `beats_per_bar` and never reads the map. `Arrangement(beats_per_bar=...)` is a single value, so there is no setting that makes them agree for a multi-meter song — in a 4/4 song that turns 7/4 at bar 9, bar 13 is beat 48 to the arrangement layer and beat 60 to push (push gains the extra beats every bar after the change adds). Every bar-position row records which ruler produced it, and the arrangement push phase alerts only on the ones that came from the uniform accumulation — so a song authored directly against the map raises nothing, and the alert stops being one an operator learns to skip. It names the placements affected; it cannot repair them.
+> **One bar ruler.** Both push and `hallucinote.arrangement` resolve every bar position through `hallucinote.meter` against the song's map. `bar_ruler="uniform"` rows are HISTORICAL — written before #566, when the arrangement accumulated bars against a single `beats_per_bar` — and the arrangement push phase still alerts on those, naming the placements affected. Re-running the song's `build.py` re-authors them against the map and the alert goes away.
 >
-> Two ways through, both real: **author the placements after the change directly** — `M.add_arrangement_clip` / `M.create_section` take float bars and push resolves them through the map, so `Arrangement` is simply not the tool past that point — or **keep the song single-meter in the DB** and carry the odd groupings as accent alone. Making `Arrangement.plan()` meter-aware is `ARR-4M3T`.
->
-> **What is still open.** `TMP-4J6Q` is the projection half — how a declared meter map actually materializes in Live (per-bar arrangement clips, or the per-scene mechanism `TMP-5K1R` proposes). `ARR-4M3T` is the authoring half — a meter-aware `Arrangement.plan()` and meter-aware read-side lenses. Neither closes the other.
+> **What is still open.** `TMP-4J6Q` / #321 is the projection half — how a declared meter map actually materializes in Live (per-bar arrangement clips, or the per-scene mechanism `TMP-5K1R` proposes). It is platform-capped, not an authoring gap.
 
 ---
 

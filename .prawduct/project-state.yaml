@@ -746,3 +746,7 @@ base_branch: develop
 # by its own learnings byte budget since prawduct 3.6, not by this ceiling. Full reasoning: the 2026-09-08 change-log
 # entry for scope=governance-file-sizes.
 oversized_file_threshold_kb: 55
+learnings_budgets:
+  core.md:
+    kb: 57
+    reason: "the 2026-09-21 migration moved the whole pre-3.6 corpus (102 rules, ~56.3 KB) into core.md verbatim under ## Unsorted; no rule was added, so this is the legacy corpus arriving, not growth. Splitting it into path-scoped area files is real work owed separately, not something to force at migration time by trimming rules to fit. Ceiling is the smallest whole KB above the file so the over-and-grew gate still sees the next addition; new rules pay from duplication or earn their own raise."

@@ -32,6 +32,25 @@
      original concern: no version is pre-bumped, and nothing is mislabelled as
      already shipped.) -->
 
+## 2026-09-21 — Learnings move into the harness-loaded rules directory
+
+<!-- prawduct: type=chore | scope=learnings-migrate-3.6 -->
+
+Prawduct 3.6.1 loads standing rules from `.claude/rules/learnings/`, so the
+102 rules in `.prawduct/learnings.md` were not in context for any session until
+they moved. `prawduct-hook learnings-migrate --apply` wrote them to
+`.claude/rules/learnings/core.md` (no topic mapped to an area glob, so all are
+core). The tool does not carry the `learnings-detail.md` incident narratives
+forward, so they are archived verbatim at
+`.prawduct/artifacts/archive/learnings-detail.md`, where the two rules that cite
+their narrative now point. Migration also dropped the space before three
+leading-dot tokens (`.gitignore`, `.amxd`), restored by hand. References across
+docs and comments now name `core.md`, except two comments in
+`hallucinote_mcp/.../handlers/`: those files are in the MCP wire fingerprint, so
+a comment edit would force a re-vendor; the quoted rule titles still resolve. `project-state.yaml`'s artifact
+entry and the `.gitattributes` note on why learnings are not union-merged now
+name the new home.
+
 ## 2026-09-12 — A release publishes its change log and resets it
 
 <!-- prawduct: type=fix | scope=release-log-roll -->

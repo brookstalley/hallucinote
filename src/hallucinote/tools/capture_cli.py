@@ -203,7 +203,7 @@ def _park_playhead_at_zero(probe) -> str | None:
     # Trust the seek handler's settle poll rather than reading current_song_time
     # back here: Live 12.x's getter can return a stale cached value within the
     # same callback as the setter, so a read-back is not evidence the write
-    # landed (learnings.md, "do NOT verify a transport write by reading the same
+    # landed (.claude/rules/learnings/core.md, "do NOT verify a transport write by reading the same
     # property back"). `settled_beats` is what the handler polled for.
     settled = result.get("settled_beats")
     if settled is None or abs(float(settled)) > _BEAT_EPSILON:

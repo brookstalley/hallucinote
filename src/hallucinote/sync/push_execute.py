@@ -1046,7 +1046,7 @@ def execute_push(
         # Atomic write (temp sibling + os.replace): PSH-5T9D made this file a
         # mid-run READ contract (pollers + --resume), and it's now rewritten
         # N+1× per push — a bare write_text would expose a torn file to a
-        # concurrent reader between truncate and flush (learnings.md: state
+        # concurrent reader between truncate and flush (.claude/rules/learnings/core.md: state
         # writes must be atomic). os.replace is atomic on POSIX + Windows.
         tmp = state_file.with_name(f".{state_file.name}.tmp-{os.getpid()}")
         tmp.write_text(json.dumps(state_payload, indent=2) + "\n")

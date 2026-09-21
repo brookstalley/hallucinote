@@ -555,13 +555,9 @@ artifact_manifest:
       version: 2
       depends_on: [vision, mcp-tool-design]
     - name: learnings
-      file_path: .prawduct/learnings.md
-      version: 2   # split into index (rules) + learnings-detail (narrative) 2026-06-13
+      file_path: .claude/rules/learnings/core.md
+      version: 3   # migrated from .prawduct/learnings.md (+ learnings-detail narratives archived at .prawduct/artifacts/archive/learnings-detail.md) by prawduct 3.6.1-dev.1, 2026-09-21
       depends_on: []
-    - name: learnings-detail
-      file_path: .prawduct/learnings-detail.md
-      version: 1   # incident narratives + how-to-apply; headings mirror learnings.md (rule-only entries omitted)
-      depends_on: [learnings]
     - name: backlog
       file_path: .prawduct/backlog.md
       version: 2
@@ -746,7 +742,11 @@ base_branch: develop
 # the Reasoned Decisions principle working, not bloat. change-log.md is not covered
 # by the raise: it is ROLLED at each release cut instead (docs/release-process.md
 # step 1, "Roll the log"). Do NOT raise past ~58 without deciding that separately:
-# learnings.md sits at ~60 KB and is deliberately left above the ceiling so its
-# compaction nudge, which nobody has acted on yet, keeps firing. Full reasoning: the 2026-09-08 change-log
+# the learnings corpus (now .claude/rules/learnings/core.md, ~58 KB) is governed
+# by its own learnings byte budget since prawduct 3.6, not by this ceiling. Full reasoning: the 2026-09-08 change-log
 # entry for scope=governance-file-sizes.
 oversized_file_threshold_kb: 55
+learnings_budgets:
+  core.md:
+    kb: 57
+    reason: "the 2026-09-21 migration moved the whole pre-3.6 corpus (102 rules, ~56.3 KB) into core.md verbatim under ## Unsorted; no rule was added, so this is the legacy corpus arriving, not growth. Splitting it into path-scoped area files is real work owed separately, not something to force at migration time by trimming rules to fit. Ceiling is the smallest whole KB above the file so the over-and-grew gate still sees the next addition; new rules pay from duplication or earn their own raise."

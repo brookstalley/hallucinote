@@ -665,7 +665,7 @@ at a moving playhead, could never place its cue, and degraded to `playhead_only`
 every time — inert, while reporting itself accurately. First live pass: 21 values
 written, `automation_state: 0`, read-back flat at 0.9000 across every beat. A stop
 is not the escape hatch either: a stop DISARMS record_mode. Reordered to
-locate-then-arm; see `learnings.md`.
+locate-then-arm; see `.claude/rules/learnings/core.md`.
 
 After the reorder, same set, steps 1-5 and 8 of the checks below:
 

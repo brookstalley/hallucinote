@@ -555,13 +555,9 @@ artifact_manifest:
       version: 2
       depends_on: [vision, mcp-tool-design]
     - name: learnings
-      file_path: .prawduct/learnings.md
-      version: 2   # split into index (rules) + learnings-detail (narrative) 2026-06-13
+      file_path: .claude/rules/learnings/core.md
+      version: 3   # migrated from .prawduct/learnings.md (+ learnings-detail narratives, now in git history) by prawduct 3.6.1-dev.1, 2026-09-21
       depends_on: []
-    - name: learnings-detail
-      file_path: .prawduct/learnings-detail.md
-      version: 1   # incident narratives + how-to-apply; headings mirror learnings.md (rule-only entries omitted)
-      depends_on: [learnings]
     - name: backlog
       file_path: .prawduct/backlog.md
       version: 2

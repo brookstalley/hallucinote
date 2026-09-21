@@ -12,18 +12,11 @@
 
 # DELIBERATELY NOT union-merged:
 #
-#   .prawduct/learnings.md + .prawduct/learnings-detail.md — excluded because
-#     the visibility half of the test fails.
-#     A union-duplicated `## ` heading is not merely cosmetic: `audit-learnings`
-#     pairs the two files by EXACT title and `_take_active_narrative` breaks on
-#     the FIRST match, so a retirement run cuts one block and silently orphans
-#     the other — the failure its own docstring names ("cutting the wrong block
-#     silently destroys an unrelated narrative"), against a file whose stated
-#     invariant is never delete an entry. No doctor or janitor check pairs the
-#     two files, so nothing would report the divergence. If such a check is
-#     ever built, these two become safe to add — together, since union resolves
-#     deterministically and giving it to only one could desynchronize the
-#     ordering the index/detail pairing depends on.
+#   .claude/rules/learnings/*.md — standing rules, one `## ` heading each.
+#     A union-duplicated heading would load the same rule twice into every
+#     session and silently double the file against its byte budget. (The
+#     pre-3.6 index/detail pair was excluded for a sharper reason: the
+#     retirement tool paired the two by exact title and orphaned narratives.)
 #
 #   .prawduct/operator-verification.md — entries flip PENDING -> PASSED in
 #     place. A union resolution would leave one entry asserting both, silently,

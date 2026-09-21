@@ -32,6 +32,19 @@
      original concern: no version is pre-bumped, and nothing is mislabelled as
      already shipped.) -->
 
+## 2026-09-21 — Learnings move into the harness-loaded rules directory
+
+<!-- prawduct: type=chore | scope=learnings-migrate-3.6 -->
+
+Prawduct 3.6.1 loads standing rules from `.claude/rules/learnings/`, so the
+104 rules in `.prawduct/learnings.md` were not in context for any session until
+they moved. `prawduct-hook learnings-migrate --apply` wrote them to
+`.claude/rules/learnings/core.md` (no topic mapped to an area glob, so all are
+core). The `learnings-detail.md` incident narratives are not carried forward by
+the tool; this entry's parent commit holds them. `project-state.yaml`'s artifact
+entry and the `.gitattributes` note on why learnings are not union-merged now
+name the new home.
+
 ## 2026-09-12 — A release publishes its change log and resets it
 
 <!-- prawduct: type=fix | scope=release-log-roll -->

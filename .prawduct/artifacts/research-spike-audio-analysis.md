@@ -80,7 +80,7 @@ but in practice we're playing the arrangement anyway to capture features.
   exposes `record_arm` (bool, Live parameter) and `osc_port` (int, Live
   parameter). The output path is delivered out-of-band via OSC `/path`
   (Live parameters are float/int/enum only — strings need a side channel,
-  per Chunk 1 in-Live findings; see `learnings.md`). The Remote Script
+  per Chunk 1 in-Live findings; see `.claude/rules/learnings/core.md`). The Remote Script
   writes `Arm` (short name) via the existing socket; the harness sends
   `/path` via UDP before arming.
 - **PDC handles alignment.** Live's plugin delay compensation aligns each

@@ -12,9 +12,9 @@
 
 # DELIBERATELY NOT union-merged:
 #
-#   .claude/rules/learnings/*.md — standing rules, one `## ` heading each.
-#     A union-duplicated heading would load the same rule twice into every
-#     session and silently double the file against its byte budget. (The
+#   .claude/rules/learnings/*.md — standing rules, one heading each.
+#     A union-duplicated rule would load the same rule twice into every
+#     session and silently inflate the file against its byte budget. (The
 #     pre-3.6 index/detail pair was excluded for a sharper reason: the
 #     retirement tool paired the two by exact title and orphaned narratives.)
 #

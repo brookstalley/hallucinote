@@ -556,7 +556,7 @@ artifact_manifest:
       depends_on: [vision, mcp-tool-design]
     - name: learnings
       file_path: .claude/rules/learnings/core.md
-      version: 3   # migrated from .prawduct/learnings.md (+ learnings-detail narratives, now in git history) by prawduct 3.6.1-dev.1, 2026-09-21
+      version: 3   # migrated from .prawduct/learnings.md (+ learnings-detail narratives archived at .prawduct/artifacts/archive/learnings-detail.md) by prawduct 3.6.1-dev.1, 2026-09-21
       depends_on: []
     - name: backlog
       file_path: .prawduct/backlog.md
@@ -742,7 +742,7 @@ base_branch: develop
 # the Reasoned Decisions principle working, not bloat. change-log.md is not covered
 # by the raise: it is ROLLED at each release cut instead (docs/release-process.md
 # step 1, "Roll the log"). Do NOT raise past ~58 without deciding that separately:
-# learnings.md sits at ~60 KB and is deliberately left above the ceiling so its
-# compaction nudge, which nobody has acted on yet, keeps firing. Full reasoning: the 2026-09-08 change-log
+# the learnings corpus (now .claude/rules/learnings/core.md, ~58 KB) is governed
+# by its own learnings byte budget since prawduct 3.6, not by this ceiling. Full reasoning: the 2026-09-08 change-log
 # entry for scope=governance-file-sizes.
 oversized_file_threshold_kb: 55

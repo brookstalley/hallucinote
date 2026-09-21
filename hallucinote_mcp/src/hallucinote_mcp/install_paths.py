@@ -48,7 +48,7 @@ REMOTE_SCRIPT_EXCLUDE_DIRS_ANY: tuple[str, ...] = (
                         # here, Live's browser indexes BOTH locations and
                         # shows the device twice, leading to "which one am
                         # I editing?" confusion (audio-analysis MVP Chunk 2
-                        # sub-chunk 2B hit this — see learnings.md).
+                        # sub-chunk 2B hit this — see .claude/rules/learnings/core.md).
 )
 
 # File globs to exclude wherever they appear.

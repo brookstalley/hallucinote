@@ -181,7 +181,7 @@ _PORT_STRIDE = 1
 # `live.numbox` Live parameters declare Type=Float with Unit Style=Int
 # to render as integers in the UI without hitting M4L's 256-step Int
 # parameter cap (Live encodes Int automation as a byte; max-min > 255
-# silently clamps in Max). See learnings.md "M4L Int parameter range
+# silently clamps in Max). See .claude/rules/learnings/core.md "M4L Int parameter range
 # capped at 256 — use Float + Unit Style Int".
 #
 # Why 11020+, not 11000+? AbletonOSC (a popular community Remote Script)

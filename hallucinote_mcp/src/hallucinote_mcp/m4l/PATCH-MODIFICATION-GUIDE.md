@@ -2,7 +2,7 @@
 
 Procedural guide for patch edits. The contract lives in
 [`HallucinoteAnalyzer.amxd.spec.md`](./HallucinoteAnalyzer.amxd.spec.md).
-**Read `learnings.md` (M4L section) before any patch edit.**
+**Read the M4L rules in `.claude/rules/learnings/core.md` (headings starting "M4L") before any patch edit.**
 
 ## Editing rule
 
@@ -10,7 +10,7 @@ Procedural guide for patch edits. The contract lives in
   JSON looks valid but fails Live's loader (`createdevice error 6`).
 - After edits: `Cmd-S` in Max, then `Cmd-W` to close the patcher window.
   Live and Max fight over `[udpreceive]` when both have the patch open.
-  (See `learnings.md` "M4L patcher editor and Live runtime fight over
+  (See `.claude/rules/learnings/core.md` "M4L patcher editor and Live runtime fight over
   udpreceive".)
 - Copy the saved `.amxd` from
   `~/Music/Ableton/User Library/Presets/Audio Effects/Max Audio Effect/HallucinoteAnalyzer.amxd`
@@ -44,7 +44,7 @@ Procedural guide for patch edits. The contract lives in
    the desired window. SR-adapt the window via
    `[adstatus sr] → [expr $f1 * <seconds>] → [i] → average~`'s **left
    inlet** (same inlet as the audio signal — `[average~]` has only one;
-   see `learnings.md` "M4L `[average~]` has one inlet").
+   see `.claude/rules/learnings/core.md` "M4L `[average~]` has one inlet").
 5. **Snapshot to control rate.** `[snapshot~]` banged by the existing
    `[metro 33]` chain — add a new outlet to the `[t b b b b]` (becomes
    `[t b b b b b]`) at the appropriate position (snapshots fire BEFORE
@@ -52,7 +52,7 @@ Procedural guide for patch edits. The contract lives in
 6. **Clip + log.** `[clip 1e-12 1e10]` (for power) or `[clip 1e-6 1.0]`
    (for amplitude), then `[expr 10. * log10($f1)]` (power) or
    `[expr 20. * log10($f1)]` (amplitude). M4L's `[expr]` has no `max` /
-   conditionals — clip upstream. (See `learnings.md` "M4L `[expr]`
+   conditionals — clip upstream. (See `.claude/rules/learnings/core.md` "M4L `[expr]`
    function vocabulary is narrow".)
 7. **Broadcast.** `[send <new_feature>_value]`.
 8. **Wire into the frame.** Add `[receive <new_feature>_value]` and
@@ -75,7 +75,7 @@ Procedural guide for patch edits. The contract lives in
    both emit on every write. **NEVER use `[value <name>]`** for
    per-instance state — it is GLOBAL across all device instances in
    the same Live set and will clobber across the analyzer chain.
-   (See `learnings.md` "M4L `[value <name>]` is GLOBAL-by-name across
+   (See `.claude/rules/learnings/core.md` "M4L `[value <name>]` is GLOBAL-by-name across
    all device instances" and "M4L `[value]` doesn't emit on write".)
 4. **Update the spec's inbound-OSC routes table** in the inlets/outlets
    diagram.
@@ -119,7 +119,7 @@ where `$f1` = current_beat, `$f2` = prev_beat, `$i3` = target-beat,
 
 ## Known traps
 
-Every M4L trap learned during MVP authoring lives in `learnings.md`.
+Every M4L trap learned during MVP authoring lives in `.claude/rules/learnings/core.md`.
 **Do not re-derive.** Key entries to read before patch edits:
 
 - "M4L `[value <name>]` is GLOBAL-by-name across all device instances"

@@ -13,7 +13,7 @@ vocabulary, so the read is exact, render-free, pure-stdlib — no corpus, no mod
 Three facts shape the algorithm (all verified against the real sun-zone-done
 fixtures — design.md §4):
 
-  * **Tiling (research.md §3, learnings.md "Variation ops are tiling-safe only on
+  * **Tiling (research.md §3, .claude/rules/learnings/core.md "Variation ops are tiling-safe only on
     single-cycle motifs").** M is one clean cycle; L is M tiled across the section
     and shifted to the section start. The matcher slides M's span across the tiling
     grid rather than comparing whole spans (which false-negatives).

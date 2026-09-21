@@ -68,7 +68,7 @@ by their **short name**; harnesses must use the short names below.
 | `emit_enabled`    | `Emit Features`  | `Emit`     | `live.toggle`                       | 0 / 1          | 1      |
 
 Ports use Float type with Unit Style=Int because Live's Int-typed automation
-is single-byte (0-255). (See `learnings.md` "M4L Int parameter range capped
+is single-byte (0-255). (See `.claude/rules/learnings/core.md` "M4L Int parameter range capped
 at 256 — use Float + Unit Style Int".)
 
 ### Port allocation policy
@@ -115,7 +115,7 @@ to the right ring buffer. Track-id is a string and can't be a Live parameter.
   without emitting); the metro chain bangs the message's left inlet once
   per tick to emit the current track_id into the address sprintf. The
   message box is per-patcher (no global namespace), so each analyzer
-  instance has its own storage — see `learnings.md` "M4L `[value <name>]`
+  instance has its own storage — see `.claude/rules/learnings/core.md` "M4L `[value <name>]`
   is GLOBAL-by-name across all device instances" for the trap this
   pattern avoids.
 - A separate `has_track_id` int flag (plumbed via `[send]` / `[receive]`,
@@ -187,7 +187,7 @@ expr never fires.
 
 Bare integers to `sfrecord~`'s left inlet: `1` starts, `0` stops AND
 finalizes the WAV header. No `close`, no `stop`, no `record N`. (See
-`learnings.md` "sfrecord~ control API: bare integers (1 / 0), not
+`.claude/rules/learnings/core.md` "sfrecord~ control API: bare integers (1 / 0), not
 `record N`".)
 
 After `0`, a fresh `open <path>` is required before the next `1`. The
@@ -364,7 +364,7 @@ validation (`createdevice error 6`). **All edits go through Max's GUI.**
 2. Make changes in Max's patcher view.
 3. `Cmd-S` to save. `Cmd-W` to close the patcher window (Live and Max
    fight over `[udpreceive]` when both have the patch open — see
-   `learnings.md` "M4L patcher editor and Live runtime fight over
+   `.claude/rules/learnings/core.md` "M4L patcher editor and Live runtime fight over
    udpreceive").
 4. Copy the saved file from
    `~/Music/Ableton/User Library/Presets/Audio Effects/Max Audio Effect/HallucinoteAnalyzer.amxd`

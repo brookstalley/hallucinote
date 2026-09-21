@@ -195,7 +195,7 @@ refusal on a branch you believe is merged as a finding, never as friction.**
 
 ### M4L device identity is in `device.name`, not `device.class_display_name`
 
-**Every M4L audio-effect device in Live has `device.class_display_name = "Max Audio Effect"` — that's the device CLASS, not the specific.amxd identity. The.amxd filename (sans extension) lives in `device.name`. Code that detects "is this analyzer/device a HallucinoteAnalyzer instance?" by comparing against `class_display_name` will be permanently False for every real M4L device, with no error — just silent always-add behavior. The correct check is `device.name == "<.amxd filename>"` (with `class_display_name == "Max Audio Effect"` as a secondary anchor proving it's an M4L device, not a similarly-named user preset).**
+**Every M4L audio-effect device in Live has `device.class_display_name = "Max Audio Effect"` — that's the device CLASS, not the specific .amxd identity. The .amxd filename (sans extension) lives in `device.name`. Code that detects "is this analyzer/device a HallucinoteAnalyzer instance?" by comparing against `class_display_name` will be permanently False for every real M4L device, with no error — just silent always-add behavior. The correct check is `device.name == "<.amxd filename>"` (with `class_display_name == "Max Audio Effect"` as a secondary anchor proving it's an M4L device, not a similarly-named user preset).**
 
 ### M4L devices installed under User Library require `preset_query`, not `kind=`, in `ableton_device(action='load')`
 
@@ -253,7 +253,7 @@ refusal on a branch you believe is merged as a finding, never as friction.**
 
 **To clear a wide tier of independent backlog items at once, run them as file-disjoint clusters in ONE workflow (one agent per area), and make every cluster re-verify the item against the *current* code before editing — backlog file:line refs drift, items get fixed out-of-band, and brief framings can be stale or backwards. Collision rules make the shared tree safe: each agent edits only its area, CREATES new test files (never appends to a shared one), exactly ONE cluster owns `@given`/`@settings` edits, and none touch backlog/change-log/build-plan (the orchestrator reconciles those centrally).**
 
-### A distribution artifact the product needs at install time must be TRACKED — check.gitignore before trusting it
+### A distribution artifact the product needs at install time must be TRACKED — check .gitignore before trusting it
 
 **When a feature depends on a generated file shipping with the product (a lockfile, a vendored manifest, a committed snapshot), verify the file is actually git-tracked before treating it as the guarantee — a broad `.gitignore` rule (`uv.lock`, `*.lock`, `dist/`) can silently make it local-only, so the feature "works on my machine" and breaks on every real install/clone. `git ls-files --error-unmatch <file>` is the one-line check; generating + locally running the artifact proves nothing about whether it ships.**
 
@@ -362,11 +362,11 @@ generous `MCP_TIMEOUT`; a pre-warm hook is best-effort, not the mitigation.**
 
 ### A planted mutation proves nothing until you know WHERE it landed
 
-**When you plant the failure by text substitution, assert it landed in the intended FUNCTION — "the file changed" is not enough — and treat an unexpected survivor as a suspect harness before a suspect test, because a repeated anchor mutates the wrong call site and two same-size mutations of one module inside a single mtime tick reuse the first run's `.pyc`. (2026-08-07, TMP-7B3X — narrative in learnings-detail.md)**
+**When you plant the failure by text substitution, assert it landed in the intended FUNCTION — "the file changed" is not enough — and treat an unexpected survivor as a suspect harness before a suspect test, because a repeated anchor mutates the wrong call site and two same-size mutations of one module inside a single mtime tick reuse the first run's `.pyc`. (2026-08-07, TMP-7B3X — narrative in .prawduct/artifacts/archive/learnings-detail.md)**
 
 ### Removing a guard means re-raising its signal on the channel that reaches a human
 
-**When you delete a refusal, re-raise its signal on the channel that actually reaches the operator and make the replacement DISCRIMINATE — in `sync/push` that means `plan.alert()` (drained into the push report) and never `plan.warn()` (writes `PushPlan.notes`, documented "NOT surfaced" and never drained), a condition on the affected cases rather than on the mere presence of the risky state, and an assertion on `plan.alerts`, because a test reading the plan object passes either way. (2026-08-07, TMP-7B3X Critic — narrative in learnings-detail.md)**
+**When you delete a refusal, re-raise its signal on the channel that actually reaches the operator and make the replacement DISCRIMINATE — in `sync/push` that means `plan.alert()` (drained into the push report) and never `plan.warn()` (writes `PushPlan.notes`, documented "NOT surfaced" and never drained), a condition on the affected cases rather than on the mere presence of the risky state, and an assertion on `plan.alerts`, because a test reading the plan object passes either way. (2026-08-07, TMP-7B3X Critic — narrative in .prawduct/artifacts/archive/learnings-detail.md)**
 
 ### Prose naming a mechanism reads as a decision — DESCRIBED-BUT-UNBUILT
 

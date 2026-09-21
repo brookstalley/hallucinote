@@ -4,7 +4,7 @@ Manual smoke tests that exercise `hallucinote-mcp` against a real Ableton Live p
 
 Each smoke is reproducible and self-contained: open Live, run the listed MCP calls in order, compare the observed output against the expected output, record pass/fail in `.prawduct/.session-reflected` or the chunk's evidence note.
 
-Smokes here are gates for round-trip reliability — when a Live API behavior is assumed by code but not verified empirically, the unit suite gives false confidence (see `learnings.md` — `Unit fakes that mirror an *assumed* Live API give false confidence`).
+Smokes here are gates for round-trip reliability — when a Live API behavior is assumed by code but not verified empirically, the unit suite gives false confidence (see `.claude/rules/learnings/core.md` — `Unit fakes that mirror an *assumed* Live API give false confidence`).
 
 ---
 
@@ -79,7 +79,7 @@ Smokes here are gates for round-trip reliability — when a Live API behavior is
 
 If S-1 fails, before W7-A starts:
 
-1. Replace `_find_existing_envelope` (`handlers/automation.py:171-194`) with an implementation that **iterates `clip.automation_envelopes` and matches by parameter identity**. Use a stable identifier on each envelope's `parameter` attribute (e.g., `parameter.name`, plus disambiguation by parent device / track index when needed). **Do NOT use `is` for the parameter comparison** — Live re-wraps API objects (`learnings.md` — `Never use is for Live API object identity`).
+1. Replace `_find_existing_envelope` (`handlers/automation.py:171-194`) with an implementation that **iterates `clip.automation_envelopes` and matches by parameter identity**. Use a stable identifier on each envelope's `parameter` attribute (e.g., `parameter.name`, plus disambiguation by parent device / track index when needed). **Do NOT use `is` for the parameter comparison** — Live re-wraps API objects (`.claude/rules/learnings/core.md` — `Never use is for Live API object identity`).
 2. Add a `FakeClip` variant in the test fakes that simulates the destructive behavior, and pin the new fallback against it.
 3. Re-run S-1 to confirm the fix.
 4. Record evidence and proceed to W7-A.

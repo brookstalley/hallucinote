@@ -41,17 +41,26 @@ two-point `linear` ramp as ONE flat step at its first value, and the push report
 ok. `linear` is the DB default, so this was every ramp on the preferred route. The
 push now renders ramping segments into a 1/16-beat staircase sampled from the
 authored curve (`sync/envelope_curve.py`, a leaf both push and pull import). The DB
-keeps the authored breakpoints: the staircase exists only on the wire. Pull compares
-Live's read-back against the same rendering, so a pull after a push is a no-op
-instead of replacing two authored rows with seventeen `hold` ones. A parity test
-holds the curve shapes to the perform route's interpolator.
+keeps the authored breakpoints: the staircase exists only on the wire. Pull asks
+whether what Live holds is a step-sampling OF the authored curve. That covers any
+step width, one unset stretch before a ride that starts mid-clip, and an older push's
+bare points. So a pull after a push is a no-op instead of replacing two authored
+rows with seventeen `hold` ones. A parity test holds the curve shapes to the
+perform route's interpolator, and pull's check runs through that same function.
+
+The alternative not taken is recorded in the module: Live 12.4's `create_event`
+writes real curved segments on this route, and #298 plans that writer. Its write
+round trip is unproven, so the staircase is what ships until #298 replaces it.
 
 The plan-time "lossy on push" warn is gone; a note gives the resolution instead.
 A ramp too long for the wire cap is sent with a wider step, and that is an **alert**
 naming the resolution used, because it is a fidelity loss the author did not choose.
-An envelope whose every value equals the target's DB static value is not sent: Live
-discards it, and the push would report ok over nothing. That is an alert too, and pull
-skips the same envelopes so a read-back cannot delete the authored row. `hold`-only
+An envelope whose every value equals the target's DB static value is not written,
+because Live discards it and the push would report ok over nothing. The push CLEARS
+that target instead, so a ride an earlier push left in the clip stops playing. That
+is an alert too. Pull still reads the envelope: an empty read-back is what push left,
+so it is a no-op rather than a deletion of the authored row, and a ride someone draws
+over it in Live lands normally. `hold`-only
 envelopes go out exactly as before.
 
 **Tests changed, and why none weakened.** Nine push tests asserted the full call for a

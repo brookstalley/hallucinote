@@ -1,17 +1,25 @@
 """The authored envelope curve, and the staircase that carries it to Live.
 
-Live 12.4's ``Envelope`` exposes ``insert_step(time, duration, value)`` and
-nothing that draws a segment, so the MCP handler writes every breakpoint as a
-flat step held until the next one. An authored two-point ``linear`` ramp sent
-as-is therefore reaches Live as ONE flat step at the first value — the ramp the
-author wrote is not the ramp that plays.
+The MCP handler writes a session-clip envelope with ``Envelope.insert_step``,
+which draws a flat step held until the next one. An authored two-point
+``linear`` ramp sent as-is therefore reaches Live as ONE flat step at the first
+value: the ramp the author wrote is not the ramp that plays.
 
 The fix is a materialization, the same way the arrangement is a projection of
 the DB: the DB keeps the AUTHORED breakpoints, and the session-clip push renders
 them into a staircase that samples the authored curve finely enough to be heard
-as the curve. Pull has to compare what Live reads back against that SAME
-rendering — comparing against the stored breakpoints would see 64 steps where
-the DB holds 2 and overwrite the author's intent with the projection.
+as the curve. Pull then asks whether what Live holds is a sampling OF the
+authored curve. Comparing against the stored breakpoints would see 64 steps
+where the DB holds 2 and overwrite the author's intent with the projection.
+
+**The alternative not taken: a curved write (#298).** Live 12.4's envelope also
+has ``create_event`` / ``events_in_range``, which carry real curved segments on
+this same session-clip route (probed 2026-06-12,
+``.prawduct/artifacts/research-spike-automation-ingest.md``). A curved write
+would make the staircase unnecessary. It is not the route here because its write
+round trip is still unproven. When #298 lands a curved writer, it replaces
+:func:`render_staircase` for the envelopes it can write, and pull's
+:func:`holds_authored_curve` is what it must keep passing.
 
 This is a leaf module: both ``sync.push`` and ``sync.pull`` import it, and it
 imports neither, so the one rendering both halves agree on has one home.
@@ -24,6 +32,7 @@ TO ``i + 1`` — ``linear`` (the DB default) lerps, ``hold`` freezes, ``fast`` i
 """
 from __future__ import annotations
 
+import bisect
 import math
 from collections.abc import Sequence
 from typing import Any
@@ -57,6 +66,20 @@ _STEP_GROWTH = 1.25
 # Consecutive staircase values closer than this are one step, the same collapse
 # Live's read-back applies (`_sample_envelope_to_breakpoints`).
 _SAME_STEP_EPS = 1e-9
+
+
+def wire_breakpoints(rows: Sequence[Any]) -> list[dict[str, Any]]:
+    """DB ``automation_breakpoints`` rows in the wire shape the MCP handler
+    and every function here read: ``curve_kind`` becomes ``curve`` at this
+    boundary, the one place push and pull both convert through."""
+    return [
+        {
+            "time_beats": float(bp["time_beats"]),
+            "value": float(bp["value"]),
+            "curve": bp["curve_kind"],
+        }
+        for bp in rows
+    ]
 
 
 def _curve_of(bp: dict[str, Any]) -> str:
@@ -204,47 +227,70 @@ def _step_changes(
     return changes
 
 
-def _step_value(changes: list[tuple[float, float]], t: float) -> float | None:
-    """The step function's value at ``t``; None before its first change."""
-    value: float | None = None
-    for ct, cv in changes:
-        if ct > t:
-            break
-        value = cv
-    return value
+def _curve_range(
+    bps: Sequence[dict[str, Any]], a: float, b: float,
+) -> tuple[float, float]:
+    """The lowest and highest value the authored curve takes on ``[a, b]``.
+
+    Every segment is monotone between its ends, so the extremes lie at the
+    window's ends or at a breakpoint inside it — counting both the value a
+    breakpoint lands on and the value the segment before it ended at (they
+    differ across a ``hold``).
+    """
+    values = [sample_authored_curve(bps, a), sample_authored_curve(bps, b)]
+    for i in range(len(bps) - 1):
+        t1 = float(bps[i + 1]["time_beats"])
+        if a < t1 <= b:
+            values.append(float(bps[i + 1]["value"]))
+            values.append(_segment_value(bps[i], bps[i + 1], 1.0))
+    return min(values), max(values)
 
 
-def staircase_matches(
-    rendered: Sequence[dict[str, Any]],
+def holds_authored_curve(
+    authored: Sequence[dict[str, Any]],
     live: Sequence[dict[str, Any]],
     *,
     time_eps: float,
     value_eps: float,
 ) -> bool:
-    """Is Live's read-back the staircase that was pushed, within tolerance?
+    """Is what Live holds a step-sampling of the authored curve?
 
-    Both sides are step functions. They are compared just after every change
-    point either one has — ``time_eps`` after it, which is where a transition
-    Live localized up to one sampling interval late has already landed on both
-    sides. Any probe where the two disagree by more than ``value_eps``, or
-    where one side has a value and the other has none yet, is a mismatch. So a
-    Live anchor sitting before the envelope's first authored point does not
-    match: the DB says nothing about that region, and saying it matches would
-    hide a ride someone added there.
+    Push sends a ramp as steps whose values sit ON the authored curve, and
+    Live reads back one point per value change. So Live holds what push sent
+    when:
+
+    - before the envelope's first authored point, Live has at most ONE
+      constant value. The read-back always starts at clip-local 0, and a ride
+      authored mid-clip leaves that stretch at whatever Live holds unset.
+      Two or more changes there is a ride someone added;
+    - every value Live changes to after that sits on the authored curve at a
+      beat within ``time_eps`` before the change was reported, because Live
+      localizes a step up to one sampling interval late; and
+    - every authored breakpoint is held just after its own beat.
+
+    The step WIDTH is deliberately not part of the test. A staircase pushed
+    at any resolution, or the bare authored points an older push wrote,
+    passes; a step moved off the curve, a value added before the envelope, or
+    a missing breakpoint fails.
     """
-    r = _step_changes(rendered)
     lv = _step_changes(live)
-    if not r or not lv:
+    if not authored or not lv:
         return False
-    probes = sorted({t + time_eps for t, _ in r} | {t + time_eps for t, _ in lv})
-    for p in probes:
-        rv = _step_value(r, p)
-        lvv = _step_value(lv, p)
-        if rv is None or lvv is None:
-            if rv is not lvv:
-                return False
-            continue
-        if abs(rv - lvv) > value_eps:
+    first_t = float(authored[0]["time_beats"])
+    pre = [c for c in lv if c[0] < first_t - time_eps]
+    if len(pre) > 1:
+        return False
+    for t, v in lv[len(pre):]:
+        lo, hi = _curve_range(authored, t - time_eps, t)
+        if not (lo - value_eps <= v <= hi + value_eps):
+            return False
+    times = [t for t, _ in lv]
+    for i, bp in enumerate(authored):
+        t_b = float(bp["time_beats"])
+        if i + 1 < len(authored) and float(authored[i + 1]["time_beats"]) == t_b:
+            continue  # an instant jump: only the value it lands on is held
+        k = bisect.bisect_right(times, t_b + time_eps) - 1
+        if k < 0 or abs(lv[k][1] - float(bp["value"])) > value_eps:
             return False
     return True
 
@@ -276,6 +322,7 @@ __all__ = [
     "has_ramp",
     "sample_authored_curve",
     "render_staircase",
-    "staircase_matches",
+    "holds_authored_curve",
+    "wire_breakpoints",
     "is_flat_at",
 ]

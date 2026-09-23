@@ -56,16 +56,26 @@ and every handler are untouched. The staircase arrives over the existing
   pass = one breakpoint per 1/16 beat across the ramp. **Fewer points than that means
   Live coalesced the steps** — record the spacing Live actually kept, because
   `STAIRCASE_STEP_BEATS` was chosen, not measured, and that spacing is what it
-  should become.
+  should become. Changing it is safe for songs already pushed: pull checks that
+  Live holds points ON the authored curve, not a particular spacing. Note too
+  whether the read's last point, at the clip's exact end, holds the ramp's end
+  value or reads unset. Pull ignores that one sample either way, and a unit
+  fake assumes it reads unset.
 - [ ] **A pull straight after the push changes nothing.** `/ableton-pull` with no
   edit in Live. Pass = the envelope reports no-op and `build.py`'s two authored
   breakpoints are still the DB's two `linear` rows, not seventeen `hold` ones.
+  Do it once more with the ramp authored MID-clip (e.g. beats 2 → 3 of an 8-beat
+  clip), where Live's read starts with an unset stretch before the ramp.
 - [ ] **Live really does discard an envelope flat at the static value.** This is the
   premise the new push alert rests on, taken from the #471 report. Set a track's
   volume to 0.7, write a two-point envelope at 0.7 by hand through
-  `ableton_automation(action='write_envelope', …)`, then read it back. Pass = no
-  envelope (`exists: false`). If Live KEEPS it, the push alert refuses a legitimate
-  write and has to come out.
+  `ableton_automation(action='write_envelope', …)`, then read it back. **Do not
+  read `exists`**: it is false both when Live discarded the envelope and when Live
+  kept a flat one, because a flat envelope reads back as one breakpoint. Read
+  `breakpoints`. Pass = an EMPTY list (Live discarded it). A single breakpoint at
+  0.7 means Live KEPT it. Then the push's clear-instead-of-write is unneeded and
+  should revert to writing the flat envelope. That is not harmful, since a flat
+  envelope at the static value sounds the same either way.
 
 ## RENDERGUARD-0910 — the solo refusal fires against a real Live mixer (2026-09-10) — PENDING
 

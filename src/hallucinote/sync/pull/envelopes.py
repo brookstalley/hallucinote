@@ -34,10 +34,11 @@ non-hold curves.
 
 Ramps (#479): push sends a ramping envelope as a staircase sampled from the
 authored curve (`sync.envelope_curve.render_staircase`), so Live reads back
-dozens of steps where the DB holds two breakpoints. The apply path compares
-that read-back against the SAME rendering; a match is a no-op. Without it
-every pull after a push would overwrite the authored breakpoints with the
-projection — a fidelity fix turned into authored-intent loss.
+dozens of steps where the DB holds two breakpoints. The apply path asks
+whether that read-back is a sampling of the authored curve
+(`holds_authored_curve`); if so it is a no-op. Without it every pull after a
+push would overwrite the authored breakpoints with the projection — a fidelity
+fix turned into authored-intent loss.
 """
 from __future__ import annotations
 
@@ -55,9 +56,9 @@ from hallucinote.db import mutations as M, queries as Q
 # symmetric on routing semantics.
 from ..envelope_curve import (
     has_ramp,
+    holds_authored_curve,
     is_flat_at,
-    render_staircase,
-    staircase_matches,
+    wire_breakpoints,
 )
 from ..geometry import (
     _envelope_beat_range,
@@ -89,27 +90,12 @@ _ENVELOPE_VALUE_EPS = _FLOAT_EPS
 _ENVELOPE_KINDS_READ_BLOCKED = frozenset({"clip_cc", "clip_pitch_bend"})
 
 
-# Kinds push writes through a covering session clip — the only ones it renders
-# as a staircase or declines as flat-at-static.
-_SESSION_CLIP_KINDS = frozenset({
-    "device_parameter", "mixer_volume", "mixer_pan", "send_level",
-})
-
-
 def _is_flat_at_static(conn: sqlite3.Connection, envelope: sqlite3.Row) -> bool:
-    """The same predicate push applies before sending (see
-    `envelope_curve.is_flat_at`)."""
+    """The same predicate push applies before writing (see
+    `envelope_curve.is_flat_at`): push CLEARS such an envelope, so Live
+    holding none is exactly what the author wrote."""
     values = [float(bp["value"]) for bp in Q.get_breakpoints(conn, envelope["id"])]
     return is_flat_at(values, Q.get_envelope_target_static_value(conn, envelope))
-
-
-def _authored_wire(db_bps: list[sqlite3.Row]) -> list[dict[str, Any]]:
-    """DB breakpoint rows in the wire shape `envelope_curve` reads."""
-    return [
-        {"time_beats": float(bp["time_beats"]), "value": float(bp["value"]),
-         "curve": bp["curve_kind"]}
-        for bp in db_bps
-    ]
 
 
 def plan_pull_envelopes(
@@ -138,8 +124,6 @@ def plan_pull_envelopes(
       - Nested-rack device_parameter (W6-I/J shipped probe but pull
         routing still flat — W7-B unblocks).
       - Return-side device_parameter (no return-clip schema in DB).
-      - A session-clip envelope whose every value equals the target's static
-        value (push declines it — Live would discard it).
     """
     plan = PullPlan()
     envelopes = Q.get_envelopes_for_song(conn, song_id)
@@ -154,16 +138,6 @@ def plan_pull_envelopes(
                 f"envelope {env['id']} ({kind}): Live 12.4 LOM doesn't "
                 "expose envelope read for MIDI CC / pitch-bend targets; "
                 "skipping pull (symmetric with push)"
-            )
-            continue
-
-        if kind in _SESSION_CLIP_KINDS and _is_flat_at_static(conn, env):
-            # Push declines to send an envelope Live would discard; reading it
-            # back would find no envelope and delete the authored row.
-            plan.warn(
-                f"envelope {env['id']} ({kind}): every breakpoint equals the "
-                "parameter's static value, so push does not send it; skipping "
-                "pull (symmetric with push)"
             )
             continue
 
@@ -591,6 +565,30 @@ def _merge_envelope_breakpoints(
     return merged, changed
 
 
+def _before_read_end(
+    live_bps: list[dict[str, Any]],
+    live_bps_arrangement: list[dict[str, Any]],
+    result: dict[str, Any],
+    time_eps: float,
+) -> list[dict[str, Any]]:
+    """Drop a change Live reports at the read's very last sample.
+
+    The read samples through the clip's end INCLUSIVE, and whether the last
+    step's hold still covers that exact instant is Live's call — a step the
+    handler wrote over ``[t, clip_length)`` can read as unset right at
+    ``clip_length``. A value there cannot be heard (the clip has ended), so it
+    is not evidence either way about the authored curve. ``live_bps`` (clip-
+    local, same order) locates it; the arrangement-time list is what is kept.
+    """
+    time_range = result.get("time_range_beats")
+    if not (isinstance(time_range, list) and len(time_range) == 2 and live_bps):
+        return live_bps_arrangement
+    end = float(time_range[1])
+    if float(live_bps[-1]["time_beats"]) >= end - time_eps:
+        return live_bps_arrangement[:-1]
+    return live_bps_arrangement
+
+
 def _apply_envelope(
     conn: sqlite3.Connection,
     *,
@@ -645,6 +643,17 @@ def _apply_envelope(
     db_bps = Q.get_breakpoints(conn, envelope_id)
 
     if not live_bps:
+        if (
+            db_bps
+            and _envelope_needs_arrangement_translation(envelope["target_kind"])
+            and _is_flat_at_static(conn, envelope)
+        ):
+            # Push clears an envelope that never leaves the static value
+            # (Live would discard it anyway), so an empty read-back is what
+            # push left — not a removal. A ride drawn over it in Live reads
+            # back non-empty and takes the normal path below.
+            out.no_ops += 1
+            return
         # Live reports no envelope here. If the DB row has breakpoints
         # (representing the user's authored intent), it means the user
         # removed the envelope in Live. Cascade-delete the DB row.
@@ -694,17 +703,18 @@ def _apply_envelope(
     if not changed:
         out.no_ops += 1
         return
-    authored = _authored_wire(db_bps)
+    authored = wire_breakpoints(db_bps)
     if (
-        envelope["target_kind"] in _SESSION_CLIP_KINDS
+        _envelope_needs_arrangement_translation(envelope["target_kind"])
         and has_ramp(authored)
-        and staircase_matches(
-            render_staircase(authored)[0], live_bps_arrangement,
+        and holds_authored_curve(
+            authored,
+            _before_read_end(live_bps, live_bps_arrangement, result, time_eps),
             time_eps=time_eps, value_eps=_ENVELOPE_VALUE_EPS,
         )
     ):
-        # Live holds exactly the staircase push rendered from these authored
-        # breakpoints: nothing was edited, and the DB keeps the curve.
+        # Live holds a step-sampling of these authored breakpoints — what
+        # push sent. Nothing was edited, and the DB keeps the curve.
         out.no_ops += 1
         return
 
@@ -723,7 +733,6 @@ __all__ = [
     "_ENVELOPE_TIME_EPS_SLACK",
     "_ENVELOPE_VALUE_EPS",
     "_ENVELOPE_KINDS_READ_BLOCKED",
-    "_SESSION_CLIP_KINDS",
     "plan_pull_envelopes",
     "_emit_pull_note_expression",
     "_emit_pull_device_parameter",

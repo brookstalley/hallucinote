@@ -13,6 +13,7 @@ from typing import Any
 # Re-exported (redundant aliases): the geometry helpers lived in the original
 # push.py, and the package __init__ + domain submodules still import them from
 # here — part of the preserved public surface of the push.py split.
+from ..envelope_curve import wire_breakpoints
 from ..geometry import (
     _meter_at_bar as _meter_at_bar,
     _split_bar as _split_bar,
@@ -208,15 +209,8 @@ def _breakpoints_for_mcp(bps: list[sqlite3.Row]) -> list[dict[str, Any]]:
     ``ableton_automation(action='write_envelope')`` expects.
 
     Field renames: ``curve_kind`` → ``curve`` (the MCP-side handler uses
-    ``curve`` to match its enum naming). DB-side keeps ``curve_kind`` since
-    it disambiguates from other "kind" columns; the rename happens at the
-    wire boundary.
+    ``curve`` to match its enum naming). The conversion lives in
+    ``sync.envelope_curve.wire_breakpoints`` so pull, which compares Live's
+    read-back against the authored curve, converts through the same code.
     """
-    return [
-        {
-            "time_beats": float(bp["time_beats"]),
-            "value": float(bp["value"]),
-            "curve": bp["curve_kind"],
-        }
-        for bp in bps
-    ]
+    return wire_breakpoints(bps)

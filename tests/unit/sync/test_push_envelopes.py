@@ -191,8 +191,8 @@ def _add_one_breakpoint(conn, envelope_id):
 
 
 def _linear_staircase(t0, v0, t1, v1, step=1.0 / 16):
-    """The wire form of one authored `linear` segment: Live draws envelopes
-    only as steps, so the ramp goes out as equal 1/16-beat steps holding the
+    """The wire form of one authored `linear` segment: the write draws
+    envelopes as steps, so the ramp goes out as equal 1/16-beat steps holding the
     lerp at each step's start, then the authored end point. Written out from
     the definition here, not by calling the renderer under test."""
     n = round((t1 - t0) / step)
@@ -1173,12 +1173,14 @@ def test_a_ramp_too_long_for_the_cap_is_widened_and_alerted(
     assert _staircase_notes(plan) == []
 
 
-def test_envelope_flat_at_the_track_static_volume_alerts_and_emits_nothing(
+def test_envelope_flat_at_the_track_static_volume_alerts_and_clears(
     conn, song, session, linked_track, linked_clip, arr_clip,
 ):
     """Live discards an envelope every step of which equals the parameter's
-    static value, and the write still reports ok. Emitting it would be a
-    push reporting success over nothing — so no call, and an alert."""
+    static value, and the write still reports ok. So the push does not write
+    it: it CLEARS the target — what the author wrote means "no movement", and
+    a ride an earlier push left in the clip must not keep playing — and says
+    so on the alert channel."""
     M.set_track_mixer(conn, track_id=linked_track, volume=0.7)
     eid = M.create_envelope(
         conn, song_id=song, target_kind="mixer_volume",
@@ -1187,7 +1189,15 @@ def test_envelope_flat_at_the_track_static_volume_alerts_and_emits_nothing(
     for t in (0.0, 1.0, 2.0):
         M.add_breakpoint(conn, envelope_id=eid, time_beats=t, value=0.7)
     plan = push.plan_push_envelopes(conn, song_id=song, session_id=session)
-    assert plan.calls == []
+    assert [c.args for c in plan.calls] == [{
+        "action": "clear",
+        "target_kind": "mixer_volume",
+        "track_index": 5,
+        "location": "session",
+        "clip_index": 1,
+    }]
+    assert plan.calls[0].key == f"envelope:{eid}"
+    assert _staircase_notes(plan) == []
     alerts = _static_alerts(plan)
     assert len(alerts) == 1, plan.alerts
     assert eid in alerts[0]
@@ -1251,7 +1261,11 @@ def test_flat_at_static_is_checked_for_sends_and_device_parameters(
         M.add_breakpoint(conn, envelope_id=send_env, time_beats=t, value=0.3)
         M.add_breakpoint(conn, envelope_id=dev_env, time_beats=t, value=-12.0)
     plan = push.plan_push_envelopes(conn, song_id=song, session_id=session)
-    assert plan.calls == []
+    assert {c.key: c.args["action"] for c in plan.calls} == {
+        f"envelope:{send_env}": "clear",
+        f"envelope:{dev_env}": "clear",
+    }
+    assert all("breakpoints" not in c.args for c in plan.calls)
     alerts = _static_alerts(plan)
     assert any(send_env in a for a in alerts), plan.alerts
     assert any(dev_env in a for a in alerts), plan.alerts

@@ -146,53 +146,86 @@ def test_an_envelope_denser_than_the_cap_terminates_at_one_step_per_segment():
     assert len(out) == 40
 
 
-# ---------- staircase_matches ----------
+# ---------- holds_authored_curve ----------
+
+_EPS = {"time_eps": 1.0 / 96 + 1e-3, "value_eps": 1e-3}
 
 
 def _changes(bps):
-    return [{"time_beats": b["time_beats"], "value": b["value"]} for b in bps]
+    """A read-back: one point per value change, as Live reports it."""
+    out = []
+    for b in bps:
+        if out and out[-1]["value"] == b["value"]:
+            continue
+        out.append({"time_beats": b["time_beats"], "value": b["value"]})
+    return out
 
 
-def test_the_rendered_staircase_matches_itself_read_back():
-    rendered, _ = ec.render_staircase([_bp(0.0, 0.5), _bp(1.0, 0.0)])
-    assert ec.staircase_matches(
-        rendered, _changes(rendered), time_eps=0.0115, value_eps=1e-3,
-    )
+_RAMP = [_bp(0.0, 0.5), _bp(1.0, 0.0)]
 
 
-def test_a_read_back_late_by_less_than_the_time_tolerance_still_matches():
-    rendered, _ = ec.render_staircase([_bp(0.0, 0.5), _bp(1.0, 0.0)])
+def test_the_rendered_staircase_read_back_holds_the_curve():
+    rendered, _ = ec.render_staircase(_RAMP)
+    assert ec.holds_authored_curve(_RAMP, _changes(rendered), **_EPS)
+
+
+def test_a_read_back_late_by_less_than_one_sampling_interval_still_holds():
+    rendered, _ = ec.render_staircase(_RAMP)
     late = [
-        {"time_beats": b["time_beats"] + (0.01 if i else 0.0), "value": b["value"]}
-        for i, b in enumerate(rendered)
+        {**b, "time_beats": b["time_beats"] + (0.01 if i else 0.0)}
+        for i, b in enumerate(_changes(rendered))
     ]
-    assert ec.staircase_matches(rendered, late, time_eps=0.0115, value_eps=1e-3)
+    assert ec.holds_authored_curve(_RAMP, late, **_EPS)
 
 
-def test_one_moved_step_is_a_mismatch():
-    rendered, _ = ec.render_staircase([_bp(0.0, 0.5), _bp(1.0, 0.0)])
+def test_a_staircase_pushed_at_another_step_width_still_holds():
+    """Re-tuning STAIRCASE_STEP_BEATS must not turn every already-pushed
+    ramp into an 'edit' on the next pull: the test is 'on the curve', not
+    'at this resolution'."""
+    coarse, _ = ec.render_staircase(_RAMP, step_beats=0.125)
+    assert ec.holds_authored_curve(_RAMP, _changes(coarse), **_EPS)
+
+
+def test_the_bare_authored_points_an_older_push_wrote_still_hold():
+    assert ec.holds_authored_curve(_RAMP, _changes(_RAMP), **_EPS)
+
+
+def test_a_mid_clip_ramp_with_live_s_one_constant_anchor_before_it_holds():
+    """Live's read-back always starts at clip-local 0. A ramp authored at beat
+    2 leaves [0, 2) at whatever Live holds unset — one constant value, which
+    push put there by leaving it alone."""
+    ramp = [_bp(2.0, 0.5), _bp(3.0, 0.2)]
+    rendered, _ = ec.render_staircase(ramp)
+    live = [{"time_beats": 0.0, "value": 0.0}] + _changes(rendered)
+    assert ec.holds_authored_curve(ramp, live, **_EPS)
+
+
+def test_two_changes_before_the_envelope_is_a_ride_someone_added():
+    ramp = [_bp(2.0, 0.5), _bp(3.0, 0.2)]
+    rendered, _ = ec.render_staircase(ramp)
+    live = [
+        {"time_beats": 0.0, "value": 0.0},
+        {"time_beats": 1.0, "value": 0.8},
+    ] + _changes(rendered)
+    assert not ec.holds_authored_curve(ramp, live, **_EPS)
+
+
+def test_one_step_moved_off_the_curve_does_not_hold():
+    rendered, _ = ec.render_staircase(_RAMP)
     edited = _changes(rendered)
     edited[5] = {**edited[5], "value": edited[5]["value"] + 0.05}
-    assert not ec.staircase_matches(
-        rendered, edited, time_eps=0.0115, value_eps=1e-3,
-    )
+    assert not ec.holds_authored_curve(_RAMP, edited, **_EPS)
 
 
-def test_a_live_ride_before_the_authored_envelope_is_a_mismatch():
-    """The DB says nothing about time before its first breakpoint, so a Live
-    value there is not something the staircase can vouch for."""
-    rendered, _ = ec.render_staircase([_bp(1.0, 0.5), _bp(2.0, 0.0)])
-    live = [{"time_beats": 0.0, "value": 0.8}] + _changes(rendered)
-    assert not ec.staircase_matches(
-        rendered, live, time_eps=0.0115, value_eps=1e-3,
-    )
+def test_a_read_back_that_never_reaches_the_last_breakpoint_does_not_hold():
+    rendered, _ = ec.render_staircase(_RAMP)
+    assert not ec.holds_authored_curve(_RAMP, _changes(rendered)[:8], **_EPS)
 
 
-def test_a_truncated_read_back_is_a_mismatch():
-    rendered, _ = ec.render_staircase([_bp(0.0, 0.5), _bp(1.0, 0.0)])
-    assert not ec.staircase_matches(
-        rendered, _changes(rendered)[:8], time_eps=0.0115, value_eps=1e-3,
-    )
+def test_a_hold_jump_holds_on_both_sides_of_its_breakpoint():
+    bps = [_bp(0.0, 0.2, "hold"), _bp(1.0, 0.9), _bp(2.0, 0.4)]
+    rendered, _ = ec.render_staircase(bps)
+    assert ec.holds_authored_curve(bps, _changes(rendered), **_EPS)
 
 
 # ---------- is_flat_at ----------

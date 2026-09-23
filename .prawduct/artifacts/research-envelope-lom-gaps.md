@@ -58,8 +58,9 @@ is explicit: the version half is settled and dated, so a future session
 re-opening this should skip straight to the M4L probe.
 
 Meanwhile the shipped workarounds stand and are correct: the clip pitch-bend /
-CC skip carries its teaching message, and ENV-2M9K's plan-time warn tells the
-author that curves will render as steps.
+CC skip carries its teaching message. (ENV-2M9K's plan-time warn that curves
+render as steps was retired on 2026-09-22 by #479: the push now sends a ramp as
+a staircase sampled from the authored curve.)
 
 ---
 

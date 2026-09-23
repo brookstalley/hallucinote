@@ -16,8 +16,8 @@ from __future__ import annotations
 
 import pytest
 
-from hallucinote.db import init_db, mutations as M
-from hallucinote.sync import push
+from hallucinote.db import init_db, mutations as M, queries as Q
+from hallucinote.sync import envelope_curve, push
 from hallucinote.sync.push._core import build_node_addr
 
 
@@ -190,6 +190,20 @@ def _add_one_breakpoint(conn, envelope_id):
     M.add_breakpoint(conn, envelope_id=envelope_id, time_beats=1.0, value=0.0)
 
 
+def _linear_staircase(t0, v0, t1, v1, step=1.0 / 16):
+    """The wire form of one authored `linear` segment: the write draws
+    envelopes as steps, so the ramp goes out as equal 1/16-beat steps holding the
+    lerp at each step's start, then the authored end point. Written out from
+    the definition here, not by calling the renderer under test."""
+    n = round((t1 - t0) / step)
+    width = (t1 - t0) / n
+    return [
+        {"time_beats": t0 + k * width, "value": v0 + (v1 - v0) * (k / n),
+         "curve": "hold"}
+        for k in range(n)
+    ] + [{"time_beats": t1, "value": v1, "curve": "hold"}]
+
+
 # ---------- clip_cc + clip_pitch_bend (W4-B: LOM-gap skip) ----------
 
 
@@ -292,10 +306,7 @@ def test_device_parameter_track_emits_via_session_clip(
         "location": "session",
         "clip_index": 1,
         "parameter_name": "Threshold",
-        "breakpoints": [
-            {"time_beats": 0.0, "value": 0.5, "curve": "linear"},
-            {"time_beats": 1.0, "value": 0.0, "curve": "linear"},
-        ],
+        "breakpoints": _linear_staircase(0.0, 0.5, 1.0, 0.0),
     }
 
 
@@ -405,10 +416,7 @@ def test_mixer_volume_emits_via_session_clip(
         "track_index": 5,
         "location": "session",
         "clip_index": 1,
-        "breakpoints": [
-            {"time_beats": 0.0, "value": 0.5, "curve": "linear"},
-            {"time_beats": 1.0, "value": 0.0, "curve": "linear"},
-        ],
+        "breakpoints": _linear_staircase(0.0, 0.5, 1.0, 0.0),
     }
 
 
@@ -546,10 +554,7 @@ def test_mixer_volume_breakpoints_translated_to_clip_local(
     calls = _calls_by_target_kind(plan)
     assert list(calls) == ["mixer_volume"]
     bps = calls["mixer_volume"][0].args["breakpoints"]
-    assert bps == [
-        {"time_beats": 0.0, "value": 0.45, "curve": "linear"},
-        {"time_beats": 6.0, "value": 0.85, "curve": "linear"},
-    ]
+    assert bps == _linear_staircase(0.0, 0.45, 6.0, 0.85)
 
 
 def test_mixer_volume_warns_when_session_clip_has_multiple_placements(
@@ -755,10 +760,7 @@ def test_send_level_emits_via_session_clip(
         "location": "session",
         "clip_index": 1,
         "return_index": 1,
-        "breakpoints": [
-            {"time_beats": 0.0, "value": 0.5, "curve": "linear"},
-            {"time_beats": 1.0, "value": 0.0, "curve": "linear"},
-        ],
+        "breakpoints": _linear_staircase(0.0, 0.5, 1.0, 0.0),
     }
 
 
@@ -944,65 +946,123 @@ def test_emittable_target_kinds_in_one_song(
     assert keys == {f"envelope:{eid}" for eid in eids}
 
 
-# ---------- W5-E: curve-hint lossiness warn ----------
+# ---------- #479: ramps reach Live as a staircase ----------
 #
-# Live 12.4 envelopes are step-only (Envelope.insert_step). DB curve_kinds
-# 'linear' / 'fast' / 'slow' are recorded faithfully but discarded on push;
-# only 'hold' round-trips. The planner emits ONE warn per envelope when any
-# breakpoint carries a lossy curve hint, surfacing the round-trip lossiness
-# at plan time rather than letting the user discover it from MCP-side
-# response notes.
+# Live 12.4 envelopes are step-only (Envelope.insert_step). Sent as-is, an
+# authored `linear` / `fast` / `slow` ramp became ONE flat step at its first
+# value. The session-clip push renders ramping segments into a 1/16-beat
+# staircase sampled from the authored curve; the DB keeps the authored
+# breakpoints. One diagnostic note per ramping envelope says so; a staircase
+# widened to fit the wire cap is an alert, and an envelope Live would discard
+# (every value at the target's static value) is an alert and no call.
 
 
-def _lossy_warns(plan) -> list[str]:
-    return [n for n in plan.notes if "curve hints are recorded in the DB but lossy" in n]
+def _staircase_notes(plan) -> list[str]:
+    return [n for n in plan.notes if "-step staircase at" in n]
 
 
-def test_lossy_curve_hint_warns_once_for_linear_default(
+def _staircase_alerts(plan) -> list[str]:
+    return [a for a in plan.alerts if "-step staircase at" in a]
+
+
+def _static_alerts(plan) -> list[str]:
+    return [a for a in plan.alerts if "static value" in a]
+
+
+def test_staircase_note_once_for_a_linear_default_ramp(
     conn, song, session, linked_track, linked_clip, linked_device, arr_clip,
 ):
-    """Default curve_kind is 'linear'. A typical envelope hits the warn."""
+    """Default curve_kind is 'linear'. A typical ramp gets one note naming
+    the envelope, its kind and the resolution used."""
     eid = M.create_envelope(
         conn, song_id=song, target_kind="device_parameter",
         target_device_id=linked_device, parameter_path="Threshold",
     )
     _add_one_breakpoint(conn, eid)  # both breakpoints curve_kind='linear'
     plan = push.plan_push_envelopes(conn, song_id=song, session_id=session)
-    warns = _lossy_warns(plan)
-    assert len(warns) == 1, plan.notes
-    assert eid in warns[0]
-    assert "device_parameter" in warns[0]
-    assert "Live 12.4" in warns[0]
+    notes = _staircase_notes(plan)
+    assert len(notes) == 1, plan.notes
+    assert eid in notes[0]
+    assert "device_parameter" in notes[0]
+    assert "0.0625 beat per step" in notes[0]
+    assert plan.alerts == []
 
 
-def test_lossy_curve_hint_dedupes_across_many_breakpoints(
+def test_a_two_point_linear_ramp_reaches_live_as_a_ramp_not_one_step(
+    conn, song, session, linked_track, linked_clip, arr_clip,
+):
+    """The #479 defect: a 2-breakpoint linear ramp was written as one flat
+    step at 0.5 and a tail at 0.0. It must go out as many steps that walk
+    from the start value to the end value, never rising on a falling ramp."""
+    eid = M.create_envelope(
+        conn, song_id=song, target_kind="mixer_volume",
+        target_track_id=linked_track,
+    )
+    _add_one_breakpoint(conn, eid)  # 0.5 @ 0 -> 0.0 @ 1, linear
+    plan = push.plan_push_envelopes(conn, song_id=song, session_id=session)
+    bps = _calls_by_target_kind(plan)["mixer_volume"][0].args["breakpoints"]
+    assert len(bps) > 2
+    assert (bps[0]["time_beats"], bps[0]["value"]) == (0.0, 0.5)
+    assert (bps[-1]["time_beats"], bps[-1]["value"]) == (1.0, 0.0)
+    values = [bp["value"] for bp in bps]
+    assert values == sorted(values, reverse=True)
+    assert len(set(values)) == len(values), "every step moves"
+    assert {bp["curve"] for bp in bps} == {"hold"}
+    # The DB keeps what was authored — the staircase is wire-only.
+    assert [
+        (b["time_beats"], b["value"], b["curve_kind"])
+        for b in Q.get_breakpoints(conn, eid)
+    ] == [(0.0, 0.5, "linear"), (1.0, 0.0, "linear")]
+
+
+def test_staircase_note_dedupes_across_many_ramping_breakpoints(
     conn, song, session, linked_track, linked_clip, linked_device, arr_clip,
 ):
-    """Many lossy breakpoints in one envelope → exactly one warn (dedup
-    per envelope, not per breakpoint)."""
+    """Many ramping segments in one envelope → exactly one note (per
+    envelope, not per breakpoint)."""
     eid = M.create_envelope(
         conn, song_id=song, target_kind="device_parameter",
         target_device_id=linked_device, parameter_path="Threshold",
     )
-    for t, curve in [
-        (0.0, "linear"),
-        (0.25, "fast"),
-        (0.5, "slow"),
-        (0.75, "linear"),
-        (1.0, "hold"),
+    for t, v, curve in [
+        (0.0, 0.1, "linear"),
+        (0.25, 0.4, "fast"),
+        (0.5, 0.2, "slow"),
+        (0.75, 0.6, "linear"),
+        (1.0, 0.3, "hold"),
     ]:
         M.add_breakpoint(
-            conn, envelope_id=eid, time_beats=t, value=0.5, curve_kind=curve,
+            conn, envelope_id=eid, time_beats=t, value=v, curve_kind=curve,
         )
     plan = push.plan_push_envelopes(conn, song_id=song, session_id=session)
-    assert len(_lossy_warns(plan)) == 1, plan.notes
+    assert len(_staircase_notes(plan)) == 1, plan.notes
 
 
-def test_all_hold_curves_no_lossy_warn(
+def test_a_non_hold_envelope_that_never_moves_is_sent_as_authored(
     conn, song, session, linked_track, linked_clip, linked_device, arr_clip,
 ):
-    """An envelope authored entirely with 'hold' curves round-trips
-    losslessly — no warn fires."""
+    """`linear` between equal values is not a ramp: nothing to sample, so the
+    envelope goes out exactly as authored and earns no note."""
+    eid = M.create_envelope(
+        conn, song_id=song, target_kind="device_parameter",
+        target_device_id=linked_device, parameter_path="Threshold",
+    )
+    for t in (0.0, 0.5, 1.0):
+        M.add_breakpoint(conn, envelope_id=eid, time_beats=t, value=0.5)
+    plan = push.plan_push_envelopes(conn, song_id=song, session_id=session)
+    bps = _calls_by_target_kind(plan)["device_parameter"][0].args["breakpoints"]
+    assert bps == [
+        {"time_beats": t, "value": 0.5, "curve": "linear"}
+        for t in (0.0, 0.5, 1.0)
+    ]
+    assert _staircase_notes(plan) == [], plan.notes
+
+
+def test_all_hold_envelope_call_is_unchanged_and_unnoted(
+    conn, song, session, linked_track, linked_clip, linked_device, arr_clip,
+):
+    """A 'hold'-only envelope already IS a step shape: its call is exactly
+    the one it always was, and no note fires."""
     eid = M.create_envelope(
         conn, song_id=song, target_kind="device_parameter",
         target_device_id=linked_device, parameter_path="Threshold",
@@ -1014,17 +1074,25 @@ def test_all_hold_curves_no_lossy_warn(
         conn, envelope_id=eid, time_beats=1.0, value=0.0, curve_kind="hold",
     )
     plan = push.plan_push_envelopes(conn, song_id=song, session_id=session)
-    # The envelope still emits a ToolCall (it ships).
-    assert _calls_by_target_kind(plan).get("device_parameter")
-    # But no lossy-curve warn — 'hold' matches Live's step behavior.
-    assert _lossy_warns(plan) == [], plan.notes
+    assert _calls_by_target_kind(plan)["device_parameter"][0].args == {
+        "action": "write_envelope",
+        "target_kind": "device_parameter",
+        "node": build_node_addr({"track_index": 5}, device_index=2),
+        "location": "session",
+        "clip_index": 1,
+        "parameter_name": "Threshold",
+        "breakpoints": [
+            {"time_beats": 0.0, "value": 0.5, "curve": "hold"},
+            {"time_beats": 1.0, "value": 0.0, "curve": "hold"},
+        ],
+    }
+    assert _staircase_notes(plan) == [], plan.notes
 
 
-def test_lossy_warn_per_envelope_not_pooled(
+def test_staircase_note_per_envelope_not_pooled(
     conn, song, session, linked_track, linked_clip, linked_device, arr_clip,
 ):
-    """Two envelopes each with lossy curves → two warns (one per envelope).
-    Dedup is scoped per-envelope, not global."""
+    """Two ramping envelopes → two notes (one per envelope)."""
     eid1 = M.create_envelope(
         conn, song_id=song, target_kind="device_parameter",
         target_device_id=linked_device, parameter_path="Threshold",
@@ -1036,18 +1104,17 @@ def test_lossy_warn_per_envelope_not_pooled(
     for eid in (eid1, eid2):
         _add_one_breakpoint(conn, eid)  # linear defaults
     plan = push.plan_push_envelopes(conn, song_id=song, session_id=session)
-    warns = _lossy_warns(plan)
-    assert len(warns) == 2, plan.notes
-    assert any(eid1 in w for w in warns)
-    assert any(eid2 in w for w in warns)
+    notes = _staircase_notes(plan)
+    assert len(notes) == 2, plan.notes
+    assert any(eid1 in n for n in notes)
+    assert any(eid2 in n for n in notes)
 
 
-def test_skipped_envelope_does_not_emit_lossy_curve_warn(
+def test_skipped_envelope_does_not_emit_staircase_note(
     conn, song, session, linked_track, linked_clip,
 ):
-    """clip_cc envelopes are skipped wholesale (LOM gap); the curve hint
-    isn't "lossy on push" because nothing gets pushed. The skip-with-warn
-    message stands alone — no additional curve-lossiness warn."""
+    """clip_cc envelopes are skipped wholesale (LOM gap); nothing is
+    materialized, so the skip warn stands alone."""
     eid = M.create_envelope(
         conn, song_id=song, target_kind="clip_cc",
         target_clip_id=linked_clip, parameter_path="64",
@@ -1055,26 +1122,153 @@ def test_skipped_envelope_does_not_emit_lossy_curve_warn(
     _add_one_breakpoint(conn, eid)  # linear curves, but envelope is skipped
     plan = push.plan_push_envelopes(conn, song_id=song, session_id=session)
     assert plan.calls == []
-    assert _lossy_warns(plan) == [], plan.notes
+    assert _staircase_notes(plan) == [], plan.notes
     # The LOM-gap skip warn is still present.
     assert any("clip_cc" in n and "Skipping" in n for n in plan.notes)
 
 
-def test_lossy_warn_fires_on_the_send_level_path(
+def test_staircase_note_fires_on_the_send_level_path(
     conn, song, session, linked_track, linked_clip, linked_return, arr_clip,
 ):
-    """The warn helper is wired into every emit path, not just the one its
-    own tests exercise. Cross-path canary — it rode note_expression until
-    that kind stopped emitting at all."""
+    """The staircase is wired into every session-clip emit path, not just
+    the one its own tests exercise."""
     eid = M.create_envelope(
         conn, song_id=song, target_kind="send_level",
         target_track_id=linked_track, target_send_return_id=linked_return,
     )
     _add_one_breakpoint(conn, eid)  # linear defaults
     plan = push.plan_push_envelopes(conn, song_id=song, session_id=session)
-    warns = _lossy_warns(plan)
-    assert len(warns) == 1, plan.notes
-    assert "send_level" in warns[0]
+    notes = _staircase_notes(plan)
+    assert len(notes) == 1, plan.notes
+    assert "send_level" in notes[0]
+    bps = _calls_by_target_kind(plan)["send_level"][0].args["breakpoints"]
+    assert len(bps) > 2
+
+
+def test_a_ramp_too_long_for_the_cap_is_widened_and_alerted(
+    conn, song, session, linked_track, linked_clip, monkeypatch,
+):
+    """Past the wire cap the step widens — the ramp still arrives at its
+    authored end — and the operator is TOLD, on the alert channel, what
+    resolution was actually used."""
+    M.add_arrangement_clip(
+        conn, song_id=song, track_id=linked_track, clip_id=linked_clip,
+        start_bar=1.0, end_bar=3.0,
+    )
+    monkeypatch.setattr(envelope_curve, "MAX_STAIRCASE_STEPS", 16)
+    eid = M.create_envelope(
+        conn, song_id=song, target_kind="mixer_volume",
+        target_track_id=linked_track,
+    )
+    M.add_breakpoint(conn, envelope_id=eid, time_beats=0.0, value=0.0)
+    M.add_breakpoint(conn, envelope_id=eid, time_beats=8.0, value=1.0)
+    plan = push.plan_push_envelopes(conn, song_id=song, session_id=session)
+    bps = _calls_by_target_kind(plan)["mixer_volume"][0].args["breakpoints"]
+    assert len(bps) <= 16
+    assert (bps[-1]["time_beats"], bps[-1]["value"]) == (8.0, 1.0)
+    alerts = _staircase_alerts(plan)
+    assert len(alerts) == 1, (plan.alerts, plan.notes)
+    assert eid in alerts[0]
+    assert "coarser than the standard 0.0625" in alerts[0]
+    assert _staircase_notes(plan) == []
+
+
+def test_envelope_flat_at_the_track_static_volume_alerts_and_clears(
+    conn, song, session, linked_track, linked_clip, arr_clip,
+):
+    """Live discards an envelope every step of which equals the parameter's
+    static value, and the write still reports ok. So the push does not write
+    it: it CLEARS the target — what the author wrote means "no movement", and
+    a ride an earlier push left in the clip must not keep playing — and says
+    so on the alert channel."""
+    M.set_track_mixer(conn, track_id=linked_track, volume=0.7)
+    eid = M.create_envelope(
+        conn, song_id=song, target_kind="mixer_volume",
+        target_track_id=linked_track,
+    )
+    for t in (0.0, 1.0, 2.0):
+        M.add_breakpoint(conn, envelope_id=eid, time_beats=t, value=0.7)
+    plan = push.plan_push_envelopes(conn, song_id=song, session_id=session)
+    assert [c.args for c in plan.calls] == [{
+        "action": "clear",
+        "target_kind": "mixer_volume",
+        "track_index": 5,
+        "location": "session",
+        "clip_index": 1,
+    }]
+    assert plan.calls[0].key == f"envelope:{eid}"
+    assert _staircase_notes(plan) == []
+    alerts = _static_alerts(plan)
+    assert len(alerts) == 1, plan.alerts
+    assert eid in alerts[0]
+
+
+def test_envelope_flat_at_a_different_value_than_static_still_emits(
+    conn, song, session, linked_track, linked_clip, arr_clip,
+):
+    """A flat ride AWAY from the static value is a real instruction Live
+    keeps — it pins the parameter. It must go out."""
+    M.set_track_mixer(conn, track_id=linked_track, volume=0.7)
+    eid = M.create_envelope(
+        conn, song_id=song, target_kind="mixer_volume",
+        target_track_id=linked_track,
+    )
+    for t in (0.0, 1.0):
+        M.add_breakpoint(conn, envelope_id=eid, time_beats=t, value=0.6)
+    plan = push.plan_push_envelopes(conn, song_id=song, session_id=session)
+    assert len(plan.calls) == 1
+    assert _static_alerts(plan) == []
+
+
+def test_envelope_with_no_recorded_static_value_is_never_called_flat(
+    conn, song, session, linked_track, linked_clip, arr_clip,
+):
+    """The DB records no static volume: nothing to compare with, so the
+    envelope goes out — unknown is not equal."""
+    eid = M.create_envelope(
+        conn, song_id=song, target_kind="mixer_volume",
+        target_track_id=linked_track,
+    )
+    for t in (0.0, 1.0):
+        M.add_breakpoint(conn, envelope_id=eid, time_beats=t, value=0.7)
+    plan = push.plan_push_envelopes(conn, song_id=song, session_id=session)
+    assert len(plan.calls) == 1
+    assert _static_alerts(plan) == []
+
+
+def test_flat_at_static_is_checked_for_sends_and_device_parameters(
+    conn, song, session, linked_track, linked_clip, linked_device,
+    linked_return, ret, device, arr_clip,
+):
+    """The static value comes from the right column per kind: a send's
+    `level`, a device parameter's `value_raw`."""
+    M.set_send_level(
+        conn, from_track_id=linked_track, to_return_id=ret, level=0.3,
+    )
+    M.set_device_parameter(
+        conn, device_id=device, name="Threshold", value_display="-12 dB",
+        value_raw=-12.0,
+    )
+    send_env = M.create_envelope(
+        conn, song_id=song, target_kind="send_level",
+        target_track_id=linked_track, target_send_return_id=linked_return,
+    )
+    dev_env = M.create_envelope(
+        conn, song_id=song, target_kind="device_parameter",
+        target_device_id=linked_device, parameter_path="Threshold",
+    )
+    for t in (0.0, 1.0):
+        M.add_breakpoint(conn, envelope_id=send_env, time_beats=t, value=0.3)
+        M.add_breakpoint(conn, envelope_id=dev_env, time_beats=t, value=-12.0)
+    plan = push.plan_push_envelopes(conn, song_id=song, session_id=session)
+    assert {c.key: c.args["action"] for c in plan.calls} == {
+        f"envelope:{send_env}": "clear",
+        f"envelope:{dev_env}": "clear",
+    }
+    assert all("breakpoints" not in c.args for c in plan.calls)
+    alerts = _static_alerts(plan)
+    assert any(send_env in a for a in alerts), plan.alerts
+    assert any(dev_env in a for a in alerts), plan.alerts
 
 
 # ---------------------------------------------------------------------------
@@ -1150,10 +1344,7 @@ def test_audio_mixer_envelope_covered_by_clip_emits_via_session_clip(
         "track_index": 5,
         "location": "session",
         "clip_index": 1,
-        "breakpoints": [
-            {"time_beats": 0.0, "value": 0.5, "curve": "linear"},
-            {"time_beats": 1.0, "value": 0.0, "curve": "linear"},
-        ],
+        "breakpoints": _linear_staircase(0.0, 0.5, 1.0, 0.0),
     }
     assert not any("CLP-AUD2" in n for n in plan.notes), plan.notes
     assert not any("sub-bus" in n for n in plan.notes), plan.notes
@@ -1209,14 +1400,11 @@ def test_send_envelope_on_audio_track_emits_via_session_clip(
         "location": "session",
         "clip_index": 1,
         "return_index": 1,
-        "breakpoints": [
-            {"time_beats": 0.0, "value": 0.5, "curve": "linear"},
-            {"time_beats": 1.0, "value": 0.0, "curve": "linear"},
-        ],
+        "breakpoints": _linear_staircase(0.0, 0.5, 1.0, 0.0),
     }
     # The ONLY note is the standing linear-curve lossiness warn every
     # envelope earns — nothing was refused or skipped.
-    assert plan.notes == _lossy_warns(plan), plan.notes
+    assert plan.notes == _staircase_notes(plan), plan.notes
     assert len(plan.notes) == 1, plan.notes
 
 
@@ -1283,14 +1471,11 @@ def test_volume_ride_under_an_audio_clip_emits_on_that_clip(
         "track_index": 6,
         "location": "session",
         "clip_index": 3,
-        "breakpoints": [
-            {"time_beats": 0.0, "value": 0.5, "curve": "linear"},
-            {"time_beats": 1.0, "value": 0.0, "curve": "linear"},
-        ],
+        "breakpoints": _linear_staircase(0.0, 0.5, 1.0, 0.0),
     }
     # The ONLY note is the standing linear-curve lossiness warn every
     # envelope earns — nothing was refused or skipped.
-    assert plan.notes == _lossy_warns(plan), plan.notes
+    assert plan.notes == _staircase_notes(plan), plan.notes
     assert len(plan.notes) == 1, plan.notes
 
 
@@ -1578,10 +1763,11 @@ def test_classify_send_level_on_master_is_unroutable(
 def test_session_clip_routing_helper_returns_full_tuple_on_success(
     conn, song, session, linked_track, linked_clip, arr_clip,
 ):
-    """The shared helper returns (clip_at, local_bps, placement, env_max)
-    on success — the four pieces every clip-scoped emitter (mixer / send /
-    device_parameter) needs to assemble its ToolCall and fire post-warnings.
-    Same call shape regardless of target_kind."""
+    """The shared helper returns (clip_at, local_bps, placement, env_max,
+    step_used) on success — the pieces every clip-scoped emitter (mixer /
+    send / device_parameter) needs to assemble its ToolCall and fire its
+    post-notes. ``local_bps`` is the WIRE form: a ramp is already the
+    staircase. Same call shape regardless of target_kind."""
     eid = M.create_envelope(
         conn, song_id=song, target_kind="mixer_volume",
         target_track_id=linked_track,
@@ -1604,10 +1790,11 @@ def test_session_clip_routing_helper_returns_full_tuple_on_success(
         host_track_id=linked_track, host_track_at=5,
     )
     assert routing is not None
-    clip_at, local_bps, placement, env_max = routing
+    clip_at, local_bps, placement, env_max, step_used = routing
     assert clip_at == 1
     # Placement starts at beat 0 (bar 1), so local == arrangement here.
-    assert local_bps == bps_mcp
+    assert local_bps == _linear_staircase(1.0, 0.5, 3.0, 0.8)
+    assert step_used == 1.0 / 16
     assert placement.start_beats == 0.0
     assert env_max == 3.0
     assert plan.notes == []  # success path emits no skip warns
@@ -1738,6 +1925,8 @@ def test_sample_instrument_window_envelope_routes_sample_accurate_not_perform(
         "location='session' IS the sample-accurate route; an arrangement/perform "
         "emit here is the regression this test exists to catch"
     )
-    assert [bp["time_beats"] for bp in call.args["breakpoints"]] == [
-        0.0, 1.5, 3.5, 5.5,
-    ], "every authored window edge must survive the plan at its authored beat"
+    wire = {(bp["time_beats"], bp["value"]) for bp in call.args["breakpoints"]}
+    assert {(0.0, 0.0), (1.5, 0.25), (3.5, 0.5), (5.5, 0.75)} <= wire, (
+        "every authored window edge must survive the plan at its authored "
+        "beat and value — a ramp between edges adds steps, never moves one"
+    )

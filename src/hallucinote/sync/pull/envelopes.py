@@ -30,7 +30,15 @@ value within tolerance). If matched, the DB's `curve_kind` is preserved
 only time matches (value differs), Live overwrote the value — the new
 breakpoint inherits `curve='hold'` because Live can't tell us otherwise.
 This rule prevents pull churn on songs whose DB-authored envelopes carry
-non-hold curves that push has already warned about being lossy (W5-E).
+non-hold curves.
+
+Ramps (#479): push sends a ramping envelope as a staircase sampled from the
+authored curve (`sync.envelope_curve.render_staircase`), so Live reads back
+dozens of steps where the DB holds two breakpoints. The apply path asks
+whether that read-back is a sampling of the authored curve
+(`holds_authored_curve`); if so it is a no-op. Without it every pull after a
+push would overwrite the authored breakpoints with the projection — a fidelity
+fix turned into authored-intent loss.
 """
 from __future__ import annotations
 
@@ -46,6 +54,12 @@ from hallucinote.db import mutations as M, queries as Q
 # pull no longer reaches into push for them. Any change to the covering-placement
 # geometry applies to both halves automatically, keeping pull and push exactly
 # symmetric on routing semantics.
+from ..envelope_curve import (
+    has_ramp,
+    holds_authored_curve,
+    is_flat_at,
+    wire_breakpoints,
+)
 from ..geometry import (
     _envelope_beat_range,
     _resolve_envelope_session_clip,
@@ -74,6 +88,14 @@ _ENVELOPE_VALUE_EPS = _FLOAT_EPS
 # sides (W6-G handler raises NotImplementedError). Pull skips them with the
 # same shape as push.
 _ENVELOPE_KINDS_READ_BLOCKED = frozenset({"clip_cc", "clip_pitch_bend"})
+
+
+def _is_flat_at_static(conn: sqlite3.Connection, envelope: sqlite3.Row) -> bool:
+    """The same predicate push applies before writing (see
+    `envelope_curve.is_flat_at`): push CLEARS such an envelope, so Live
+    holding none is exactly what the author wrote."""
+    values = [float(bp["value"]) for bp in Q.get_breakpoints(conn, envelope["id"])]
+    return is_flat_at(values, Q.get_envelope_target_static_value(conn, envelope))
 
 
 def plan_pull_envelopes(
@@ -543,6 +565,30 @@ def _merge_envelope_breakpoints(
     return merged, changed
 
 
+def _before_read_end(
+    live_bps: list[dict[str, Any]],
+    live_bps_arrangement: list[dict[str, Any]],
+    result: dict[str, Any],
+    time_eps: float,
+) -> list[dict[str, Any]]:
+    """Drop a change Live reports at the read's very last sample.
+
+    The read samples through the clip's end INCLUSIVE, and whether the last
+    step's hold still covers that exact instant is Live's call — a step the
+    handler wrote over ``[t, clip_length)`` can read as unset right at
+    ``clip_length``. A value there cannot be heard (the clip has ended), so it
+    is not evidence either way about the authored curve. ``live_bps`` (clip-
+    local, same order) locates it; the arrangement-time list is what is kept.
+    """
+    time_range = result.get("time_range_beats")
+    if not (isinstance(time_range, list) and len(time_range) == 2 and live_bps):
+        return live_bps_arrangement
+    end = float(time_range[1])
+    if float(live_bps[-1]["time_beats"]) >= end - time_eps:
+        return live_bps_arrangement[:-1]
+    return live_bps_arrangement
+
+
 def _apply_envelope(
     conn: sqlite3.Connection,
     *,
@@ -597,6 +643,17 @@ def _apply_envelope(
     db_bps = Q.get_breakpoints(conn, envelope_id)
 
     if not live_bps:
+        if (
+            db_bps
+            and _envelope_needs_arrangement_translation(envelope["target_kind"])
+            and _is_flat_at_static(conn, envelope)
+        ):
+            # Push clears an envelope that never leaves the static value
+            # (Live would discard it anyway), so an empty read-back is what
+            # push left — not a removal. A ride drawn over it in Live reads
+            # back non-empty and takes the normal path below.
+            out.no_ops += 1
+            return
         # Live reports no envelope here. If the DB row has breakpoints
         # (representing the user's authored intent), it means the user
         # removed the envelope in Live. Cascade-delete the DB row.
@@ -644,6 +701,20 @@ def _apply_envelope(
         time_eps=time_eps, value_eps=_ENVELOPE_VALUE_EPS,
     )
     if not changed:
+        out.no_ops += 1
+        return
+    authored = wire_breakpoints(db_bps)
+    if (
+        _envelope_needs_arrangement_translation(envelope["target_kind"])
+        and has_ramp(authored)
+        and holds_authored_curve(
+            authored,
+            _before_read_end(live_bps, live_bps_arrangement, result, time_eps),
+            time_eps=time_eps, value_eps=_ENVELOPE_VALUE_EPS,
+        )
+    ):
+        # Live holds a step-sampling of these authored breakpoints — what
+        # push sent. Nothing was edited, and the DB keeps the curve.
         out.no_ops += 1
         return
 

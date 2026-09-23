@@ -33,6 +33,50 @@ pending entries when `operator_verification_required: true`.
 
 ---
 
+## #479 — a ramp reaches Live as a ramp (2026-09-22) — PENDING
+
+Issue **#479**. The session-clip push now sends a `linear` / `fast` / `slow`
+envelope as a 1/16-beat staircase sampled from the authored curve
+(`src/hallucinote/sync/envelope_curve.py`), where it used to send one flat step at
+the first value. The unit suite drives the MCP handler's own step writer and
+sampler against a fake envelope, so it proves the round trip's logic and nothing
+about how densely Live keeps steps. Needs Live 12.4.x and any song with a
+session-clip-covered `mixer_volume` or `device_parameter` ride.
+**Visual change: no.**
+
+**Fingerprint flip: NO, and no re-vendor is needed.** Only the push planner (which
+runs in the push CLI, not in Live) and the pull comparator changed; the wire shape
+and every handler are untouched. The staircase arrives over the existing
+`write_envelope` call as ordinary `hold` breakpoints.
+
+- [ ] **The ramp is a ramp in Live.** Author a two-breakpoint `linear` ride over one
+  bar (e.g. volume 0.4 → 0.8), push, open the clip's envelope in Live. Pass = a
+  visible staircase climbing across the bar, not one flat segment followed by a
+  jump. Then `ableton_automation(action='read_envelope', …)` on the same target:
+  pass = one breakpoint per 1/16 beat across the ramp. **Fewer points than that means
+  Live coalesced the steps** — record the spacing Live actually kept, because
+  `STAIRCASE_STEP_BEATS` was chosen, not measured, and that spacing is what it
+  should become. Changing it is safe for songs already pushed: pull checks that
+  Live holds points ON the authored curve, not a particular spacing. Note too
+  whether the read's last point, at the clip's exact end, holds the ramp's end
+  value or reads unset. Pull ignores that one sample either way, and a unit
+  fake assumes it reads unset.
+- [ ] **A pull straight after the push changes nothing.** `/ableton-pull` with no
+  edit in Live. Pass = the envelope reports no-op and `build.py`'s two authored
+  breakpoints are still the DB's two `linear` rows, not seventeen `hold` ones.
+  Do it once more with the ramp authored MID-clip (e.g. beats 2 → 3 of an 8-beat
+  clip), where Live's read starts with an unset stretch before the ramp.
+- [ ] **Live really does discard an envelope flat at the static value.** This is the
+  premise the new push alert rests on, taken from the #471 report. Set a track's
+  volume to 0.7, write a two-point envelope at 0.7 by hand through
+  `ableton_automation(action='write_envelope', …)`, then read it back. **Do not
+  read `exists`**: it is false both when Live discarded the envelope and when Live
+  kept a flat one, because a flat envelope reads back as one breakpoint. Read
+  `breakpoints`. Pass = an EMPTY list (Live discarded it). A single breakpoint at
+  0.7 means Live KEPT it. Then the push's clear-instead-of-write is unneeded and
+  should revert to writing the flat envelope. That is not harmful, since a flat
+  envelope at the static value sounds the same either way.
+
 ## RENDERGUARD-0910 — the solo refusal fires against a real Live mixer (2026-09-10) — PENDING
 
 Issue **#548**. The refusal reads `solo` and `mute` off Live's own track objects, across

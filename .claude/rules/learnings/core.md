@@ -8,7 +8,7 @@
 - **External platform/LOM verdict** ("X is not supported / forever-manual") — RE-PROBE the platform directly; capability verdicts are VERSION-SENSITIVE (a finding true on an older build can be silently fixed by an update), and the stale "can't" propagates into code, skills, and workarounds as a false premise.
 - **Internal stale comment/docstring** asserting a limitation of OUR OWN code — verify against the actual code path, because code outgrows its comments.
 
-**Corollary:** treat probe-confirmable platform/API facts as must-verify, not recall. (Reinforces *Verify, don't guess*.)
+**Corollary:** treat probe-confirmable platform/API facts as must-verify, not recall — and record the build a capability claim was verified against, because a build-less verdict is untrustable on a later one. (Reinforces *Verify, don't guess*.)
 
 **Corollary (read-SHAPE, not just settability): when a foreign-API field's shape is only documented loosely — or not at all — STUB LOUD (raise) until a real probe pins it; do NOT guess the shape to "unblock."**
 
@@ -140,10 +140,6 @@ refusal on a branch you believe is merged as a finding, never as friction.**
 ### Unit fakes that mirror an *assumed* Live API give false confidence
 
 **Test fakes for Live's Remote Script API must simulate the real API's quirks — not the API's documented or assumed shape. Without an integration smoke test against a real Live process, the unit suite gives a green light to handlers that crash empirically.**
-
-### A shipped "can't" is a dated snapshot — re-probe a challenged capability verdict before defending it
-
-**When a recorded capability verdict ("can't / not supported / impossible") is challenged and the platform is live, RE-PROBE before citing the artifact — it is a dated snapshot of one build, not a law, and the re-probe costs minutes against a false premise that can span many surfaces. Capability claims must record the build they were verified against; a build-less verdict is untrustable on a later one.**
 
 ### Link, don't summarize
 
@@ -441,3 +437,7 @@ generous `MCP_TIMEOUT`; a pre-warm hook is best-effort, not the mitigation.**
 ### Run the type checker the way CI runs it, or its green means nothing
 
 **Invoke the project's configured checker over the project — `uv run --no-sync mypy`, no file arguments — never `mypy <the files I touched>`. A per-file run type-checks those files against whatever it can infer, and it structurally cannot see an error whose report depends on the whole-project config, the full module graph, or a file the diff did not touch. `develop` carried a mypy error for a day and a half behind three branches that each reported "mypy clean": the branch that introduced it checked its own files, and so did every check on the PR that followed. CI, which runs the config, caught it in 21 seconds. The same reasoning covers any whole-project gate — a linter with per-directory rules, a test suite with cross-module fixtures: check what the gate checks, or do not call it green.**
+
+### A segfaulting suite reports a SMALLER suite — a total that dropped is a crash, and a numba crash is usually its cache
+
+**When the suite total is far below the last known one, or xdist prints `INTERNALERROR ... KeyError: <WorkerController>`, a worker died mid-run and every test it held went unreported. The recorded "N passed, 4 failed" is then about a fraction of the tree. For a segfault inside a numba-JIT library (librosa's `pyin`), re-run the one test with `NUMBA_CACHE_DIR=<empty dir>` before suspecting code: a pass there means a stale cache in `.venv`, and deleting that library's `*.nbi`/`*.nbc` files fixes it. On 2026-09-22 a corrupt librosa cache hid 3,600 of 6,670 tests behind a crash that looked like four failures.**

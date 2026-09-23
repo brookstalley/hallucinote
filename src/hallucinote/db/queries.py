@@ -904,6 +904,44 @@ def get_breakpoints(
     ).fetchall()
 
 
+def get_envelope_target_static_value(
+    conn: sqlite3.Connection, envelope: sqlite3.Row,
+) -> float | None:
+    """The DB's static value for the parameter an envelope rides, in the same
+    units the envelope's breakpoints carry — or None when the DB records none.
+
+    ``mixer_volume`` / ``mixer_pan`` read the track's ``volume`` / ``pan``;
+    ``send_level`` the send's ``level``; ``device_parameter`` the parameter's
+    ``value_raw`` (Live envelopes carry a parameter's raw value, not its
+    normalized one). Every other kind, a NULL column, and a missing row are
+    None: the static value is unknown, not zero.
+    """
+    kind = envelope["target_kind"]
+    if kind in ("mixer_volume", "mixer_pan"):
+        column = "volume" if kind == "mixer_volume" else "pan"
+        row = conn.execute(
+            f"SELECT {column} AS v FROM tracks WHERE id = ?",
+            (envelope["target_track_id"],),
+        ).fetchone()
+    elif kind == "send_level":
+        row = conn.execute(
+            """SELECT level AS v FROM sends
+               WHERE from_track_id = ? AND to_return_id = ?""",
+            (envelope["target_track_id"], envelope["target_send_return_id"]),
+        ).fetchone()
+    elif kind == "device_parameter":
+        row = conn.execute(
+            """SELECT value_raw AS v FROM device_parameters
+               WHERE device_id = ? AND name = ?""",
+            (envelope["target_device_id"], envelope["parameter_path"]),
+        ).fetchone()
+    else:
+        return None
+    if row is None or row["v"] is None:
+        return None
+    return float(row["v"])
+
+
 def get_performed_automation(
     conn: sqlite3.Connection, envelope_id: str, session_id: str,
 ) -> sqlite3.Row | None:

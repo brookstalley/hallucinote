@@ -29,6 +29,12 @@ from typing import Any
 
 from hallucinote.db import queries as Q
 
+from ..envelope_curve import (
+    STAIRCASE_STEP_BEATS,
+    has_ramp,
+    is_flat_at,
+    render_staircase,
+)
 from ..geometry import (
     _CoveringPlacement,
     _envelope_beat_range,
@@ -338,6 +344,13 @@ def classify_envelope_route(
                        device (no addressable surface on either route), or
                        an unknown kind — caller warns with specifics.
 
+    Policy: ``session_clip`` wherever it is available, because it writes
+    exactly and instantly and a ramp rides it as a 1/16-beat staircase
+    sampled from the authored curve — finer than the perform recorder's tick.
+    ``perform`` is only for hosts that own no session clip (master/group,
+    return-side mixer, return-side and nested-rack ``device_parameter``) or
+    a span no single session clip covers.
+
     Single source of truth for the partition: the session-clip emitters,
     the performed-automation phase selector, and the planner warns all key
     off this. ``song_id`` is required for the infer-from-span covering-clip
@@ -555,40 +568,43 @@ def _emit_note_expression_envelope(
     )
 
 
-_LOSSY_CURVE_HINTS = frozenset({"linear", "fast", "slow"})
-
-
-def _warn_lossy_curve_hints(
+def _note_staircase(
     plan: PushPlan,
     *,
     envelope: sqlite3.Row,
-    breakpoints_mcp: list[dict[str, Any]],
+    authored_bps: list[dict[str, Any]],
+    wire_count: int,
+    step_used: float,
 ) -> None:
-    """Emit one warn per envelope when any breakpoint carries a curve
-    hint Live 12.4 cannot apply.
+    """Say how a ramping envelope was materialized — one note per envelope.
 
-    Live 12.4 exposes only ``Envelope.insert_step``; the MCP handler
-    converts every breakpoint to a stepped region (see
-    ``hallucinote_mcp/src/hallucinote_mcp/handlers/automation.py::_write_breakpoints_as_steps``).
-    Curves ``linear`` / ``fast`` / ``slow`` are recorded in the DB
-    faithfully but discarded on push — the MCP handler returns a note
-    after the fact (``_stepped_envelope_note``). Surfacing the same
-    truth at plan time lets the user see round-trip lossiness BEFORE
-    dispatch instead of discovering it in MCP responses.
-
-    Only ``hold`` (and absent) curves are preserved on push. Dedup is
-    per-envelope: many lossy breakpoints in one envelope produce one
-    warn, not N.
+    The write handler draws envelopes as steps (``Envelope.insert_step``; the
+    curved ``create_event`` write is #298, unbuilt), so a ``linear`` /
+    ``fast`` / ``slow`` segment reaches Live as the staircase
+    :func:`~hallucinote.sync.envelope_curve.render_staircase` sampled from it.
+    At the standard resolution that is routine and goes on the diagnostic
+    channel. A staircase that had to be WIDENED to fit the wire cap is a
+    fidelity loss the author did not choose, so it is an alert, naming the
+    resolution actually used.
     """
-    if not any(bp.get("curve") in _LOSSY_CURVE_HINTS for bp in breakpoints_mcp):
+    if not has_ramp(authored_bps):
         return
-    plan.warn(
-        f"envelope {envelope['id']} ({envelope['target_kind']}): Live 12.4 "
-        "applies all envelope curves as steps (Envelope.insert_step); "
-        "'linear'/'fast'/'slow' curve hints are recorded in the DB but "
-        "lossy on push. Use 'hold' to model the same behavior the DB "
-        "stores."
+    head = (
+        f"envelope {envelope['id']} ({envelope['target_kind']}): "
+        f"{len(authored_bps)} authored breakpoint(s) sent as a {wire_count}-step "
+        f"staircase at {step_used:g} beat per step"
     )
+    if step_used > STAIRCASE_STEP_BEATS:
+        plan.alert(
+            f"{head}, coarser than the standard {STAIRCASE_STEP_BEATS:g} "
+            "because the ramp is too long to send at full resolution. Split "
+            "the ride into shorter envelopes to keep the finer steps."
+        )
+    else:
+        plan.warn(
+            f"{head} (the write draws envelopes as steps; the DB keeps the "
+            "authored curve)."
+        )
 
 
 def _warn_multiple_covering_clips(
@@ -684,7 +700,9 @@ def _resolve_and_translate_to_session_clip(
     breakpoints_mcp: list[dict[str, Any]],
     host_track_id: str,
     host_track_at: int,
-) -> tuple[int, list[dict[str, Any]], _CoveringPlacement, float] | None:
+) -> tuple[
+    int, list[dict[str, Any]] | None, _CoveringPlacement, float, float,
+] | None:
     """Resolve the host session clip for a clip-scoped envelope kind
     (mixer / send / device_parameter) and translate breakpoints into the
     clip's local coordinate system.
@@ -695,13 +713,20 @@ def _resolve_and_translate_to_session_clip(
     The kind-specific differences (which device address args to emit,
     which extra fields on the ToolCall) stay in the caller.
 
-    Returns ``(clip_at, local_bps, placement, env_max)`` on success.
-    Returns ``None`` after emitting a target_kind-aware skip-with-warn
-    when either:
-      - no arrangement_clip on ``host_track_id`` covers the envelope's
-        beat range (Live 12.4 LOM requires session-clip routing for
-        clip-scoped envelope kinds), or
-      - the matched session clip has no Ableton link in this session.
+    Ramping segments are rendered into the staircase Live can draw
+    (:func:`~hallucinote.sync.envelope_curve.render_staircase`) before the
+    translation, so ``local_bps`` is what goes on the wire; the DB's authored
+    breakpoints are untouched.
+
+    Returns ``(clip_at, local_bps, placement, env_max, step_used)`` on
+    success, or ``None`` after a skip-with-warn when the matched session
+    clip has no Ableton link in this session.
+
+    ``local_bps`` is ``None`` (with an alert) when every value equals the
+    target's static value in the DB: Live discards such an envelope on
+    write, so writing it would report ok over nothing. What the author wrote
+    means "no movement here", so the caller CLEARS the target instead — which
+    also removes any ride an earlier push left in the clip.
     """
     target_kind = envelope["target_kind"]
     env_min, env_max = _envelope_beat_range(breakpoints_mcp)
@@ -736,29 +761,76 @@ def _resolve_and_translate_to_session_clip(
             f"{placement.clip_id} (covering placement) not linked; skipping"
         )
         return None
-    local_bps = _clip_local_breakpoints(breakpoints_mcp, placement.start_beats)
-    return clip_at, local_bps, placement, env_max
+    static_value = Q.get_envelope_target_static_value(conn, envelope)
+    if is_flat_at([bp["value"] for bp in breakpoints_mcp], static_value):
+        plan.alert(
+            f"envelope {envelope['id']} ({target_kind}): every breakpoint "
+            f"equals the parameter's static value ({static_value:g}), and Live "
+            "discards an envelope that never leaves its static value — the "
+            "write would report ok over nothing. Clearing the envelope "
+            "instead. Change the static value or the ride if a movement was "
+            "meant."
+        )
+        return clip_at, None, placement, env_max, STAIRCASE_STEP_BEATS
+    wire_bps, step_used = render_staircase(breakpoints_mcp)
+    local_bps = _clip_local_breakpoints(wire_bps, placement.start_beats)
+    return clip_at, local_bps, placement, env_max, step_used
 
 
 def _emit_session_clip_envelope_post_warnings(
     plan: PushPlan,
     *,
     envelope: sqlite3.Row,
+    authored_bps: list[dict[str, Any]],
     local_bps: list[dict[str, Any]],
+    step_used: float,
     placement: _CoveringPlacement,
     env_max: float,
 ) -> None:
-    """Fire the four after-the-fact warnings every clip-scoped emitter
-    runs after ``plan.add()``: lossy curve hints, extra arrangement
+    """Fire the four after-the-fact notes every clip-scoped emitter
+    runs after ``plan.add()``: the staircase resolution, extra arrangement
     placements (W4-A duplicate_to_arrangement snapshot semantics),
     multiple covering clips, and trimmed placements. Pulled out of the
     three emitter shells to keep behavior identical across kinds."""
-    _warn_lossy_curve_hints(plan, envelope=envelope, breakpoints_mcp=local_bps)
+    _note_staircase(
+        plan, envelope=envelope, authored_bps=authored_bps,
+        wire_count=len(local_bps), step_used=step_used,
+    )
     _warn_extra_placements(plan, envelope=envelope, placement=placement)
     _warn_multiple_covering_clips(plan, envelope=envelope, placement=placement)
     _warn_trimmed_placement(
         plan, envelope=envelope, placement=placement, env_max=env_max,
     )
+
+
+def _add_session_clip_envelope_call(
+    plan: PushPlan,
+    *,
+    envelope: sqlite3.Row,
+    args: dict[str, Any],
+    local_bps: list[dict[str, Any]] | None,
+    purpose: str,
+) -> bool:
+    """Emit the envelope's one call: ``write_envelope`` with its wire
+    breakpoints, or ``clear`` on the same target when ``local_bps`` is None
+    (flat at the static value). Returns True when a write was emitted, which
+    is when the post-write notes apply."""
+    key = f"envelope:{envelope['id']}"
+    if local_bps is None:
+        plan.add(ToolCall(
+            tool="ableton_automation",
+            args={**args, "action": "clear"},
+            key=key,
+            purpose=f"{purpose}: clear (every value is the static value)",
+        ))
+        return False
+    plan.add(ToolCall(
+        tool="ableton_automation",
+        args={**args, "breakpoints": local_bps},
+        key=key,
+        purpose=f"{purpose}: {len(local_bps)} breakpoint(s)",
+    ))
+    return True
 
 
 def _emit_device_parameter_envelope(
@@ -827,9 +899,9 @@ def _emit_device_parameter_envelope(
     )
     if routing is None:
         return
-    clip_at, local_bps, placement, env_max = routing
-    plan.add(ToolCall(
-        tool="ableton_automation",
+    clip_at, local_bps, placement, env_max, step_used = routing
+    wrote = _add_session_clip_envelope_call(
+        plan, envelope=envelope, local_bps=local_bps,
         args={
             "action": "write_envelope",
             "target_kind": "device_parameter",
@@ -841,17 +913,17 @@ def _emit_device_parameter_envelope(
             "location": "session",
             "clip_index": clip_at,
             "parameter_name": envelope["parameter_path"],
-            "breakpoints": local_bps,
         },
-        key=f"envelope:{envelope['id']}",
         purpose=(
             f"device_parameter {envelope['parameter_path']} on track "
-            f"{parent_at} session clip {clip_at} (offset {placement.start_beats:g}): "
-            f"{len(local_bps)} breakpoint(s)"
+            f"{parent_at} session clip {clip_at} (offset {placement.start_beats:g})"
         ),
-    ))
+    )
+    if not wrote or local_bps is None:
+        return
     _emit_session_clip_envelope_post_warnings(
-        plan, envelope=envelope, local_bps=local_bps,
+        plan, envelope=envelope, authored_bps=breakpoints_mcp,
+        local_bps=local_bps, step_used=step_used,
         placement=placement, env_max=env_max,
     )
 
@@ -894,26 +966,26 @@ def _emit_mixer_envelope(
     )
     if routing is None:
         return
-    clip_at, local_bps, placement, env_max = routing
-    plan.add(ToolCall(
-        tool="ableton_automation",
+    clip_at, local_bps, placement, env_max, step_used = routing
+    wrote = _add_session_clip_envelope_call(
+        plan, envelope=envelope, local_bps=local_bps,
         args={
             "action": "write_envelope",
             "target_kind": envelope["target_kind"],
             "track_index": track_at,
             "location": "session",
             "clip_index": clip_at,
-            "breakpoints": local_bps,
         },
-        key=f"envelope:{envelope['id']}",
         purpose=(
             f"{envelope['target_kind']} on track {track_at} session clip "
-            f"{clip_at} (offset {placement.start_beats:g}): "
-            f"{len(local_bps)} breakpoint(s)"
+            f"{clip_at} (offset {placement.start_beats:g})"
         ),
-    ))
+    )
+    if not wrote or local_bps is None:
+        return
     _emit_session_clip_envelope_post_warnings(
-        plan, envelope=envelope, local_bps=local_bps,
+        plan, envelope=envelope, authored_bps=breakpoints_mcp,
+        local_bps=local_bps, step_used=step_used,
         placement=placement, env_max=env_max,
     )
 
@@ -968,9 +1040,9 @@ def _emit_send_envelope(
     )
     if routing is None:
         return
-    clip_at, local_bps, placement, env_max = routing
-    plan.add(ToolCall(
-        tool="ableton_automation",
+    clip_at, local_bps, placement, env_max, step_used = routing
+    wrote = _add_session_clip_envelope_call(
+        plan, envelope=envelope, local_bps=local_bps,
         args={
             "action": "write_envelope",
             "target_kind": "send_level",
@@ -978,16 +1050,16 @@ def _emit_send_envelope(
             "location": "session",
             "clip_index": clip_at,
             "return_index": return_at,
-            "breakpoints": local_bps,
         },
-        key=f"envelope:{envelope['id']}",
         purpose=(
             f"send_level track {track_at} -> return {return_at} via "
-            f"session clip {clip_at} (offset {placement.start_beats:g}): "
-            f"{len(local_bps)} breakpoint(s)"
+            f"session clip {clip_at} (offset {placement.start_beats:g})"
         ),
-    ))
+    )
+    if not wrote or local_bps is None:
+        return
     _emit_session_clip_envelope_post_warnings(
-        plan, envelope=envelope, local_bps=local_bps,
+        plan, envelope=envelope, authored_bps=breakpoints_mcp,
+        local_bps=local_bps, step_used=step_used,
         placement=placement, env_max=env_max,
     )

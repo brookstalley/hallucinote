@@ -507,9 +507,10 @@ def test_apply_single_constant_value_envelope_survives_round_trip(
 def test_apply_identical_breakpoints_preserves_curve_kind(
     conn, song, session, linked_track, linked_clip, arr_clip,
 ):
-    """The round-trip case: push wrote a `linear` envelope, Live discarded
-    the curve hint (W5-E warn), reads back with `curve='hold'`. Apply must
-    no-op so the DB's authored `linear` curve survives."""
+    """Live holds steps AT the authored breakpoints (a push from before ramps
+    were rendered as staircases, or a raw MCP write) and reads back with
+    `curve='hold'`. Apply must no-op so the DB's authored `linear` curve
+    survives."""
     eid = M.create_envelope(
         conn, song_id=song, target_kind="mixer_volume", target_track_id=linked_track,
     )
@@ -764,3 +765,218 @@ def test_apply_missing_placement_warns_and_skips(
     )
     assert result.mutations == 0
     assert any("no longer resolves" in w for w in result.warnings), result.warnings
+
+
+# ---------------------------------------------------------------------------
+# #479: a ramp pushed as a staircase reads back as the staircase
+# ---------------------------------------------------------------------------
+
+
+class _StepEnvelope:
+    """Live's stepped envelope as the MCP handler drives it: each
+    ``insert_step`` is a punch box holding its value over ``[t, t+dur)``, the
+    latest box covering a time wins, and uncovered time reads 0.0. Same
+    semantics as the MCP unit suite's ``FakeEnvelope``."""
+
+    def __init__(self):
+        self.steps = []
+
+    def insert_step(self, t, dur, value):
+        self.steps.append((t, dur, value))
+
+    def value_at_time(self, t):
+        value = 0.0
+        for st, dur, v in self.steps:
+            if dur == 0.0:
+                if abs(t - st) < 1e-9:
+                    value = v
+            elif st <= t < st + dur:
+                value = v
+        return value
+
+
+def _push_then_read_back(conn, *, song, session, eid, clip_length=8.0):
+    """Push-plan the envelope, write its wire breakpoints through the MCP
+    handler's own step writer, and read them back through the handler's own
+    sampler — the round trip a real push + pull makes, minus Live."""
+    from hallucinote.sync import push
+    from hallucinote_mcp.handlers.automation import (
+        _DEFAULT_ENVELOPE_READ_RESOLUTION,
+        _sample_envelope_to_breakpoints,
+        _write_breakpoints_as_steps,
+    )
+    plan = push.plan_push_envelopes(conn, song_id=song, session_id=session)
+    call = next(c for c in plan.calls if c.key == f"envelope:{eid}")
+    env = _StepEnvelope()
+    _write_breakpoints_as_steps(
+        env, call.args["breakpoints"], tail_end=clip_length,
+    )
+    read = _sample_envelope_to_breakpoints(
+        env, start_beats=0.0, end_beats=clip_length,
+        resolution_beats=_DEFAULT_ENVELOPE_READ_RESOLUTION,
+    )
+    return call, env, [(bp["time_beats"], bp["value"]) for bp in read]
+
+
+def test_a_staircase_read_back_of_an_authored_ramp_is_a_no_op(
+    conn, song, session, linked_track, linked_clip, arr_clip,
+):
+    """The churn regression. Push sends a 2-breakpoint linear ramp as a
+    17-step staircase; Live reads back 17 steps. Comparing that against the
+    stored breakpoints would replace the author's 2 `linear` rows with 17
+    `hold` ones on every pull. It must be a no-op, and the next push must
+    send the identical staircase — a second hop, not just the first."""
+    eid = M.create_envelope(
+        conn, song_id=song, target_kind="mixer_volume",
+        target_track_id=linked_track,
+    )
+    _add_two_breakpoints(conn, eid)  # 0.5 @ 0 -> 0.0 @ 1, linear
+    call, _env, read = _push_then_read_back(
+        conn, song=song, session=session, eid=eid,
+    )
+    assert len(read) > 2, "the staircase really is what Live holds"
+
+    result = pull.apply_pull_results(
+        conn, [_result(f"envelope:{eid}", _live_envelope_reply(read))],
+        song_id=song, session_id=session,
+    )
+    assert result.mutations == 0, result.details
+    assert result.no_ops == 1
+    assert [
+        (b["time_beats"], b["value"], b["curve_kind"])
+        for b in Q.get_breakpoints(conn, eid)
+    ] == [(0.0, 0.5, "linear"), (1.0, 0.0, "linear")]
+
+    call_again, _env, read_again = _push_then_read_back(
+        conn, song=song, session=session, eid=eid,
+    )
+    assert call_again.args == call.args
+    assert read_again == read
+
+
+def test_a_mid_clip_ramp_survives_the_round_trip(
+    conn, song, session, linked_track, linked_clip, arr_clip,
+):
+    """A ramp authored mid-clip: Live's read-back starts at clip-local 0 with
+    whatever Live holds unset there, then the staircase. That leading anchor is
+    not an edit, and the authored `linear` rows must survive."""
+    eid = M.create_envelope(
+        conn, song_id=song, target_kind="mixer_volume",
+        target_track_id=linked_track,
+    )
+    M.replace_breakpoints(conn, envelope_id=eid, breakpoints=[
+        {"time_beats": 2.0, "value": 0.5, "curve_kind": "linear"},
+        {"time_beats": 3.0, "value": 0.2, "curve_kind": "linear"},
+    ])
+    _call, _env, read = _push_then_read_back(
+        conn, song=song, session=session, eid=eid,
+    )
+    assert read[0][0] == 0.0 and read[0][1] != 0.5, "the anchor is really there"
+    result = pull.apply_pull_results(
+        conn, [_result(f"envelope:{eid}", _live_envelope_reply(read))],
+        song_id=song, session_id=session,
+    )
+    assert result.mutations == 0, result.details
+    assert [
+        (b["time_beats"], b["value"], b["curve_kind"])
+        for b in Q.get_breakpoints(conn, eid)
+    ] == [(2.0, 0.5, "linear"), (3.0, 0.2, "linear")]
+
+
+def test_a_ramp_pushed_before_the_step_width_changed_is_still_a_no_op(
+    conn, song, session, linked_track, linked_clip, arr_clip, monkeypatch,
+):
+    """The step width is a tuning knob. A song pushed at one width and
+    pulled after the knob moved must not have its ramps replaced."""
+    from hallucinote.sync import envelope_curve
+    eid = M.create_envelope(
+        conn, song_id=song, target_kind="mixer_volume",
+        target_track_id=linked_track,
+    )
+    _add_two_breakpoints(conn, eid)
+    monkeypatch.setattr(envelope_curve, "STAIRCASE_STEP_BEATS", 0.125)
+    _call, _env, read = _push_then_read_back(
+        conn, song=song, session=session, eid=eid,
+    )
+    monkeypatch.setattr(envelope_curve, "STAIRCASE_STEP_BEATS", 1.0 / 32)
+    result = pull.apply_pull_results(
+        conn, [_result(f"envelope:{eid}", _live_envelope_reply(read))],
+        song_id=song, session_id=session,
+    )
+    assert result.mutations == 0, result.details
+
+
+def test_a_staircase_edited_in_live_still_lands(
+    conn, song, session, linked_track, linked_clip, arr_clip,
+):
+    """The staircase match is not a blanket no-op for ramps: a step the user
+    moved in Live is an edit, and Ableton-authoritative pull takes it."""
+    eid = M.create_envelope(
+        conn, song_id=song, target_kind="mixer_volume",
+        target_track_id=linked_track,
+    )
+    _add_two_breakpoints(conn, eid)
+    _call, env, _read = _push_then_read_back(
+        conn, song=song, session=session, eid=eid,
+    )
+    env.insert_step(0.5, 0.0625, 0.9)  # the user drags one step up
+    from hallucinote_mcp.handlers.automation import (
+        _sample_envelope_to_breakpoints,
+    )
+    edited = [
+        (bp["time_beats"], bp["value"])
+        for bp in _sample_envelope_to_breakpoints(
+            env, start_beats=0.0, end_beats=8.0, resolution_beats=1.0 / 96.0,
+        )
+    ]
+    result = pull.apply_pull_results(
+        conn, [_result(f"envelope:{eid}", _live_envelope_reply(edited))],
+        song_id=song, session_id=session,
+    )
+    assert result.mutations == 1, result.details
+    assert any(
+        abs(b["value"] - 0.9) < 1e-9 for b in Q.get_breakpoints(conn, eid)
+    )
+
+
+def _flat_at_static_envelope(conn, *, song, track):
+    M.set_track_mixer(conn, track_id=track, volume=0.7)
+    eid = M.create_envelope(
+        conn, song_id=song, target_kind="mixer_volume", target_track_id=track,
+    )
+    for t in (0.0, 1.0):
+        M.add_breakpoint(conn, envelope_id=eid, time_beats=t, value=0.7)
+    return eid
+
+
+def test_a_cleared_flat_at_static_envelope_reading_back_empty_is_a_no_op(
+    conn, song, session, linked_track, linked_clip, arr_clip,
+):
+    """Push clears, rather than writes, an envelope that never leaves the
+    static value. Live then holds none, and that empty read-back is what push
+    left — deleting the authored row on it would lose what the author wrote."""
+    eid = _flat_at_static_envelope(conn, song=song, track=linked_track)
+    plan = pull.plan_pull_envelopes(conn, song_id=song, session_id=session)
+    assert [c for c in plan.calls if c.key == f"envelope:{eid}"], (
+        "pull still reads it, so a ride drawn over it in Live can be seen"
+    )
+    result = pull.apply_pull_results(
+        conn, [_result(f"envelope:{eid}", _live_envelope_reply([], exists=False))],
+        song_id=song, session_id=session,
+    )
+    assert result.mutations == 0, result.details
+    assert len(Q.get_breakpoints(conn, eid)) == 2
+
+
+def test_a_ride_drawn_in_live_over_a_flat_at_static_envelope_lands(
+    conn, song, session, linked_track, linked_clip, arr_clip,
+):
+    eid = _flat_at_static_envelope(conn, song=song, track=linked_track)
+    result = pull.apply_pull_results(
+        conn,
+        [_result(f"envelope:{eid}",
+                 _live_envelope_reply([(0.0, 0.7), (2.0, 0.3)]))],
+        song_id=song, session_id=session,
+    )
+    assert result.mutations == 1, result.details
+    assert any(abs(b["value"] - 0.3) < 1e-9 for b in Q.get_breakpoints(conn, eid))

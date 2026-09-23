@@ -83,7 +83,6 @@ from .routing import (
     plan_push_routing,
 )
 from .envelopes import (
-    _LOSSY_CURVE_HINTS,
     plan_push_envelopes,
     plan_push_envelopes_for_clip,
     _track_kind_for_envelope,
@@ -96,7 +95,7 @@ from .envelopes import (
     _clip_local_breakpoints,
     _envelope_beat_range,
     _emit_note_expression_envelope,
-    _warn_lossy_curve_hints,
+    _note_staircase,
     _warn_multiple_covering_clips,
     _warn_trimmed_placement,
     _warn_extra_placements,
@@ -188,7 +187,6 @@ __all__ = [
     # Routing (RTE-1K9T)
     "plan_push_routing",
     # Envelopes
-    "_LOSSY_CURVE_HINTS",
     "plan_push_envelopes",
     "plan_push_envelopes_for_clip",
     "plan_push_performed_automation",
@@ -204,7 +202,7 @@ __all__ = [
     "_clip_local_breakpoints",
     "_envelope_beat_range",
     "_emit_note_expression_envelope",
-    "_warn_lossy_curve_hints",
+    "_note_staircase",
     "_warn_multiple_covering_clips",
     "_warn_trimmed_placement",
     "_warn_extra_placements",

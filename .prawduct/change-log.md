@@ -32,6 +32,40 @@
      original concern: no version is pre-bumped, and nothing is mislabelled as
      already shipped.) -->
 
+## 2026-09-22 — A ramp reaches Live as a ramp (#479)
+
+<!-- prawduct: type=fix | scope=479-envelope-staircase -->
+
+Live 12.4 draws envelopes only as steps, so the session-clip push wrote an authored
+two-point `linear` ramp as ONE flat step at its first value, and the push reported
+ok. `linear` is the DB default, so this was every ramp on the preferred route. The
+push now renders ramping segments into a 1/16-beat staircase sampled from the
+authored curve (`sync/envelope_curve.py`, a leaf both push and pull import). The DB
+keeps the authored breakpoints: the staircase exists only on the wire. Pull compares
+Live's read-back against the same rendering, so a pull after a push is a no-op
+instead of replacing two authored rows with seventeen `hold` ones. A parity test
+holds the curve shapes to the perform route's interpolator.
+
+The plan-time "lossy on push" warn is gone; a note gives the resolution instead.
+A ramp too long for the wire cap is sent with a wider step, and that is an **alert**
+naming the resolution used, because it is a fidelity loss the author did not choose.
+An envelope whose every value equals the target's DB static value is not sent: Live
+discards it, and the push would report ok over nothing. That is an alert too, and pull
+skips the same envelopes so a read-back cannot delete the authored row. `hold`-only
+envelopes go out exactly as before.
+
+**Tests changed, and why none weakened.** Nine push tests asserted the full call for a
+default-`linear` ramp sent as two points, which is the defect itself. They now pin the
+staircase, written out from the lerp definition in the test rather than by calling the
+renderer. The four lossy-warn tests became staircase-note tests on the same inputs; the
+dedup one had to vary its values, because a `linear` envelope that never changes value
+is no longer a ramp. The sample-window test now asserts its authored edges are a subset
+of the wire points, which is its stated claim, rather than the whole list.
+
+**Unmeasured:** the 1/16-beat step is a choice, not a measured Live limit, and the
+flat-at-static alert rests on the #471 reporter's observation. Both have boxes in
+`operator-verification.md` under #479.
+
 ## 2026-09-21 — Learnings move into the harness-loaded rules directory
 
 <!-- prawduct: type=chore | scope=learnings-migrate-3.6 -->

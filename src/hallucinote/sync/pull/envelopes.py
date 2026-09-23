@@ -30,7 +30,14 @@ value within tolerance). If matched, the DB's `curve_kind` is preserved
 only time matches (value differs), Live overwrote the value — the new
 breakpoint inherits `curve='hold'` because Live can't tell us otherwise.
 This rule prevents pull churn on songs whose DB-authored envelopes carry
-non-hold curves that push has already warned about being lossy (W5-E).
+non-hold curves.
+
+Ramps (#479): push sends a ramping envelope as a staircase sampled from the
+authored curve (`sync.envelope_curve.render_staircase`), so Live reads back
+dozens of steps where the DB holds two breakpoints. The apply path compares
+that read-back against the SAME rendering; a match is a no-op. Without it
+every pull after a push would overwrite the authored breakpoints with the
+projection — a fidelity fix turned into authored-intent loss.
 """
 from __future__ import annotations
 
@@ -46,6 +53,12 @@ from hallucinote.db import mutations as M, queries as Q
 # pull no longer reaches into push for them. Any change to the covering-placement
 # geometry applies to both halves automatically, keeping pull and push exactly
 # symmetric on routing semantics.
+from ..envelope_curve import (
+    has_ramp,
+    is_flat_at,
+    render_staircase,
+    staircase_matches,
+)
 from ..geometry import (
     _envelope_beat_range,
     _resolve_envelope_session_clip,
@@ -76,6 +89,29 @@ _ENVELOPE_VALUE_EPS = _FLOAT_EPS
 _ENVELOPE_KINDS_READ_BLOCKED = frozenset({"clip_cc", "clip_pitch_bend"})
 
 
+# Kinds push writes through a covering session clip — the only ones it renders
+# as a staircase or declines as flat-at-static.
+_SESSION_CLIP_KINDS = frozenset({
+    "device_parameter", "mixer_volume", "mixer_pan", "send_level",
+})
+
+
+def _is_flat_at_static(conn: sqlite3.Connection, envelope: sqlite3.Row) -> bool:
+    """The same predicate push applies before sending (see
+    `envelope_curve.is_flat_at`)."""
+    values = [float(bp["value"]) for bp in Q.get_breakpoints(conn, envelope["id"])]
+    return is_flat_at(values, Q.get_envelope_target_static_value(conn, envelope))
+
+
+def _authored_wire(db_bps: list[sqlite3.Row]) -> list[dict[str, Any]]:
+    """DB breakpoint rows in the wire shape `envelope_curve` reads."""
+    return [
+        {"time_beats": float(bp["time_beats"]), "value": float(bp["value"]),
+         "curve": bp["curve_kind"]}
+        for bp in db_bps
+    ]
+
+
 def plan_pull_envelopes(
     conn: sqlite3.Connection,
     *,
@@ -102,6 +138,8 @@ def plan_pull_envelopes(
       - Nested-rack device_parameter (W6-I/J shipped probe but pull
         routing still flat — W7-B unblocks).
       - Return-side device_parameter (no return-clip schema in DB).
+      - A session-clip envelope whose every value equals the target's static
+        value (push declines it — Live would discard it).
     """
     plan = PullPlan()
     envelopes = Q.get_envelopes_for_song(conn, song_id)
@@ -116,6 +154,16 @@ def plan_pull_envelopes(
                 f"envelope {env['id']} ({kind}): Live 12.4 LOM doesn't "
                 "expose envelope read for MIDI CC / pitch-bend targets; "
                 "skipping pull (symmetric with push)"
+            )
+            continue
+
+        if kind in _SESSION_CLIP_KINDS and _is_flat_at_static(conn, env):
+            # Push declines to send an envelope Live would discard; reading it
+            # back would find no envelope and delete the authored row.
+            plan.warn(
+                f"envelope {env['id']} ({kind}): every breakpoint equals the "
+                "parameter's static value, so push does not send it; skipping "
+                "pull (symmetric with push)"
             )
             continue
 
@@ -646,6 +694,19 @@ def _apply_envelope(
     if not changed:
         out.no_ops += 1
         return
+    authored = _authored_wire(db_bps)
+    if (
+        envelope["target_kind"] in _SESSION_CLIP_KINDS
+        and has_ramp(authored)
+        and staircase_matches(
+            render_staircase(authored)[0], live_bps_arrangement,
+            time_eps=time_eps, value_eps=_ENVELOPE_VALUE_EPS,
+        )
+    ):
+        # Live holds exactly the staircase push rendered from these authored
+        # breakpoints: nothing was edited, and the DB keeps the curve.
+        out.no_ops += 1
+        return
 
     M.replace_breakpoints(
         conn, envelope_id=envelope_id, breakpoints=merged,
@@ -662,6 +723,7 @@ __all__ = [
     "_ENVELOPE_TIME_EPS_SLACK",
     "_ENVELOPE_VALUE_EPS",
     "_ENVELOPE_KINDS_READ_BLOCKED",
+    "_SESSION_CLIP_KINDS",
     "plan_pull_envelopes",
     "_emit_pull_note_expression",
     "_emit_pull_device_parameter",

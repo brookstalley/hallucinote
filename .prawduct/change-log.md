@@ -75,6 +75,58 @@ of the wire points, which is its stated claim, rather than the whole list.
 flat-at-static alert rests on the #471 reporter's observation. Both have boxes in
 `operator-verification.md` under #479.
 
+**Review dispositions.**
+
+**rev-20260923T000529Z-1d56ad11** — 2026-09-23T00:10:31Z
+
+| Finding | Severity | State | Detail |
+|---|---|---|---|
+| R-1 | blocking | fixed | Pull still overwrites an authored ramp with the staircase when the ramp starts after its covering clip's start |
+| R-2 | warning | fixed | Declining a flat-at-static envelope skips the clear that write_envelope performs, so a previously pushed ride keeps playing in Live |
+| R-3 | note | accepted | Fixed, not deferred: holds_authored_curve now calls sample_authored_curve on pull's production path (confirmed by rev-20260923T001908Z-295ad401 under R-10). Recorded as accept only because that verify pass resolved against its own predecessor. |
+| R-4 | warning | accepted | Fixed in 564f83ef: push clears a flat-at-static envelope and pull reads it, treating an empty read-back as a no-op and a drawn ride as an edit. rev-20260923T002349Z-7cc196e6 reviewed exactly that change with 0 findings. |
+| R-5 | warning | fixed | pull/envelopes.py re-declares by copy two facts the staircase no-op depends on: the session-clip kind set and push's wire conversion |
+| R-6 | note | accepted | The two predicates differ only for segments shorter than 1e-6 beat, which no authoring path produces; unifying them means reaching into the render verifier, which this change does not otherwise touch. Worth doing when that module is next opened. |
+| R-7 | note | accepted | Fixed, not deferred: staircase_matches is gone; holds_authored_curve looks up held values by bisect and scans only the small authored list per change. Covered by rev-20260923T001908Z-295ad401. |
+| R-8 | note | fixed-unreviewed | fixed in `.prawduct/artifacts/research-envelope-lom-gaps.md` |
+| R-9 | warning | fixed | The staircase was chosen without recording #298's curved create_event write as an alternative, and the new module states a 'can't' that the project's own probe contradicts |
+| R-10 | warning | fixed | scope-trace: pull's no-op match depends on the current step constants, not on the authored curve, and sample_authored_curve (the recorded design's comparator) has no production caller |
+| R-11 | warning | fixed | Records Pass: operator-verification box 3 uses a probe that cannot fail. `exists: false` reads the same whether Live discarded the flat envelope or kept it |
+| R-12 | note | accepted | #479 is marked shipped via /prawduct:backlog when this branch reaches develop, per the skill's when-to-mark-shipped rule; it is on the wave-1 integration branch until then. |
+| R-13 | note | accepted | Recorded on #298 itself via /prawduct:backlog update: R9's gated warn is gone, and render_staircase / holds_authored_curve are what a curved writer replaces or keeps passing. |
+| R-14 | note | accepted | Informational cross-check; no action requested. |
+| R-15 | note | fixed-unreviewed | fixed in `.claude/rules/learnings/core.md` |
+| R-16 | note | accepted | Informational priors listing; nothing re-raised. |
+
+**16 findings** (1 blocking, 6 warning, 9 note) — accepted: 8, fixed: 6, fixed-unreviewed: 2.
+
+**rev-20260923T001908Z-295ad401** — 2026-09-23T00:20:59Z
+
+_No findings._
+
+_Observations — read, not owed. Answering one is optional._
+
+| Observation | State | Detail |
+|---|---|---|
+| O-1 | accepted | An incident figure inside the rule's own example; nothing reads it, and it is stated as approximate. |
+| O-2 | accepted | Fixed anyway while the file was open for R-4: the helper docstring now says the write draws steps. |
+
+**No findings** — a clean pass.
+**2 observations demoted** — 2 answered. An observation gates nothing; answering one is optional.
+
+**rev-20260923T002349Z-7cc196e6** — 2026-09-23T00:24:27Z
+
+_No findings._
+
+_Observations — read, not owed. Answering one is optional._
+
+| Observation | State | Detail |
+|---|---|---|
+| O-1 | accepted | Docstring nuance only; the comment at the new branch states the rule. Fix when pull/envelopes.py is next opened. |
+
+**No findings** — a clean pass.
+**1 observation demoted** — 1 answered. An observation gates nothing; answering one is optional.
+
 ## 2026-09-21 — Learnings move into the harness-loaded rules directory
 
 <!-- prawduct: type=chore | scope=learnings-migrate-3.6 -->

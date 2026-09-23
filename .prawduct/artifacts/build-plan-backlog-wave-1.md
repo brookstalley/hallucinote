@@ -194,7 +194,7 @@ Nothing here was ticked by this plan. The two ticked boxes record work that ship
 other branches while the plan sat unmerged — they are closed, not delivered from here.
 
 - [ ] Phase 0 — #487 · registry pre-land (`bar_ruler` half already landed)
-- [ ] #479 (dispatch first)
+- [x] #479 (dispatch first) — built and reviewed 2026-09-22 on `fix/479-envelope-staircase`, merged into the integration branch; three Live boxes pending in `operator-verification.md`
 - [x] C1 — shipped elsewhere · [ ] C2 · [ ] C3 · [ ] C4 (#311 #312) · [ ] C5 · [ ] C6
 - [ ] C7 · [ ] C8 (#502) · [ ] C9 · [ ] C10 · [ ] C11 · [x] C12 — shipped elsewhere
 - [ ] #478 (after #479) · [ ] #261 (after #502)

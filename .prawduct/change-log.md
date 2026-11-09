@@ -32,6 +32,35 @@
      original concern: no version is pre-bumped, and nothing is mislabelled as
      already shipped.) -->
 
+## 2026-11-09 — The suite runs on testament's container pool; numba's shared JIT cache no longer segfaults it
+
+<!-- prawduct: type=chore | scope=testament-onboard -->
+
+The repo now runs its tests on a testament pool (`testament run`) as well as by
+hand. `.testament.toml` declares a container project that runs the same full
+no-path suite CI runs, in `.devcontainer/Dockerfile`: `python:3.12-slim` plus
+uv 0.11.8, both digest-pinned, non-root, with `git`, `tar` and `procps`.
+`[setup]` syncs the workspace exactly as CI does
+(`uv sync --all-packages --all-extras --frozen`). `CLAUDE.md` carries
+testament's agent-instructions block verbatim.
+
+The first pool run crashed nine librosa/numba audio tests with SIGSEGV (exit
+139). The testament session diagnosed the cause: numba's on-disk JIT cache in
+site-packages is written without a lock, so concurrent cold pytest processes
+sharing one venv can point a signature at another signature's native code,
+which numba loads unchecked. The crash showed 16 times per pool run with or
+without testament's recorder, and 0 times with the fix. The fix: the root
+`conftest.py` gives each pytest process its own `NUMBA_CACHE_DIR`, unless one is
+already set. The same hazard applies locally to `-n auto` runs, and is the
+likely cause of the "unstable in containers" note that kept audio opt-out; that
+note is corrected. A guard test (`tests/unit/audio/test_numba_cache_isolation.py`)
+pins that numba reads the exported directory. Full pool run after
+`testament reset hallucinote`: 6636 passed, 2 skipped.
+
+**Consumer note:** none; this is a test-infrastructure change. Each pytest process now JIT-compiles
+librosa once, which costs about 1.5x the audio tests' time; an explicit
+`NUMBA_CACHE_DIR` opts back into a shared cache.
+
 ## 2026-09-21 — Learnings move into the harness-loaded rules directory
 
 <!-- prawduct: type=chore | scope=learnings-migrate-3.6 -->

@@ -31,7 +31,8 @@ testament run --json                                                  # full sui
 testament run --json -- hallucinote_mcp/tests/unit/test_actions_device.py   # one file, while iterating
 ```
 
-Without testament installed, run the suite locally instead:
+Without testament installed, run the suite locally instead. On macOS, a fresh venv
+segfaults numba tests under xdist (`-n 2` or more); use `-n 1` there.
 
 ```bash
 uv run python -m pytest -n auto --dist loadgroup                  # full suite, parallel

@@ -645,10 +645,10 @@ active_build_plan:
 # suite CI runs, in the locked env inside the pool's container image, and
 # `--junit-xml` hands the merged report to the recorder. When no coordinator
 # answers, testament runs the same suite here and says so. Kept in step with the
-# preferences Dev-commands row and the 2026-11-09 design decision. The previous
-# local form, `uv run --frozen pytest -n auto --dist loadgroup`, crashes numba
-# tests under xdist on macOS in a fresh venv (develop's conftest too), which is
-# one reason evidence comes from the pool.
+# preferences Dev-commands row and the 2026-11-09 design decision. Running the
+# suite locally on macOS under xdist (`-n 2` or more) in a fresh venv segfaults
+# numba tests, which the per-process numba cache in conftest.py does not
+# prevent; the pool's Linux containers do not hit it.
 test_command: testament run --junit-xml={junit_xml}
 
 # Test roots for the evidence recorder, which otherwise discovers repo-root

@@ -55,10 +55,12 @@ sharing one venv can point a signature at another signature's native code,
 which numba loads unchecked. The crash showed 16 times per pool run with or
 without testament's recorder, and 0 times with the fix. The fix: the root
 `conftest.py` gives each pytest process its own `NUMBA_CACHE_DIR`, unless one is
-already set. The same hazard applies locally to `-n auto` runs, and is the
-likely cause of the "unstable in containers" notes that kept audio opt-out; those
-notes (root `conftest.py`, the `audio` marker in `pyproject.toml`) are corrected. A guard test (`tests/unit/audio/test_numba_cache_isolation.py`)
-pins that numba reads the exported directory. Full pool run after
+already set. The race is the likely cause of the "unstable in containers"
+notes that kept audio opt-out; those notes (root `conftest.py`, the `audio` marker in `pyproject.toml`) are corrected. A guard test (`tests/unit/audio/test_numba_cache_isolation.py`)
+pins that numba reads the exported directory. A separate local crash is NOT
+fixed: on macOS, a fresh venv segfaults numba tests under `pytest -n 2` or more,
+with develop's conftest too, while `-n 1` passes; the pool does not hit it.
+Full pool run after
 `testament reset hallucinote`: 6636 passed, 2 skipped.
 
 **Consumer note:** none; this is a test-infrastructure change. Each pytest process now JIT-compiles

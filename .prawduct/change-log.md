@@ -41,8 +41,12 @@ hand. `.testament.toml` declares a container project that runs the same full
 no-path suite CI runs, in `.devcontainer/Dockerfile`: `python:3.12-slim` plus
 uv 0.11.8, both digest-pinned, non-root, with `git`, `tar` and `procps`.
 `[setup]` syncs the workspace exactly as CI does
-(`uv sync --all-packages --all-extras --frozen`). `CLAUDE.md` carries
-testament's agent-instructions block verbatim.
+(`uv sync --all-packages --all-extras --locked`). `docs/testament.md` carries
+testament's agent-instructions block, and `CLAUDE.md` points at it.
+Testament is now the default for every test run: prawduct's declared
+`test_command` is `testament run --junit-xml={junit_xml}`, so governance evidence
+comes from the pool too, and `project-preferences.md`, `CONTRIBUTING.md` and the
+2026-11-09 design decision say so. Local `uv run --frozen pytest` is the fallback.
 
 The first pool run crashed nine librosa/numba audio tests with SIGSEGV (exit
 139). The testament session diagnosed the cause: numba's on-disk JIT cache in
@@ -52,8 +56,8 @@ which numba loads unchecked. The crash showed 16 times per pool run with or
 without testament's recorder, and 0 times with the fix. The fix: the root
 `conftest.py` gives each pytest process its own `NUMBA_CACHE_DIR`, unless one is
 already set. The same hazard applies locally to `-n auto` runs, and is the
-likely cause of the "unstable in containers" note that kept audio opt-out; that
-note is corrected. A guard test (`tests/unit/audio/test_numba_cache_isolation.py`)
+likely cause of the "unstable in containers" notes that kept audio opt-out; those
+notes (root `conftest.py`, the `audio` marker in `pyproject.toml`) are corrected. A guard test (`tests/unit/audio/test_numba_cache_isolation.py`)
 pins that numba reads the exported directory. Full pool run after
 `testament reset hallucinote`: 6636 passed, 2 skipped.
 

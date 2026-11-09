@@ -35,6 +35,7 @@ complete — a doc added without a row here fails the suite.)
 | Doc | What it covers |
 |---|---|
 | [`release-process.md`](release-process.md) | How a Hallucinote version is cut |
+| [`testament.md`](testament.md) | Running the test suite on the testament pool — the default way tests run here |
 | [`engine-pin.md`](engine-pin.md) | Why the engine and bridge share one environment |
 | [`dev-vs-use-coexistence.md`](dev-vs-use-coexistence.md) | Developing Hallucinote and making music on the same machine |
 | [`polyrhythms.md`](polyrhythms.md) | Design/status of the cross-rhythm detection in mix analysis |

@@ -23,6 +23,16 @@ See [README → Project layout](README.md#project-layout).
 
 ## Running tests
 
+Tests run on the testament pool by default (`docs/testament.md`): the same
+full suite CI runs, in CI's Linux environment, spread across runners.
+
+```bash
+testament run --json                                                  # full suite, on the pool
+testament run --json -- hallucinote_mcp/tests/unit/test_actions_device.py   # one file, while iterating
+```
+
+Without testament installed, run the suite locally instead:
+
 ```bash
 uv run python -m pytest -n auto --dist loadgroup                  # full suite, parallel
 uv run python -m pytest hallucinote_mcp/tests/unit/test_actions_device.py   # one file, while iterating

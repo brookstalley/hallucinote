@@ -40,8 +40,8 @@ import pytest
 # audio test. Observed with numba 0.65.1: 16 crashes per full run on a pool,
 # 0 with this line. Giving each process its own cache dir means each one
 # JIT-compiles once, which costs about 1.5x the audio tests' time, and never
-# reads another process's half-written index. `setdefault`, so an explicit
-# NUMBA_CACHE_DIR still wins. This must run before anything imports numba,
+# reads another process's half-written index. Only when unset, so an explicit
+# NUMBA_CACHE_DIR (a test pool's per-lane warm cache, say) still wins. This must run before anything imports numba,
 # which root-conftest import time guarantees.
 if "NUMBA_CACHE_DIR" not in os.environ:
     _numba_cache = tempfile.mkdtemp(prefix="numba-cache-")

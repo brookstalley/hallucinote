@@ -14,5 +14,6 @@ env = { UV_CACHE_DIR = "/tr/cache/uv" }
 dockerfile = ".devcontainer/Dockerfile"
 inputs = [".devcontainer/Dockerfile"]  # it COPYs nothing from the repo
 
-[setup]  # run when a workspace moves to a new tree; same sync as CI
-steps = [["uv", "sync", "--all-packages", "--all-extras", "--frozen"]]
+[setup]  # run when a workspace moves to a new tree; same sync as CI (--locked,
+# so a stale uv.lock fails here as it does in CI rather than passing on the pool)
+steps = [["uv", "sync", "--all-packages", "--all-extras", "--locked"]]

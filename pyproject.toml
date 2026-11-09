@@ -230,6 +230,6 @@ pythonpath = ["src", "hallucinote_mcp/src", "."]
 testpaths = ["tests", "hallucinote_mcp/tests", "examples"]
 python_files = ["test_*.py"]
 markers = [
-    "audio: exercises the native audio/DSP stack (librosa/numba/scipy). The root conftest auto-applies this by path; set HALLUCINOTE_SKIP_AUDIO=1 to skip in CPU-only/container sessions where that stack is unstable.",
+    "audio: exercises the native audio/DSP stack (librosa/numba/scipy). The root conftest auto-applies this by path; runs by default everywhere; set HALLUCINOTE_SKIP_AUDIO=1 to skip it (the once-intermittent container segfaults were numba's shared JIT cache, fixed in the root conftest).",
     "ableton: requires a live Ableton/sequencer connection. Opt-in (default-skip); set HALLUCINOTE_WITH_ABLETON=1 to run. Containers never have Ableton, so these never break a default run.",
 ]

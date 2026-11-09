@@ -3,11 +3,11 @@
 Container / web sessions run on a CPU-only image with no Ableton. Two test
 classes need special handling so the suite runs cleanly here:
 
-- **Audio DSP** (``audio`` marker, auto-applied by path): the native stack
-  (librosa / numba / scipy) intermittently segfaults mid-run on this image. We
-  never develop the audio subsystem in a container, so it is **opt-out**: set
-  ``HALLUCINOTE_SKIP_AUDIO=1`` (or ``-m "not audio"``) and the full non-audio
-  suite runs. Local dev with the native stack runs everything by default.
+- **Audio DSP** (``audio`` marker, auto-applied by path): runs by default
+  everywhere. Its once-intermittent segfaults were numba's on-disk JIT cache
+  raced by concurrent pytest processes sharing one venv; the per-process
+  ``NUMBA_CACHE_DIR`` below removes that. ``HALLUCINOTE_SKIP_AUDIO=1`` (or
+  ``-m "not audio"``) remains as an opt-out.
 
 - **Live Ableton** (``ableton`` marker, declared explicitly on a test): requires
   a running Live + remote script. There are none today — MCP-server tests use
@@ -21,10 +21,32 @@ Markers are registered in ``pyproject.toml`` ``[tool.pytest.ini_options]``.
 
 from __future__ import annotations
 
+import atexit
 import os
+import shutil
+import tempfile
 from pathlib import Path
 
 import pytest
+
+# numba's on-disk JIT cache is not safe under concurrent writers. librosa's
+# `cache=True` functions write their cache into site-packages, and
+# `IndexDataCacheFile.save` reads the index, picks the next `.N.nbc` slot and
+# writes it with no lock across those steps. Several cold pytest processes in
+# one venv (xdist workers, or a test pool's concurrent batches, which share one
+# workspace venv per tree) can leave the index pointing one signature at another
+# signature's native code. numba loads that entry without checking the stored
+# signature, so the process dies with SIGSEGV (exit 139) in some later, unrelated
+# audio test. Observed with numba 0.65.1: 16 crashes per full run on a pool,
+# 0 with this line. Giving each process its own cache dir means each one
+# JIT-compiles once, which costs about 1.5x the audio tests' time, and never
+# reads another process's half-written index. Only when unset, so an explicit
+# NUMBA_CACHE_DIR (a test pool's per-lane warm cache, say) still wins. This must run before anything imports numba,
+# which root-conftest import time guarantees.
+if "NUMBA_CACHE_DIR" not in os.environ:
+    _numba_cache = tempfile.mkdtemp(prefix="numba-cache-")
+    os.environ["NUMBA_CACHE_DIR"] = _numba_cache
+    atexit.register(shutil.rmtree, _numba_cache, ignore_errors=True)
 
 # `pythonpath` in pyproject front-inserts this checkout's source dirs into the
 # PYTEST process — it does not reach a SUBPROCESS. Tests across the suite shell
@@ -91,7 +113,7 @@ def pytest_collection_modifyitems(
 
     audio_skip = pytest.mark.skip(
         reason="audio DSP tests skipped (HALLUCINOTE_SKIP_AUDIO set); "
-        "native librosa/numba/scipy stack is unstable in containers"
+        "set HALLUCINOTE_SKIP_AUDIO= (empty) to run them"
     )
     ableton_skip = pytest.mark.skip(
         reason="requires a live Ableton/sequencer; "

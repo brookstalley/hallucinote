@@ -321,6 +321,21 @@ design_decisions:
     - decision: "Songs as self-contained units under songs/<slug>/"
       rationale: "A song = build.py + captured_session.json + tests/ + per-song SQLite DB (gitignored). Tests live next to the song so the directory is forkable as a unit."
       date: "2026-05-17 (J-2b)"
+    - decision: "Tests run on testament by default (`testament run`), governance evidence included; local `uv run --frozen pytest` is the fallback"
+      rationale: >-
+        A testament pool runs the same full no-path suite CI runs (`.testament.toml`, a
+        container executor built from `.devcontainer/Dockerfile`), spread across the
+        owner's runners, and falls back to running it locally when no coordinator
+        answers. It is a faster way to run the CI-equivalent suite, not a different
+        suite, in the Linux environment CI uses rather than whatever the local
+        machine has. So testament is the default for every test run, governance
+        evidence included: prawduct's `test_command` is `testament run
+        --junit-xml={junit_xml}`, and `prawduct-hook test-evidence record` ingests
+        the pool's merged report. `uv run --frozen pytest` stays the fallback when
+        testament is not installed. The agent block lives in
+        `docs/testament.md`, with a short pointer in CLAUDE.md, so that CLAUDE.md
+        stays a norms file.
+      date: "2026-11-09"
   interaction_patterns:
     - name: "Propose-and-react, never interrogate"
       summary: >-
@@ -625,12 +640,16 @@ build_state:
 active_build_plan:
 
 # The canonical suite invocation. Without it the evidence recorder falls back to
-# the hook interpreter's own pytest, which is not this project's environment —
-# `project-preferences.md` is explicit that a "green" claim must come from the
-# locked env, and a fallback run silently is not one. Kept in step with the
-# preferences entry; the xdist grouping is per-directory (tests/conftest.py), so
-# the parallel form is the same suite, not a subset.
-test_command: uv run --frozen pytest -n auto --dist loadgroup --junit-xml={junit_xml} -q
+# the hook interpreter's own pytest, which is not this project's environment.
+# The suite runs on the testament pool (`.testament.toml`): the same full no-path
+# suite CI runs, in the locked env inside the pool's container image, and
+# `--junit-xml` hands the merged report to the recorder. When no coordinator
+# answers, testament runs the same suite here and says so. Kept in step with the
+# preferences Dev-commands row and the 2026-11-09 design decision. Running the
+# suite locally on macOS under xdist (`-n 2` or more) in a fresh venv segfaults
+# numba tests, which the per-process numba cache in conftest.py does not
+# prevent; the pool's Linux containers do not hit it.
+test_command: testament run --junit-xml={junit_xml}
 
 # Test roots for the evidence recorder, which otherwise discovers repo-root
 # `tests/` only. This repo is a two-package layout: the engine's suite is under

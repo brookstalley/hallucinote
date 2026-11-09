@@ -46,7 +46,8 @@ Developer preferences for how code is written in this project. Captured during d
 
 - **Key libraries**: **the MCP server is stdlib-only *at import time*** (`sqlite3`, `json`, `dataclasses`, `pathlib`) because the Remote Script imports it inside Live — engine imports are lazy, at call time. The **engine itself depends on numpy/scipy/librosa/soundfile at runtime**, deliberately, and that stack must not be trimmed to shrink the build (`nonfunctional-requirements.md` § Direction). `pytest` for tests. The MCP bridge (`hallucinote_mcp/`) is in-repo and ships with the plugin — not an external dependency.
 - **Dev commands**:
-  - `uv run --frozen pytest` — the locked environment; this is what a "green" claim must come from
+  - `testament run --json` — **the default way to run tests**: the full CI-equivalent suite on the testament pool, in the locked env inside the pool's image (see `docs/testament.md`). A "green" claim comes from a testament run. Governance evidence comes from `prawduct-hook test-evidence record`, whose declared `test_command` is `testament run --junit-xml={junit_xml}`, so it runs on the pool too (project-state `design_decisions`, 2026-11-09)
+  - `uv run --frozen pytest` — the locked environment run locally; the fallback when testament is not installed. On macOS, a fresh venv segfaults numba tests under xdist (`-n 2` or more), and conftest's per-process numba cache does not prevent it: use `-n 1` there, or the pool
   - `pytest` — full suite in a local editable venv (serial by default; under ~10s on the J-2 baseline)
   - `pytest -n auto --dist loadgroup` — parallel via pytest-xdist (auto-grouped by test subdirectory per `tests/conftest.py`; roughly 1.6× faster)
   - Current test count + timings: see `.prawduct/.test-evidence.json` (canonical; this prose intentionally avoids restating numbers that drift)
